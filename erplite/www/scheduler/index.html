@@ -1,0 +1,233 @@
+{% extends "templates/web.html" %}
+
+{% block title %}Scheduler{% endblock %}
+
+{% block head_include %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css">
+{% endblock %}
+
+{% block page_content %}
+<div class="scheduler-app">
+    <!-- Main Grid Area -->
+    <div class="scheduler-main">
+<div class="scheduler-header">
+    <div class="scheduler-title-section">
+        <h1 class="scheduler-title">Resource Scheduler</h1>
+        <div class="scheduler-subtitle">Click empty cells to add entries</div>
+    </div>
+</div>
+
+        <!-- Toolbar -->
+        <div class="scheduler-toolbar">
+            <div class="toolbar-left">
+                <div class="template-card" draggable="true" data-template="8h">
+                    <span class="mdi mdi-clock-outline"></span> 8h
+                </div>
+                <div class="template-card" draggable="true" data-template="12h">
+                    <span class="mdi mdi-clock-outline"></span> 12h
+                </div>
+                <div class="template-card" draggable="true" data-template="leave">
+                    <span class="mdi mdi-beach"></span> Leave
+                </div>
+            </div>
+            <div class="toolbar-right">
+                <div class="date-nav">
+                    <button onclick="navigateDate(-30)" class="nav-btn">‹‹</button>
+                    <button onclick="navigateDate(-7)" class="nav-btn">‹</button>
+                    <div class="current-range">
+                        <span id="dateRangeDisplay">Loading...</span>
+                    </div>
+                    <button onclick="navigateDate(7)" class="nav-btn">›</button>
+                    <button onclick="navigateDate(30)" class="nav-btn">››</button>
+                </div>
+                <button class="btn btn-secondary" onclick="refreshData()">
+                    <i class="mdi mdi-refresh"></i> Refresh
+                </button>
+                <button class="btn btn-secondary" onclick="exportSchedule()">
+                    <i class="mdi mdi-export"></i> Export
+                </button>
+            </div>
+        </div>
+
+        <!-- Schedule Grid -->
+        <div class="schedule-grid-container">
+            <!-- Grid Header -->
+            <div class="grid-header">
+                <div class="column-header project-task-column">Project / Task</div>
+                <div class="column-header person-column">Resource</div>
+                <div class="date-columns" id="dateColumns">
+                    <!-- Date columns will be populated by JavaScript -->
+                </div>
+            </div>
+
+            <!-- Grid Body -->
+            <div class="grid-body" id="gridBody">
+                <!-- Schedule rows will be populated by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Add Row Button -->
+        <div class="add-row-section">
+            <button class="btn btn-primary" onclick="addNewRow()">
+                <i class="mdi mdi-plus"></i> Add Row
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Schedule Entry Template -->
+<template id="schedule-entry-template">
+    <div class="schedule-entry" draggable="true">
+        <div class="entry-header">
+            <span class="entry-project"></span>
+            <span class="entry-duration"></span>
+        </div>
+        <div class="entry-task"></div>
+        <div class="entry-status"></div>
+        <div class="entry-controls">
+            <button class="control-btn edit-btn" title="Edit entry">
+                <i class="mdi mdi-pencil"></i>
+            </button>
+            <button class="control-btn delete-btn" title="Delete entry">
+                <i class="mdi mdi-delete"></i>
+            </button>
+        </div>
+    </div>
+</template>
+
+<!-- Resource Row Template -->
+<template id="resource-row-template">
+    <div class="resource-row">
+        <div class="resource-header">
+            <div class="resource-name"></div>
+            <div class="resource-type"></div>
+            <div class="resource-capacity"></div>
+        </div>
+        <div class="resource-days">
+            <!-- Day cells will be populated here -->
+        </div>
+    </div>
+</template>
+
+<!-- Day Cell Template -->
+<template id="day-cell-template">
+    <div class="day-cell" 
+         ondrop="dropEntry(event)" 
+         ondragover="allowDrop(event)"
+         ondragenter="dragEnter(event)"
+         ondragleave="dragLeave(event)">
+        <div class="day-entries">
+            <!-- Schedule entries for this day will go here -->
+        </div>
+        <div class="day-summary">
+            <span class="hours-scheduled">0h</span>
+        </div>
+    </div>
+</template>
+
+<!-- Create/Edit Entry Modal -->
+<div id="entryModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="modalTitle">Create Schedule Entry</h3>
+            <span class="close" onclick="closeEntryModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <!-- Hidden fields for project and task (set by row) -->
+            <input type="hidden" id="entryProject">
+            <input type="hidden" id="entryTask">
+            
+            <!-- Project and Task display (read-only) -->
+            <div class="form-group">
+                <label>Project:</label>
+                <div id="entryProjectDisplay" style="padding: 0.75rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 0.5rem; color: #374151; font-weight: 500;"></div>
+            </div>
+            
+            <div class="form-group">
+                <label>Task:</label>
+                <div id="entryTaskDisplay" style="padding: 0.75rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 0.5rem; color: #374151; font-weight: 500;"></div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="entryResource">Resource:</label>
+                    <select id="entryResource">
+                        <option value="">Unassigned</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="entryDate">Date:</label>
+                    <input type="date" id="entryDate" required>
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="entryDuration">Duration (hours):</label>
+                    <input type="number" id="entryDuration" min="0.5" max="24" step="0.5" value="1" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="entryPriority">Priority:</label>
+                    <select id="entryPriority">
+                        <option value="Low">Low</option>
+                        <option value="Medium" selected>Medium</option>
+                        <option value="High">High</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label for="entryDescription">Description:</label>
+                <textarea id="entryDescription" rows="3" placeholder="Optional description..."></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeEntryModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveEntry()" id="saveEntryBtn">Create Entry</button>
+        </div>
+    </div>
+</div>
+
+<!-- Loading Overlay -->
+<div id="loadingOverlay" class="loading-overlay">
+    <div class="loading-spinner">
+        <div class="spinner"></div>
+        <div class="loading-text">Loading scheduler data...</div>
+    </div>
+</div>
+
+<!-- Toast Notifications -->
+<div id="toastContainer" class="toast-container"></div>
+
+<!-- Pass data to JavaScript -->
+<script>
+window.schedulerData = {
+    currentStartDate: '{{ current_start_date }}',
+    projects: {{ projects | tojson }},
+    resources: {{ resources | tojson }},
+    scheduleEntries: {{ schedule_entries | tojson }},
+    projectColors: {{ project_colors | tojson }}
+};
+</script>
+{% endblock %}
+
+{% block script_include %}
+<!-- Scheduler Core Modules -->
+<script src="/assets/erplite/js/scheduler/core/EventBus.js"></script>
+<script src="/assets/erplite/js/scheduler/core/StateManager.js"></script>
+<script src="/assets/erplite/js/scheduler/core/DataProcessor.js"></script>
+
+<!-- Scheduler Utilities -->
+<script src="/assets/erplite/js/scheduler/utils/DateUtils.js"></script>
+<script src="/assets/erplite/js/scheduler/utils/ColorUtils.js"></script>
+
+<!-- Scheduler Templates -->
+<script src="/assets/erplite/js/scheduler/templates/TemplateManager.js"></script>
+
+<!-- Main Scheduler Application -->
+<script src="/assets/erplite/js/scheduler/Scheduler.js"></script>
+
+<!-- index.js is automatically loaded by Frappe -->
+{% endblock %}

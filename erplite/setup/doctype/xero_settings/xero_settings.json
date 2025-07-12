@@ -1,0 +1,119 @@
+{
+ "actions": [],
+ "creation": "2023-04-30 09:59:00",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "connection_settings_section",
+  "client_id",
+  "client_secret",
+  "authorization_status",
+  "column_break_6",
+  "company",
+  "tenant_id",
+  "tenant_name",
+  "last_sync_date",
+  "token_section",
+  "access_token",
+  "token_expiry"
+ ],
+ "fields": [
+  {
+   "fieldname": "connection_settings_section",
+   "fieldtype": "Section Break",
+   "label": "Connection Settings"
+  },
+  {
+   "fieldname": "client_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Client ID",
+   "reqd": 1
+  },
+  {
+   "fieldname": "client_secret",
+   "fieldtype": "Password",
+   "in_list_view": 1,
+   "label": "Client Secret",
+   "reqd": 1
+  },
+  {
+   "default": "Not Authorized",
+   "fieldname": "authorization_status",
+   "fieldtype": "Select",
+   "label": "Authorization Status",
+   "options": "Not Authorized\nAuthorized",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_6",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "fieldname": "tenant_id",
+   "fieldtype": "Data",
+   "label": "Tenant ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "tenant_name",
+   "fieldtype": "Data",
+   "label": "Xero Organization",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_sync_date",
+   "fieldtype": "Datetime",
+   "label": "Last Connected On",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "token_section",
+   "fieldtype": "Section Break",
+   "label": "Token Information"
+  },
+  {
+   "fieldname": "access_token",
+   "fieldtype": "Text",
+   "hidden": 1,
+   "label": "Access Token"
+  },
+  {
+   "fieldname": "token_expiry",
+   "fieldtype": "Datetime",
+   "label": "Token Expiry",
+   "read_only": 1
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2025-05-05 17:00:55.819124",
+ "modified_by": "Administrator",
+ "module": "Setup",
+ "name": "Xero Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

@@ -1,0 +1,550 @@
+{% extends "templates/web.html" %}
+
+{% block title %}Timesheet Dashboard{% endblock %}
+
+{% block head_include %}
+<style>
+.timesheet-dashboard {
+    padding: 2rem;
+    background-color: #f8f9fa;
+    min-height: 100vh;
+}
+
+.dashboard-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+    padding-bottom: 1rem;
+    border-bottom: 2px solid #e9ecef;
+}
+
+.dashboard-title {
+    font-size: 2rem;
+    font-weight: 600;
+    color: #495057;
+    margin: 0;
+}
+
+.quick-actions {
+    display: flex;
+    gap: 0.75rem;
+}
+
+.btn-custom {
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
+    font-weight: 500;
+    text-decoration: none;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 0.875rem;
+}
+
+.btn-primary-custom {
+    background-color: #0d6efd;
+    color: white;
+}
+
+.btn-primary-custom:hover {
+    background-color: #0b5ed7;
+    color: white;
+}
+
+.btn-success-custom {
+    background-color: #198754;
+    color: white;
+}
+
+.btn-success-custom:hover {
+    background-color: #157347;
+    color: white;
+}
+
+.btn-outline-custom {
+    background-color: white;
+    color: #6c757d;
+    border: 1px solid #dee2e6;
+}
+
+.btn-outline-custom:hover {
+    background-color: #f8f9fa;
+    color: #495057;
+}
+
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+@media (max-width: 768px) {
+    .dashboard-grid {
+        grid-template-columns: 1fr;
+    }
+    .dashboard-header {
+        flex-direction: column;
+        gap: 1rem;
+        align-items: stretch;
+    }
+}
+
+.dashboard-card {
+    background: white;
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    border: 1px solid #e9ecef;
+}
+
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.card-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: #495057;
+    margin: 0;
+}
+
+.active-timesheet-card {
+    border-left: 4px solid #198754;
+    background: linear-gradient(135deg, #f8fff9 0%, #ffffff 100%);
+}
+
+.timesheet-item {
+    padding: 0.75rem 0;
+    border-bottom: 1px solid #f1f3f4;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.timesheet-item:last-child {
+    border-bottom: none;
+}
+
+.timesheet-info h6 {
+    margin: 0 0 0.25rem 0;
+    font-weight: 600;
+    color: #495057;
+}
+
+.timesheet-meta {
+    font-size: 0.875rem;
+    color: #6c757d;
+}
+
+.status-badge {
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.status-active {
+    background-color: #d1e7dd;
+    color: #0f5132;
+}
+
+.status-submitted {
+    background-color: #fff3cd;
+    color: #664d03;
+}
+
+.status-approved {
+    background-color: #cff4fc;
+    color: #055160;
+}
+
+.status-rejected {
+    background-color: #f8d7da;
+    color: #58151c;
+}
+
+.status-draft {
+    background-color: #e2e3e5;
+    color: #41464b;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 2rem;
+    color: #6c757d;
+}
+
+.empty-state-icon {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    opacity: 0.5;
+}
+
+.approval-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.btn-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+}
+
+.active-timer {
+    background: linear-gradient(45deg, #198754, #20c997);
+    color: white;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.timer-display {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.check-in-form {
+    background: #f8f9fa;
+    padding: 1rem;
+    border-radius: 0.375rem;
+    margin-top: 1rem;
+}
+
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    color: #495057;
+}
+
+.form-control {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid #ced4da;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: #86b7fe;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+}
+</style>
+{% endblock %}
+
+{% block page_content %}
+<div class="timesheet-dashboard">
+    <div class="dashboard-header">
+        <h1 class="dashboard-title">Timesheet Dashboard</h1>
+        <div class="quick-actions">
+            {% if not active_timesheet %}
+            <button class="btn-custom btn-primary-custom" onclick="showCheckInForm()">
+                <i class="fa fa-clock-o"></i> Quick Check-In
+            </button>
+            {% endif %}
+            <a href="/app/timesheet-entry" class="btn-custom btn-success-custom">
+                <i class="fa fa-list"></i> All Timesheets
+            </a>
+            <a href="/app/project" class="btn-custom btn-outline-custom">
+                <i class="fa fa-folder"></i> Projects
+            </a>
+            <a href="/app/task" class="btn-custom btn-outline-custom">
+                <i class="fa fa-tasks"></i> Tasks
+            </a>
+        </div>
+    </div>
+
+    {% if active_timesheet %}
+    <div class="dashboard-card active-timesheet-card">
+        <div class="card-header">
+            <h3 class="card-title">
+                <i class="fa fa-play-circle text-success"></i> Active Timesheet
+            </h3>
+        </div>
+        <div class="active-timer">
+            <div class="timer-display" id="active-timer">00:00:00</div>
+            <div><strong>Project:</strong> {{ active_timesheet.project }}</div>
+            <div><strong>Task:</strong> {{ active_timesheet.task }}</div>
+            {% if active_timesheet.location %}
+            <div><strong>Location:</strong> {{ active_timesheet.location }}</div>
+            {% endif %}
+            <div><strong>Started:</strong> {{ frappe.utils.format_datetime(active_timesheet.check_in_time) }}</div>
+        </div>
+        <button class="btn-custom btn-primary-custom" onclick="checkOut('{{ active_timesheet.name }}')">
+            <i class="fa fa-stop-circle"></i> Check Out
+        </button>
+    </div>
+    {% endif %}
+
+    <div class="dashboard-grid">
+        <div class="dashboard-card">
+            <div class="card-header">
+                <h3 class="card-title">
+                    <i class="fa fa-history"></i> Recent Timesheets
+                </h3>
+                <a href="/app/timesheet-entry?employee={{ frappe.session.user }}" class="btn-custom btn-outline-custom btn-sm">View All</a>
+            </div>
+            {% if recent_timesheets %}
+                {% for timesheet in recent_timesheets %}
+                <div class="timesheet-item">
+                    <div class="timesheet-info">
+                        <h6>{{ timesheet.project }} - {{ timesheet.task }}</h6>
+                        <div class="timesheet-meta">
+                            {{ frappe.utils.format_date(timesheet.date) }}
+                            {% if timesheet.duration_hours %}
+                            • {{ "%.2f"|format(timesheet.duration_hours) }} hours
+                            {% endif %}
+                        </div>
+                    </div>
+                    <span class="status-badge status-{{ timesheet.status.lower() }}">
+                        {{ timesheet.status }}
+                    </span>
+                </div>
+                {% endfor %}
+            {% else %}
+            <div class="empty-state">
+                <div class="empty-state-icon">📋</div>
+                <p>No timesheets found</p>
+                <button class="btn-custom btn-primary-custom" onclick="showCheckInForm()">Create Your First Timesheet</button>
+            </div>
+            {% endif %}
+        </div>
+
+        {% if is_project_manager %}
+        <div class="dashboard-card">
+            <div class="card-header">
+                <h3 class="card-title">
+                    <i class="fa fa-check-circle"></i> Pending Approvals
+                </h3>
+                <a href="/app/timesheet-entry?status=Submitted" class="btn-custom btn-outline-custom btn-sm">View All</a>
+            </div>
+            {% if pending_approvals %}
+                {% for timesheet in pending_approvals %}
+                <div class="timesheet-item">
+                    <div class="timesheet-info">
+                        <h6>{{ timesheet.employee }} - {{ timesheet.project }}</h6>
+                        <div class="timesheet-meta">
+                            {{ timesheet.task }} • {{ frappe.utils.format_date(timesheet.date) }} • {{ "%.2f"|format(timesheet.duration_hours) }} hours
+                        </div>
+                    </div>
+                    <div class="approval-actions">
+                        <button class="btn-custom btn-success-custom btn-sm" onclick="approveTimesheet('{{ timesheet.name }}')">
+                            <i class="fa fa-check"></i> Approve
+                        </button>
+                        <button class="btn-custom btn-outline-custom btn-sm" onclick="rejectTimesheet('{{ timesheet.name }}')">
+                            <i class="fa fa-times"></i> Reject
+                        </button>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+            <div class="empty-state">
+                <div class="empty-state-icon">✅</div>
+                <p>No pending approvals</p>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Check-in Form Modal -->
+    <div id="check-in-modal" style="display: none;">
+        <div class="dashboard-card">
+            <div class="card-header">
+                <h3 class="card-title">Quick Check-In</h3>
+                <button onclick="hideCheckInForm()" class="btn-custom btn-outline-custom btn-sm">
+                    <i class="fa fa-times"></i>
+                </button>
+            </div>
+            <form id="check-in-form" class="check-in-form">
+                <div class="form-group">
+                    <label class="form-label">Project</label>
+                    <select class="form-control" id="project-select" required onchange="loadTasks()">
+                        <option value="">Select Project</option>
+                        {% for project in projects %}
+                        <option value="{{ project.name }}">{{ project.project_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Task</label>
+                    <select class="form-control" id="task-select" required>
+                        <option value="">Select Task</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Location (Optional)</label>
+                    <input type="text" class="form-control" id="location-input" placeholder="Enter location">
+                </div>
+                <button type="submit" class="btn-custom btn-primary-custom">
+                    <i class="fa fa-play"></i> Start Timer
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block script_include %}
+<script>
+// Timer for active timesheet
+{%iif f acti_te_timesh %}
+lee stt %}newD()
+uunctionnupdtoupdam (
+    let now Date();
+    let difl = tfw - storw- st;me;
+    let hours = Math.floor(diff / (1000 * 60 * 60));
+    let minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    let seconds = Math.floor((diff % (1000 * 60)) / 1000);
+    
+    document.getElementById('active-timer').textContent = 
+        String(hours).padStart(2, '0') + ':' + 
+        String(minutes).padStart(2, '0') + ':' + 
+        String(seconds).padStart(2, '0');
+}
+setInterval(updateTimer, 1000);
+updateTimer();
+{% endif %}
+
+function showCheckInForm() {
+    document.getElementById('check-in-modal').style.display = 'block';
+}
+
+function hideCheckInForm() {
+    document.getElementById('check-in-modal').style.display = 'none';
+}
+
+function loadTasks() {
+    const projectSelect = document.getElementById('project-select');
+    const taskSelect = document.getElementById('task-select');
+    const project = projectSelect.value;
+    
+    taskSelect.innerHTML = '<option value="">Loading...</option>';
+    
+    if (project) {
+        frappe.call({
+            method: 'frappe.client.get_list',
+            args: {
+                doctype: 'Task',
+                filters: { project: project },
+                fields: ['name', 'task_name']
+            },
+            callback: function(r) {
+                taskSelect.innerHTML = '<option value="">Select Task</option>';
+                if (r.message) {
+                    r.message.forEach(task => {
+                        taskSelect.innerHTML += `<option value="${task.name}">${task.task_name}</option>`;
+                    });
+                }
+            }
+        });
+    } else {
+        taskSelect.innerHTML = '<option value="">Select Task</option>';
+    }
+}
+
+document.getElementById('check-in-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const project = document.getElementById('project-select').value;
+    const task = document.getElementById('task-select').value;
+    const location = document.getElementById('location-input').value;
+    
+    frappe.call({
+        method: 'erplite.projects.doctype.timesheet_entry.timesheet_entry.check_in',
+        args: { project, task, location },
+        callback: function(r) {
+            if (r.message && r.message.success) {
+                frappe.msgprint(r.message.message);
+                setTimeout(() => window.location.reload(), 1000);
+            } else {
+                frappe.msgprint(r.message.message || 'Check-in failed');
+            }
+        }
+    });
+});
+
+function checkOut(timesheetId) {
+    frappe.prompt({
+        label: 'Work Description',
+        fieldname: 'description',
+        fieldtype: 'Text',
+        reqd: 0
+    }, function(values) {
+        frappe.call({
+            method: 'erplite.projects.doctype.timesheet_entry.timesheet_entry.check_out',
+            args: {
+                timesheet_id: timesheetId,
+                description: values.description
+            },
+            callback: function(r) {
+                if (r.message && r.message.success) {
+                    frappe.msgprint(r.message.message);
+                    setTimeout(() => window.location.reload(), 1000);
+                } else {
+                    frappe.msgprint(r.message.message || 'Check-out failed');
+                }
+            }
+        });
+    }, 'Check Out', 'Check Out');
+}
+
+function approveTimesheet(timesheetId) {
+    frappe.confirm('Approve this timesheet?', function() {
+        frappe.call({
+            method: 'erplite.projects.doctype.timesheet_entry.timesheet_entry.approve_timesheet',
+            args: { timesheet_id: timesheetId },
+            callback: function(r) {
+                if (r.message && r.message.success) {
+                    frappe.msgprint(r.message.message);
+                    setTimeout(() => window.location.reload(), 1000);
+                } else {
+                    frappe.msgprint(r.message.message || 'Approval failed');
+                }
+            }
+        });
+    });
+}
+
+function rejectTimesheet(timesheetId) {
+    frappe.prompt({
+        label: 'Rejection Reason',
+        fieldname: 'reason',
+        fieldtype: 'Text',
+        reqd: 1
+    }, function(values) {
+        frappe.call({
+            method: 'erplite.projects.doctype.timesheet_entry.timesheet_entry.reject_timesheet',
+            args: {
+                timesheet_id: timesheetId,
+                approval_notes: values.reason
+            },
+            callback: function(r) {
+                if (r.message && r.message.success) {
+                    frappe.msgprint(r.message.message);
+                    setTimeout(() => window.location.reload(), 1000);
+                } else {
+                    frappe.msgprint(r.message.message || 'Rejection failed');
+                }
+            }
+        });
+    }, 'Reject Timesheet', 'Reject');
+}
+</script>
+
+{% endblock %}

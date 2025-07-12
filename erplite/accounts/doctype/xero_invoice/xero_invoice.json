@@ -1,0 +1,173 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:invoice_number",
+ "creation": "2023-04-30 10:25:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "invoice_details_section",
+  "invoice_number",
+  "invoice_type",
+  "contact_name",
+  "date",
+  "due_date",
+  "column_break_7",
+  "xero_invoice_id",
+  "status",
+  "total",
+  "currency_code",
+  "company",
+  "erp_details_section",
+  "erp_invoice_type",
+  "erp_invoice",
+  "last_sync_date"
+ ],
+ "fields": [
+  {
+   "fieldname": "invoice_details_section",
+   "fieldtype": "Section Break",
+   "label": "Invoice Details"
+  },
+  {
+   "fieldname": "invoice_number",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Invoice Number",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "invoice_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Invoice Type",
+   "options": "ACCREC\nACCPAY",
+   "reqd": 1
+  },
+  {
+   "fieldname": "contact_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Contact Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Date",
+   "reqd": 1
+  },
+  {
+   "fieldname": "due_date",
+   "fieldtype": "Date",
+   "label": "Due Date"
+  },
+  {
+   "fieldname": "column_break_7",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "xero_invoice_id",
+   "fieldtype": "Data",
+   "label": "Xero Invoice ID",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "DRAFT\nSUBMITTED\nAUTHORISED\nPAID\nVOIDED\nDELETED",
+   "reqd": 1
+  },
+  {
+   "fieldname": "total",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Total",
+   "reqd": 1
+  },
+  {
+   "fieldname": "currency_code",
+   "fieldtype": "Data",
+   "label": "Currency Code",
+   "reqd": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "fieldname": "erp_details_section",
+   "fieldtype": "Section Break",
+   "label": "ERP Details"
+  },
+  {
+   "fieldname": "erp_invoice_type",
+   "fieldtype": "Select",
+   "label": "ERP Invoice Type",
+   "options": "Sales Invoice\nPurchase Invoice"
+  },
+  {
+   "fieldname": "erp_invoice",
+   "fieldtype": "Dynamic Link",
+   "label": "ERP Invoice",
+   "options": "erp_invoice_type"
+  },
+  {
+   "fieldname": "last_sync_date",
+   "fieldtype": "Datetime",
+   "label": "Last Synchronized On",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2023-04-30 10:25:00.000000",
+ "modified_by": "Administrator",
+ "module": "Accounts",
+ "name": "Xero Invoice",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager",
+   "share": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts User",
+   "share": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}

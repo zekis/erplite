@@ -1,0 +1,69 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-05-22 11:15:26.608492",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "description",
+  "status",
+  "example",
+  "devices",
+  "ouput"
+ ],
+ "fields": [
+  {
+   "fieldname": "description",
+   "fieldtype": "Data",
+   "label": "Description"
+  },
+  {
+   "fieldname": "example",
+   "fieldtype": "Long Text",
+   "label": "Example Format"
+  },
+  {
+   "fieldname": "devices",
+   "fieldtype": "Long Text",
+   "label": "List of Devices"
+  },
+  {
+   "fieldname": "ouput",
+   "fieldtype": "Long Text",
+   "label": "YAML Output"
+  },
+  {
+   "default": "New",
+   "description": "New, or Processed",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "New\nProcessed"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-05-22 11:30:11.250912",
+ "modified_by": "Administrator",
+ "module": "Projects",
+ "name": "Zabbix Import",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "description"
+}

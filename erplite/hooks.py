@@ -11,22 +11,29 @@ app_license = "mit"
 # required_apps = []
 
 # Each item in the list will be shown as an app in the apps page
-# add_to_apps_screen = [
-# 	{
-# 		"name": "erplite",
-# 		"logo": "/assets/erplite/logo.png",
-# 		"title": "Erplite",
-# 		"route": "/erplite",
-# 		"has_permission": "erplite.api.permission.has_app_permission"
-# 	}
-# ]
+add_to_apps_screen = [
+	{
+		"name": "projects_timesheets",
+		"logo": "/assets/erplite/images/schedule.png",
+		"title": "Timesheets",
+		"route": "/timesheet-calendar",
+		"has_permission": "erplite.projects.api.has_timesheet_permission"
+	},
+	{
+		"name": "scheduler",
+		"logo": "/assets/erplite/images/scheduler.png",
+		"title": "Scheduler",
+		"route": "/scheduler",
+		"has_permission": "erplite.projects.api.has_timesheet_permission"
+	}
+]
 
 # Includes in <head>
 # ------------------
 
 # include js, css files in header of desk.html
-# app_include_css = "/assets/erplite/css/erplite.css"
-# app_include_js = "/assets/erplite/js/erplite.js"
+app_include_css = "/assets/erplite/css/timesheet-calendar.css"
+# app_include_js = "/assets/erplite/js/timesheet-calendar.js"  # Removed global include - now loaded only on timesheet calendar page
 
 # include js, css files in header of web template
 # web_include_css = "/assets/erplite/css/erplite.css"
@@ -81,6 +88,10 @@ app_license = "mit"
 
 # Installation
 # ------------
+
+fixtures = [
+	"Workspace"
+]
 
 # before_install = "erplite.install.before_install"
 # after_install = "erplite.install.after_install"
@@ -241,4 +252,3 @@ app_license = "mit"
 # default_log_clearing_doctypes = {
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
-

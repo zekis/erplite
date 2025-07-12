@@ -1,0 +1,155 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:XERO-SYNC-{YY}-{MM}-{DD}-{####}",
+ "creation": "2023-04-30 10:18:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "status_section",
+  "status",
+  "start_time",
+  "end_time",
+  "column_break_5",
+  "company",
+  "user",
+  "sync_details_section",
+  "accounts_synced",
+  "invoices_synced",
+  "contacts_synced",
+  "column_break_12",
+  "payments_synced",
+  "items_synced",
+  "error_section",
+  "error"
+ ],
+ "fields": [
+  {
+   "fieldname": "status_section",
+   "fieldtype": "Section Break",
+   "label": "Status"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "In Progress\nSuccess\nFailed",
+   "reqd": 1
+  },
+  {
+   "fieldname": "start_time",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Start Time",
+   "reqd": 1
+  },
+  {
+   "fieldname": "end_time",
+   "fieldtype": "Datetime",
+   "label": "End Time"
+  },
+  {
+   "fieldname": "column_break_5",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "User",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sync_details_section",
+   "fieldtype": "Section Break",
+   "label": "Sync Details"
+  },
+  {
+   "default": "0",
+   "fieldname": "accounts_synced",
+   "fieldtype": "Int",
+   "label": "Accounts Synced"
+  },
+  {
+   "default": "0",
+   "fieldname": "invoices_synced",
+   "fieldtype": "Int",
+   "label": "Invoices Synced"
+  },
+  {
+   "default": "0",
+   "fieldname": "contacts_synced",
+   "fieldtype": "Int",
+   "label": "Contacts Synced"
+  },
+  {
+   "fieldname": "column_break_12",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "payments_synced",
+   "fieldtype": "Int",
+   "label": "Payments Synced"
+  },
+  {
+   "default": "0",
+   "fieldname": "items_synced",
+   "fieldtype": "Int",
+   "label": "Items Synced"
+  },
+  {
+   "depends_on": "eval:doc.status === 'Failed'",
+   "fieldname": "error_section",
+   "fieldtype": "Section Break",
+   "label": "Error"
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Long Text",
+   "label": "Error"
+  }
+ ],
+ "links": [],
+ "modified": "2023-04-30 10:18:00.000000",
+ "modified_by": "Administrator",
+ "module": "Setup",
+ "name": "Xero Sync Log",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "All",
+   "share": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}

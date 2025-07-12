@@ -1,0 +1,202 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:account_name",
+ "creation": "2023-05-04 16:37:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "account_name",
+  "account_number",
+  "is_group",
+  "column_break_4",
+  "parent_account",
+  "company",
+  "section_break_7",
+  "root_type",
+  "report_type",
+  "account_type",
+  "column_break_11",
+  "currency",
+  "tax_rate",
+  "freeze_account",
+  "balance_must_be",
+  "section_break_16",
+  "xero_account_id",
+  "xero_account_code",
+  "column_break_19",
+  "xero_account_type",
+  "xero_tax_type"
+ ],
+ "fields": [
+  {
+   "fieldname": "account_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Account Name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "account_number",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Account Number"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_group",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Is Group"
+  },
+  {
+   "fieldname": "column_break_4",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "parent_account",
+   "fieldtype": "Link",
+   "label": "Parent Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_break_7",
+   "fieldtype": "Section Break",
+   "label": "Account Type"
+  },
+  {
+   "fieldname": "root_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Root Type",
+   "options": "Asset\nLiability\nEquity\nIncome\nExpense",
+   "reqd": 1
+  },
+  {
+   "fieldname": "report_type",
+   "fieldtype": "Select",
+   "label": "Report Type",
+   "options": "\nBalance Sheet\nProfit and Loss"
+  },
+  {
+   "fieldname": "account_type",
+   "fieldtype": "Select",
+   "label": "Account Type",
+   "options": "\nBank\nCash\nStock\nReceivable\nPayable\nTax\nChargeable\nWarehouse\nFixed Asset\nDepreciation\nCapital Work in Progress\nAsset Received But Not Billed\nExpenses Included In Valuation\nStock Adjustment\nStock Received But Not Billed\nCost of Goods Sold\nIncome Account\nExpense Account\nEquity"
+  },
+  {
+   "fieldname": "column_break_11",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "currency",
+   "fieldtype": "Link",
+   "label": "Currency",
+   "options": "Currency"
+  },
+  {
+   "fieldname": "tax_rate",
+   "fieldtype": "Percent",
+   "label": "Tax Rate"
+  },
+  {
+   "default": "0",
+   "fieldname": "freeze_account",
+   "fieldtype": "Check",
+   "label": "Freeze Account"
+  },
+  {
+   "fieldname": "balance_must_be",
+   "fieldtype": "Select",
+   "label": "Balance Must Be",
+   "options": "\nDebit\nCredit"
+  },
+  {
+   "fieldname": "section_break_16",
+   "fieldtype": "Section Break",
+   "label": "Xero Integration"
+  },
+  {
+   "fieldname": "xero_account_id",
+   "fieldtype": "Data",
+   "label": "Xero Account ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "xero_account_code",
+   "fieldtype": "Data",
+   "label": "Xero Account Code",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_19",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "xero_account_type",
+   "fieldtype": "Data",
+   "label": "Xero Account Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "xero_tax_type",
+   "fieldtype": "Data",
+   "label": "Xero Tax Type",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2023-05-04 16:37:00.000000",
+ "modified_by": "Administrator",
+ "module": "Accounts",
+ "name": "Account",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts User",
+   "share": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}

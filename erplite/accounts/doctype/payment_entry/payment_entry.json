@@ -1,0 +1,313 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "naming_series:",
+ "creation": "2023-05-04 17:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "payment_type",
+  "posting_date",
+  "party_type",
+  "party",
+  "party_name",
+  "column_break_6",
+  "company",
+  "mode_of_payment",
+  "payment_status",
+  "section_break_10",
+  "paid_from",
+  "paid_from_account_type",
+  "paid_from_account_currency",
+  "column_break_14",
+  "paid_to",
+  "paid_to_account_type",
+  "paid_to_account_currency",
+  "section_break_18",
+  "paid_amount",
+  "source_exchange_rate",
+  "column_break_21",
+  "received_amount",
+  "target_exchange_rate",
+  "section_break_24",
+  "reference_type",
+  "reference_name",
+  "column_break_27",
+  "reference_date",
+  "reference_amount",
+  "section_break_30",
+  "remarks",
+  "section_break_32",
+  "xero_payment_id",
+  "column_break_34",
+  "xero_sync_date"
+ ],
+ "fields": [
+  {
+   "default": "PAY-.YYYY.-",
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "options": "PAY-.YYYY.-",
+   "reqd": 1
+  },
+  {
+   "fieldname": "payment_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Payment Type",
+   "options": "Receive\nPay",
+   "reqd": 1
+  },
+  {
+   "default": "Today",
+   "fieldname": "posting_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Posting Date",
+   "reqd": 1
+  },
+  {
+   "fieldname": "party_type",
+   "fieldtype": "Select",
+   "label": "Party Type",
+   "options": "Customer\nSupplier",
+   "reqd": 1
+  },
+  {
+   "fieldname": "party",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Party",
+   "reqd": 1
+  },
+  {
+   "fieldname": "party_name",
+   "fieldtype": "Data",
+   "label": "Party Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_6",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "mode_of_payment",
+   "fieldtype": "Select",
+   "label": "Mode of Payment",
+   "options": "Cash\nBank Transfer\nCheck\nCredit Card\nOther",
+   "reqd": 1
+  },
+  {
+   "default": "Draft",
+   "fieldname": "payment_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Draft\nSubmitted\nCancelled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_10",
+   "fieldtype": "Section Break",
+   "label": "Accounts"
+  },
+  {
+   "fieldname": "paid_from",
+   "fieldtype": "Link",
+   "label": "Paid From",
+   "options": "Account",
+   "reqd": 1
+  },
+  {
+   "fieldname": "paid_from_account_type",
+   "fieldtype": "Data",
+   "label": "Paid From Account Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "paid_from_account_currency",
+   "fieldtype": "Link",
+   "label": "Paid From Account Currency",
+   "options": "Currency",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_14",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "paid_to",
+   "fieldtype": "Link",
+   "label": "Paid To",
+   "options": "Account",
+   "reqd": 1
+  },
+  {
+   "fieldname": "paid_to_account_type",
+   "fieldtype": "Data",
+   "label": "Paid To Account Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "paid_to_account_currency",
+   "fieldtype": "Link",
+   "label": "Paid To Account Currency",
+   "options": "Currency",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_18",
+   "fieldtype": "Section Break",
+   "label": "Amount"
+  },
+  {
+   "fieldname": "paid_amount",
+   "fieldtype": "Currency",
+   "label": "Paid Amount",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "source_exchange_rate",
+   "fieldtype": "Float",
+   "label": "Source Exchange Rate"
+  },
+  {
+   "fieldname": "column_break_21",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "received_amount",
+   "fieldtype": "Currency",
+   "label": "Received Amount",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "target_exchange_rate",
+   "fieldtype": "Float",
+   "label": "Target Exchange Rate"
+  },
+  {
+   "fieldname": "section_break_24",
+   "fieldtype": "Section Break",
+   "label": "Reference"
+  },
+  {
+   "fieldname": "reference_type",
+   "fieldtype": "Select",
+   "label": "Reference Type",
+   "options": "\nSales Invoice\nPurchase Invoice"
+  },
+  {
+   "fieldname": "reference_name",
+   "fieldtype": "Dynamic Link",
+   "label": "Reference Name",
+   "options": "reference_type"
+  },
+  {
+   "fieldname": "column_break_27",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "reference_date",
+   "fieldtype": "Date",
+   "label": "Reference Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reference_amount",
+   "fieldtype": "Currency",
+   "label": "Reference Amount",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_30",
+   "fieldtype": "Section Break",
+   "label": "Remarks"
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Text Editor",
+   "label": "Remarks"
+  },
+  {
+   "fieldname": "section_break_32",
+   "fieldtype": "Section Break",
+   "label": "Xero Integration"
+  },
+  {
+   "fieldname": "xero_payment_id",
+   "fieldtype": "Data",
+   "label": "Xero Payment ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_34",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "xero_sync_date",
+   "fieldtype": "Datetime",
+   "label": "Xero Sync Date",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2023-05-04 17:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Accounts",
+ "name": "Payment Entry",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts User",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}
