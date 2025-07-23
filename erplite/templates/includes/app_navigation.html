@@ -1,0 +1,63 @@
+<!-- Shared App Navigation Sidebar -->
+<nav class="app-sidebar" id="appSidebar">
+    <div class="sidebar-header">
+        <h2 class="sidebar-title">ERPLite</h2>
+        <button class="sidebar-toggle" id="sidebarToggle" title="Collapse sidebar">
+            <i class="mdi mdi-chevron-left"></i>
+        </button>
+    </div>
+    
+    <div class="sidebar-menu">
+        <a href="/todo" class="menu-item" data-app="todo">
+            <i class="mdi mdi-format-list-checks"></i>
+            <span class="menu-text">Todo Kanban</span>
+        </a>
+        <a href="/scheduler" class="menu-item" data-app="scheduler">
+            <i class="mdi mdi-calendar-clock"></i>
+            <span class="menu-text">Scheduler</span>
+        </a>
+        <a href="/timesheet-calendar" class="menu-item" data-app="timesheet-calendar">
+            <i class="mdi mdi-calendar"></i>
+            <span class="menu-text">Timesheet Calendar</span>
+        </a>
+        
+        <!-- Separator -->
+        <div class="menu-separator"></div>
+        
+        <a href="/app" class="menu-item" data-app="desk">
+            <i class="mdi mdi-view-dashboard"></i>
+            <span class="menu-text">Frappe Desk</span>
+        </a>
+    </div>
+    
+    <div class="sidebar-footer">
+        <div class="user-info">
+            <div class="user-avatar-sidebar">
+                {% if current_user %}
+                    {{ current_user[:2].upper() }}
+                {% else %}
+                    GU
+                {% endif %}
+            </div>
+            <div class="user-details">
+                <div class="user-name-sidebar">
+                    {% if current_user %}
+                        {{ current_user }}
+                    {% else %}
+                        Guest User
+                    {% endif %}
+                </div>
+                <div class="user-role">
+                    {% if is_manager %}
+                        Manager
+                    {% else %}
+                        User
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</nav>
+
+<!-- Sidebar overlay for mobile -->
+<div class="sidebar-overlay" id="sidebarOverlay"></div>

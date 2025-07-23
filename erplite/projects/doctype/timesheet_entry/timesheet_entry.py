@@ -51,13 +51,13 @@ class TimesheetEntry(Document):
                 "is_active": 1,
                 "name": ["!=", self.name or ""]
             },
-            fields=["name", "check_in_time", "project", "task"]
+            fields=["name", "check_in_time", "project", "activity"]
         )
         
         if active_entries:
             entry = active_entries[0]
-            frappe.throw(_("Employee {0} already has an active timesheet entry: {1} (Project: {2}, Task: {3}). Please check out first.").format(
-                self.employee, entry.name, entry.project, entry.task
+            frappe.throw(_("Employee {0} already has an active timesheet entry: {1} (Project: {2}, Activity: {3}). Please check out first.").format(
+                self.employee, entry.name, entry.project, entry.activity
             ))
     
     def on_update(self):
@@ -73,7 +73,7 @@ class TimesheetEntry(Document):
             self.date = get_datetime(self.check_in_time).date()
 
 @frappe.whitelist()
-def check_in(project, task, location=None):
+def check_in(project, activity, location=None):
     """Quick check-in function"""
     try:
         # Check if user already has an active entry
@@ -82,13 +82,13 @@ def check_in(project, task, location=None):
                 "employee": frappe.session.user,
                 "is_active": 1
             },
-            fields=["name", "project", "task"]
+            fields=["name", "project", "activity"]
         )
         
         if active_entry:
             entry = active_entry[0]
-            frappe.throw(_("You already have an active timesheet entry: {0} (Project: {1}, Task: {2}). Please check out first.").format(
-                entry.name, entry.project, entry.task
+            frappe.throw(_("You already have an active timesheet entry: {0} (Project: {1}, Activity: {2}). Please check out first.").format(
+                entry.name, entry.project, entry.activity
             ))
         
         # Create new timesheet entry
@@ -96,7 +96,7 @@ def check_in(project, task, location=None):
             "doctype": "Timesheet Entry",
             "employee": frappe.session.user,
             "project": project,
-            "task": task,
+            "activity": activity,
             "location": location,
             "check_in_time": now_datetime(),
             "date": frappe.utils.today(),
@@ -106,7 +106,7 @@ def check_in(project, task, location=None):
         
         return {
             "success": True,
-            "message": _("Successfully checked in to {0}").format(task),
+            "message": _("Successfully checked in to {0}").format(activity),
             "timesheet_id": timesheet.name
         }
         
@@ -158,7 +158,7 @@ def get_active_timesheet():
             "employee": frappe.session.user,
             "is_active": 1
         },
-        fields=["name", "project", "task", "check_in_time", "location"],
+        fields=["name", "project", "activity", "check_in_time", "location"],
         limit=1
     )
     

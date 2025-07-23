@@ -18,11 +18,14 @@ def get_scheduler_data(start_date=None, end_date=None, resource=None, project=No
     if not end_date:
         end_date = frappe.utils.add_days(start_date, 30)
     
-    # Get projects and tasks
-    projects_data = get_projects_and_tasks()
+    # Get projects and activities
+    projects_data = get_projects_and_activities()
     
     # Get resources
     resources_data = get_resources()
+    
+    # Get roles
+    roles_data = get_roles()
     
     # Get schedule entries
     schedule_entries = get_schedule_entries(start_date, end_date, resource, project)
@@ -33,6 +36,7 @@ def get_scheduler_data(start_date=None, end_date=None, resource=None, project=No
     return {
         "projects": projects_data,
         "resources": resources_data,
+        "roles": roles_data,
         "schedule_entries": schedule_entries,
         "project_colors": project_colors,
         "date_range": {
@@ -42,33 +46,43 @@ def get_scheduler_data(start_date=None, end_date=None, resource=None, project=No
     }
 
 @frappe.whitelist()
-def get_projects_and_tasks():
-    """Get all projects with their tasks"""
+def get_projects_and_activities():
+    """Get all projects with their activities"""
     
     projects = frappe.db.sql("""
         SELECT 
             p.name,
             p.project_name,
             p.status,
-            p.project_manager
+            p.project_manager,
+            p.division,
+            p.work_type
         FROM `tabProject` p
         WHERE p.status != 'Cancelled'
         ORDER BY p.project_name
     """, as_dict=True)
     
-    # Get tasks for each project
+    # Get division details for each project
     for project in projects:
-        project['tasks'] = frappe.db.sql("""
+        if project.division:
+            division_data = frappe.db.get_value("Division", project.division, 
+                ["division_name", "color"], as_dict=True)
+            if division_data:
+                project['division_name'] = division_data.division_name
+                project['division_color'] = division_data.color
+        
+        # Get activities for each project
+        project['activities'] = frappe.db.sql("""
             SELECT 
                 t.name,
-                t.task_name,
+                t.subject,
                 t.status,
                 t.priority,
                 t.estimated_hours,
                 t.progress_percent
-            FROM `tabTask` t
+            FROM `tabActivity` t
             WHERE t.project = %s AND t.status != 'Cancelled'
-            ORDER BY t.task_name
+            ORDER BY t.subject
         """, (project.name,), as_dict=True)
     
     return projects
@@ -100,6 +114,31 @@ def get_resources(resource_type=None, status="Active"):
     return resources
 
 @frappe.whitelist()
+def get_roles(status="Active"):
+    """Get all scheduler roles"""
+    
+    filters = {"is_active": 1}
+    if status == "Active":
+        filters["is_active"] = 1
+    elif status == "Inactive":
+        filters["is_active"] = 0
+    
+    roles = frappe.get_all("Scheduler Role",
+        filters=filters,
+        fields=["name", "role_name", "role_code", "description", "is_active", "color", "hourly_rate"],
+        order_by="role_name"
+    )
+    
+    # Ensure all numeric fields are JSON serializable
+    for role in roles:
+        if role.get('hourly_rate'):
+            role['hourly_rate'] = float(role['hourly_rate'])
+        if role.get('is_active'):
+            role['is_active'] = int(role['is_active'])
+    
+    return roles
+
+@frappe.whitelist()
 def get_schedule_entries(start_date, end_date, resource=None, project=None):
     """Get schedule entries within date range"""
     
@@ -116,7 +155,7 @@ def get_schedule_entries(start_date, end_date, resource=None, project=None):
     entries = frappe.get_all("Schedule Entry",
         filters=filters,
         fields=[
-            "name", "project", "task", "resource", "schedule_date", 
+            "name", "project", "activity", "resource", "schedule_date", 
             "duration", "status", "priority", "start_time", "end_time", 
             "description"
         ],
@@ -125,11 +164,11 @@ def get_schedule_entries(start_date, end_date, resource=None, project=None):
     
     # Enrich entries with additional data and ensure JSON serializable
     for entry in entries:
-        # Get project and task names
+        # Get project and activity names
         if entry.project:
             entry['project_name'] = frappe.db.get_value("Project", entry.project, "project_name")
-        if entry.task:
-            entry['task_name'] = frappe.db.get_value("Task", entry.task, "task_name")
+        if entry.activity:
+            entry['activity_name'] = frappe.db.get_value("Activity", entry.activity, "subject")
         if entry.resource:
             entry['resource_name'] = frappe.db.get_value("Resource", entry.resource, "resource_name")
         
@@ -159,7 +198,7 @@ def create_schedule_entry(data):
         
         # Set fields
         doc.project = data.get("project")
-        doc.task = data.get("task")
+        doc.activity = data.get("activity")
         doc.resource = data.get("resource")
         
         # Parse date properly to handle any timestamp issues
@@ -217,8 +256,8 @@ def update_schedule_entry(name, data):
         # Update fields
         if "project" in data:
             doc.project = data["project"]
-        if "task" in data:
-            doc.task = data["task"]
+        if "activity" in data:
+            doc.activity = data["activity"]
         if "resource" in data:
             doc.resource = data["resource"]
         if "schedule_date" in data:
@@ -348,25 +387,35 @@ def get_resource_utilization(resource, date):
     return result[0][0] if result else 0
 
 def get_project_colors():
-    """Get project colors (reuse from timesheet-calendar if available)"""
+    """Get project colors from Division doctype"""
     
-    try:
-        # Try to get colors from timesheet-calendar module
-        from erplite.projects.dashboard_widgets import get_project_colors as get_timesheet_colors
-        return get_timesheet_colors()
-    except:
-        # Fallback: generate basic colors
-        projects = frappe.get_all("Project", fields=["name", "project_name"])
-        colors = {}
-        color_palette = [
-            "#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6",
-            "#06b6d4", "#84cc16", "#f97316", "#ec4899", "#6366f1"
-        ]
-        
-        for i, project in enumerate(projects):
+    # Always use division-based colors, don't fallback to timesheet-calendar
+    projects = frappe.db.sql("""
+        SELECT 
+            p.name,
+            p.project_name,
+            p.division,
+            d.color as division_color
+        FROM `tabProject` p
+        LEFT JOIN `tabDivision` d ON p.division = d.name
+        WHERE p.status != 'Cancelled'
+    """, as_dict=True)
+    
+    colors = {}
+    color_palette = [
+        "#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6",
+        "#06b6d4", "#84cc16", "#f97316", "#ec4899", "#6366f1"
+    ]
+    
+    for i, project in enumerate(projects):
+        if project.division_color:
+            # Use division color if available
+            colors[project.name] = project.division_color
+        else:
+            # Fallback to color palette
             colors[project.name] = color_palette[i % len(color_palette)]
-        
-        return colors
+    
+    return colors
 
 @frappe.whitelist()
 def get_resource_capacity_report(resource, start_date, end_date):
@@ -382,7 +431,7 @@ def get_resource_capacity_report(resource, start_date, end_date):
             "schedule_date": ["between", [start_date, end_date]],
             "docstatus": ["!=", 2]
         },
-        fields=["schedule_date", "duration", "project", "task", "status"],
+        fields=["schedule_date", "duration", "project", "activity", "status"],
         order_by="schedule_date"
     )
     
@@ -446,18 +495,18 @@ def get_unassigned_entries(start_date=None, end_date=None, project=None):
     entries = frappe.get_all("Schedule Entry",
         filters=filters,
         fields=[
-            "name", "project", "task", "schedule_date", "duration", 
+            "name", "project", "activity", "schedule_date", "duration", 
             "status", "priority", "description"
         ],
         order_by="schedule_date, priority desc"
     )
     
-    # Enrich with project and task names
+    # Enrich with project and activity names
     for entry in entries:
         if entry.project:
             entry['project_name'] = frappe.db.get_value("Project", entry.project, "project_name")
-        if entry.task:
-            entry['task_name'] = frappe.db.get_value("Task", entry.task, "task_name")
+        if entry.activity:
+            entry['activity_name'] = frappe.db.get_value("Activity", entry.activity, "subject")
     
     return entries
 
@@ -481,10 +530,10 @@ def get_schedule_rows(start_date=None, end_date=None, project=None):
     schedule_rows = frappe.get_all("Schedule Row",
         filters=filters,
         fields=[
-            "name", "project", "task", "resource", "project_name", 
-            "task_name", "resource_name", "daily_entries", "total_hours"
+            "name", "project", "activity", "resource", "role", "project_name", 
+            "activity_name", "resource_name", "role_name", "daily_entries", "total_hours"
         ],
-        order_by="project, task, resource"
+        order_by="project, activity, resource"
     )
     
     # Filter daily entries to the requested date range
@@ -547,15 +596,16 @@ def get_schedule_rows(start_date=None, end_date=None, project=None):
 
 
 @frappe.whitelist()
-def create_schedule_row_entry(project, task=None, resource=None):
+def create_schedule_row_entry(project, activity=None, resource=None, role=None):
     """Create a new schedule row"""
     
     try:
         # Check if row already exists
         existing = frappe.db.exists("Schedule Row", {
             "project": project,
-            "task": task or "",
-            "resource": resource or ""
+            "activity": activity or "",
+            "resource": resource or "",
+            "role": role or ""
         })
         
         if existing:
@@ -568,10 +618,12 @@ def create_schedule_row_entry(project, task=None, resource=None):
         # Create new schedule row
         doc = frappe.new_doc("Schedule Row")
         doc.project = project
-        if task:
-            doc.task = task
+        if activity:
+            doc.activity = activity
         if resource:
             doc.resource = resource
+        if role:
+            doc.role = role
         doc.daily_entries = "{}"
         doc.insert()
         
@@ -805,6 +857,29 @@ def update_schedule_row_resource(schedule_row, resource=None):
             "message": str(e)
         }
 
+@frappe.whitelist()
+def update_schedule_row_role(schedule_row, role=None):
+    """Update the role assignment for a schedule row"""
+    
+    try:
+        doc = frappe.get_doc("Schedule Row", schedule_row)
+        doc.role = role
+        doc.save()
+        
+        return {
+            "success": True,
+            "message": "Schedule row role updated successfully",
+            "role": role,
+            "role_name": doc.role_name if role else None
+        }
+        
+    except Exception as e:
+        frappe.log_error(f"Error updating schedule row role: {str(e)}")
+        return {
+            "success": False,
+            "message": str(e)
+        }
+
 
 @frappe.whitelist()
 def delete_schedule_row(schedule_row):
@@ -824,3 +899,21 @@ def delete_schedule_row(schedule_row):
             "success": False,
             "message": str(e)
         }
+
+@frappe.whitelist()
+def schedule_log(message, level="Info"):
+    """Log messages for scheduler operations"""
+    
+    # create a schedule log doc
+    log_doc = frappe.new_doc("Scheduler Log")
+
+    log_doc.message = message
+    log_doc.level = level
+    log_doc.timestamp = frappe.utils.now()
+    log_doc.insert(ignore_permissions=True)
+    frappe.db.commit()
+    return {
+        "success": True,
+        "message": _("Log created successfully"),
+        "log_name": log_doc.name
+    }

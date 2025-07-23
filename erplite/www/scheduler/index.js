@@ -2,15 +2,87 @@
  * Scheduler Application Initialization
  * This file initializes the scheduler when the page loads
  */
+console.log('Initializing scheduler application...');
+// Load JavaScript files dynamically in correct order
+async function loadSchedulerScripts() {
+    
+    const scripts = [
+        `/assets/erplite/js/scheduler/utils/SchedulerUtils.js`,
+        `/assets/erplite/js/scheduler/utils/ResourceUtils.js`,
+        `/assets/erplite/js/scheduler/data/DataManager.js`,
+        `/assets/erplite/js/scheduler/rendering/RowRenderer.js`,
+        `/assets/erplite/js/scheduler/timeblocks/TimeBlockManager.js`,
+        `/assets/erplite/js/scheduler/toolbar/ToolbarManager.js`,
+        `/assets/erplite/js/scheduler/DropdownManager.js`,
+        `/assets/erplite/js/scheduler/ScheduleRowManager.js`,
+        `/assets/erplite/js/scheduler/Scheduler.js`
+    ];
+    
+    for (const scriptSrc of scripts) {
+        await loadScript(scriptSrc);
+    }
+}
 
-// Load the SchedulerApp class first
-frappe.ready(function() {
-    // Load the Scheduler.js file
-    frappe.require('/assets/erplite/js/scheduler/Scheduler.js', function() {
-        // Initialize scheduler after the script is loaded
-        initializeScheduler();
+// Helper function to load a script and wait for it to complete
+function loadScript(src) {
+    return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.onload = () => {
+            console.log(`Loaded: ${src}`);
+            resolve();
+        };
+        script.onerror = () => {
+            console.error(`Failed to load: ${src}`);
+            reject(new Error(`Failed to load script: ${src}`));
+        };
+        document.head.appendChild(script);
     });
-});
+}
+
+// Initialize scheduler when page is ready - try multiple methods
+function startSchedulerInitialization() {
+    console.log('Starting scheduler initialization...');
+    
+    // Method 1: Try frappe.ready if available
+    if (typeof frappe !== 'undefined' && frappe.ready) {
+        console.log('Using frappe.ready()');
+        frappe.ready(async function() {
+            console.log('frappe.ready called, starting script loading...');
+            await initializeSchedulerScripts();
+        });
+    } 
+    // Method 2: Use document ready as fallback
+    else if (document.readyState === 'loading') {
+        console.log('Using document.addEventListener(DOMContentLoaded)');
+        document.addEventListener('DOMContentLoaded', async function() {
+            console.log('DOMContentLoaded fired, starting script loading...');
+            await initializeSchedulerScripts();
+        });
+    } 
+    // Method 3: Document is already ready
+    else {
+        console.log('Document already ready, starting immediately');
+        setTimeout(async () => {
+            await initializeSchedulerScripts();
+        }, 100);
+    }
+}
+
+async function initializeSchedulerScripts() {
+    try {
+        console.log('Loading scheduler scripts...');
+        await loadSchedulerScripts();
+        console.log('All scheduler scripts loaded, initializing...');
+        initializeScheduler();
+    } catch (error) {
+        console.error('Failed to load scheduler scripts:', error);
+        showToast('Failed to load scheduler components: ' + error.message, 'error');
+    }
+}
+
+// Start initialization immediately
+startSchedulerInitialization();
 
 function initializeScheduler() {
     // Show loading overlay

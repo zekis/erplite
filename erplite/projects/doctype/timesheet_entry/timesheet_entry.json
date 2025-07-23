@@ -15,7 +15,7 @@
   "is_active",
   "section_break_6",
   "project",
-  "task",
+  "activity",
   "column_break_9",
   "location",
   "section_break_11",
@@ -67,7 +67,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Draft\nSubmitted\nApproved\nRejected\nScheduled",
+   "options": "Draft\nSubmitted\nApproved\nRejected\nScheduled\nPaid",
    "reqd": 1
   },
   {
@@ -80,7 +80,7 @@
   {
    "fieldname": "section_break_6",
    "fieldtype": "Section Break",
-   "label": "Project & Task"
+   "label": "Project & Activity"
   },
   {
    "fieldname": "project",
@@ -91,11 +91,11 @@
    "reqd": 1
   },
   {
-   "fieldname": "task",
+   "fieldname": "activity",
    "fieldtype": "Link",
    "in_list_view": 1,
-   "label": "Task",
-   "options": "Task",
+   "label": "Activity",
+   "options": "Activity",
    "reqd": 1
   },
   {
@@ -180,7 +180,7 @@
   }
  ],
  "links": [],
- "modified": "2025-07-05 11:07:24.072184",
+ "modified": "2025-07-16 10:51:30.372776",
  "modified_by": "Administrator",
  "module": "Projects",
  "name": "Timesheet Entry",

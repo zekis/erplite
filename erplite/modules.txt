@@ -4,3 +4,4 @@ Accounts
 CRM
 Projects
 HR
+Scheduler

@@ -44,28 +44,28 @@ def get_context(context):
         except:
             projects = []
         
-        # Get tasks for each project
+        # Get activities for each project
         for project in projects:
             try:
-                project.tasks = frappe.get_all("Task",
+                project.activities = frappe.get_all("Activity",
                     filters={
                         "project": project.name,
                         "status": ["!=", "Completed"]
                     },
-                    fields=["name", "task_name", "priority"],
-                    order_by="task_name"
+                    fields=["name", "subject", "priority"],
+                    order_by="subject"
                 )
             except:
-                project.tasks = []
+                project.activities = []
         
-        # Get existing timesheet entries for the week
+            # Get existing timesheet entries for the week
         try:
             week_timesheets = frappe.get_all("Timesheet Entry",
                 filters={
                     "employee": user,
                     "date": ["between", [start_of_week, start_of_week + timedelta(days=6)]]
                 },
-                fields=["name", "project", "task", "date", "check_in_time", "check_out_time", 
+                fields=["name", "project", "activity", "date", "check_in_time", "check_out_time", 
                         "duration_hours", "status", "location", "description"],
                 order_by="date, check_in_time"
             )
@@ -79,7 +79,7 @@ def get_context(context):
                 if timesheet.get('date'):
                     timesheet['date'] = str(timesheet['date'])
                 
-                # Add friendly project and task names
+                # Add friendly project and activity names
                 if timesheet.get('project'):
                     try:
                         project_doc = frappe.get_doc("Project", timesheet['project'])
@@ -87,12 +87,12 @@ def get_context(context):
                     except:
                         timesheet['project_name'] = timesheet['project']
                 
-                if timesheet.get('task'):
+                if timesheet.get('activity'):
                     try:
-                        task_doc = frappe.get_doc("Task", timesheet['task'])
-                        timesheet['task_name'] = task_doc.task_name
+                        activity_doc = frappe.get_doc("Activity", timesheet['activity'])
+                        timesheet['activity_name'] = activity_doc.subject
                     except:
-                        timesheet['task_name'] = timesheet['task']
+                        timesheet['activity_name'] = timesheet['activity']
                     
         except:
             week_timesheets = []

@@ -23,9 +23,9 @@ frappe.ui.form.on('Schedule Row', {
     },
     
     project: function(frm) {
-        // Clear task when project changes
+        // Clear activity when project changes
         if (frm.doc.project) {
-            frm.set_value('task', '');
+            frm.set_value('activity', '');
         }
     },
     
@@ -208,7 +208,7 @@ function format_daily_entries_display(frm) {
 
 // Custom formatter for list view
 frappe.listview_settings['Schedule Row'] = {
-    add_fields: ['total_hours', 'start_date', 'end_date', 'project_name', 'task_name', 'resource_name'],
+    add_fields: ['total_hours', 'start_date', 'end_date', 'project_name', 'activity_name', 'resource_name'],
     
     get_indicator: function(doc) {
         if (doc.total_hours > 0) {

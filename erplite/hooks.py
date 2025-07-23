@@ -13,17 +13,10 @@ app_license = "mit"
 # Each item in the list will be shown as an app in the apps page
 add_to_apps_screen = [
 	{
-		"name": "projects_timesheets",
-		"logo": "/assets/erplite/images/schedule.png",
-		"title": "Timesheets",
-		"route": "/timesheet-calendar",
-		"has_permission": "erplite.projects.api.has_timesheet_permission"
-	},
-	{
-		"name": "scheduler",
-		"logo": "/assets/erplite/images/scheduler.png",
-		"title": "Scheduler",
-		"route": "/scheduler",
+		"name": "erplite",
+		"logo": "/assets/erplite/images/erplite-logo.png",
+		"title": "ERPLite",
+		"route": "/todo",
 		"has_permission": "erplite.projects.api.has_timesheet_permission"
 	}
 ]

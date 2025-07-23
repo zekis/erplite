@@ -1,0 +1,306 @@
+{% extends "templates/web.html" %}
+
+{% block title %}Todo Kanban{% endblock %}
+
+{% block head_include %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css">
+<link rel="stylesheet" href="/assets/erplite/css/app_navigation.css">
+{% endblock %}
+
+{% block page_content %}
+<div class="app-layout">
+    {% include "templates/includes/app_navigation.html" %}
+    
+    <div class="main-content">
+        <div class="todo-kanban-app">
+    <!-- Header -->
+    <div class="kanban-header">
+        <div class="header-left">
+            <h1 class="kanban-title">Todo Kanban</h1>
+            <div class="kanban-subtitle">Drag cards between columns or to action zones</div>
+        </div>
+        <div class="header-right">
+            <div class="user-filter-container">
+                <select id="userFilter" class="user-filter">
+                    <option value="">All Users</option>
+                    {% for user in users %}
+                    <option value="{{ user.name }}">{{ user.full_name or user.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button class="btn btn-primary" id="addTodoBtn">
+                <i class="mdi mdi-plus"></i> Add Todo
+            </button>
+            <button class="btn btn-secondary" id="refreshBtn">
+                <i class="mdi mdi-refresh"></i> Refresh
+            </button>
+        </div>
+    </div>
+
+    <!-- Kanban Board -->
+    <div class="kanban-board">
+        <!-- Backlog Column -->
+        <div class="kanban-column" data-column="backlog">
+            <div class="column-header">
+                <div class="column-title">
+                    <i class="mdi mdi-inbox-outline"></i>
+                    Backlog
+                </div>
+                <div class="column-count" id="backlog-count">0</div>
+            </div>
+            <div class="quick-add-container">
+                <input type="text" class="quick-add-input" placeholder="Add to backlog..." data-column="backlog">
+            </div>
+            <div class="column-body" id="backlog-body"
+                 ondrop="handleColumnDrop(event, 'backlog')" 
+                 ondragover="handleColumnDragOver(event)"
+                 ondragenter="handleColumnDragEnter(event)"
+                 ondragleave="handleColumnDragLeave(event)">
+                <!-- Cards will be populated by JavaScript -->
+            </div>
+        </div>
+
+        <!-- To Do Column -->
+        <div class="kanban-column" data-column="todo">
+            <div class="column-header">
+                <div class="column-title">
+                    <i class="mdi mdi-format-list-checks"></i>
+                    To Do
+                </div>
+                <div class="column-count" id="todo-count">0</div>
+            </div>
+            <div class="quick-add-container">
+                <input type="text" class="quick-add-input" placeholder="Add to do..." data-column="todo">
+            </div>
+            <div class="column-body" id="todo-body"
+                 ondrop="handleColumnDrop(event, 'todo')" 
+                 ondragover="handleColumnDragOver(event)"
+                 ondragenter="handleColumnDragEnter(event)"
+                 ondragleave="handleColumnDragLeave(event)">
+                <!-- Cards will be populated by JavaScript -->
+            </div>
+        </div>
+
+        <!-- In Progress Column -->
+        <div class="kanban-column" data-column="progress">
+            <div class="column-header">
+                <div class="column-title">
+                    <i class="mdi mdi-clock-outline"></i>
+                    In Progress
+                </div>
+                <div class="column-count" id="progress-count">0</div>
+            </div>
+            <div class="quick-add-container">
+                <input type="text" class="quick-add-input" placeholder="Add in progress..." data-column="progress">
+            </div>
+            <div class="column-body" id="progress-body"
+                 ondrop="handleColumnDrop(event, 'progress')" 
+                 ondragover="handleColumnDragOver(event)"
+                 ondragenter="handleColumnDragEnter(event)"
+                 ondragleave="handleColumnDragLeave(event)">
+                <!-- Cards will be populated by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Actions Column -->
+        <div class="kanban-column actions-column" data-column="actions">
+            <div class="column-header">
+                <div class="column-title">
+                    <i class="mdi mdi-lightning-bolt"></i>
+                    Actions
+                </div>
+            </div>
+            <div class="column-body actions-body">
+                <!-- Complete Drop Zone -->
+                <div class="drop-zone complete-zone" data-action="complete">
+                    <div class="drop-zone-icon">
+                        <i class="mdi mdi-check-circle"></i>
+                    </div>
+                    <div class="drop-zone-title">Complete</div>
+                    <div class="drop-zone-subtitle">Mark as done</div>
+                </div>
+
+                <!-- Cancel Drop Zone -->
+                <div class="drop-zone cancel-zone" data-action="cancel">
+                    <div class="drop-zone-icon">
+                        <i class="mdi mdi-close-circle"></i>
+                    </div>
+                    <div class="drop-zone-title">Cancel</div>
+                    <div class="drop-zone-subtitle">Remove task</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Todo Card Template -->
+<template id="todo-card-template">
+    <div class="todo-card collapsed" draggable="true" 
+         ondragstart="handleCardDragStart(event)"
+         ondragend="handleCardDragEnd(event)"
+         onclick="handleCardClick(event)">
+        
+        <!-- Collapsed View (Single Line) -->
+        <div class="card-collapsed-view">
+            <div class="collapsed-left">
+                <div class="priority-indicator"></div>
+                <div class="card-description-preview"></div>
+            </div>
+            <div class="collapsed-right">
+                <div class="due-date-indicator"></div>
+                <div class="user-indicator">
+                    <div class="user-avatar-small"></div>
+                </div>
+                <button class="expand-btn" title="Expand card">
+                    <i class="mdi mdi-chevron-down"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Expanded View (Full Details) -->
+        <div class="card-expanded-view">
+            <div class="card-header">
+                <div class="priority-section">
+                    <select class="priority-dropdown card-dropdown" title="Change Priority">
+                        <option value="Low" class="priority-low">Low</option>
+                        <option value="Medium" class="priority-medium">Medium</option>
+                        <option value="High" class="priority-high">High</option>
+                    </select>
+                </div>
+                <div class="due-date-section">
+                    <input type="date" class="due-date-picker card-dropdown" title="Change Due Date">
+                    <span class="due-date-display"></span>
+                </div>
+                <button class="collapse-btn" title="Collapse card">
+                    <i class="mdi mdi-chevron-up"></i>
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="card-description"></div>
+            </div>
+            <div class="card-footer">
+                <div class="card-user">
+                    <select class="user-dropdown card-dropdown" title="Assign To">
+                        <option value="">Unassigned</option>
+                    </select>
+                    <div class="user-avatar"></div>
+                    <div class="user-name"></div>
+                </div>
+                <div class="card-actions">
+                    <button class="card-action-btn edit-btn" title="Edit">
+                        <i class="mdi mdi-pencil"></i>
+                    </button>
+                    <button class="card-action-btn delete-btn" title="Delete">
+                        <i class="mdi mdi-delete"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="card-reference"></div>
+        </div>
+    </div>
+</template>
+
+<!-- Add/Edit Todo Modal -->
+<div id="todoModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="modalTitle">Add Todo</h3>
+            <span class="close" id="closeModal">&times;</span>
+        </div>
+        <div class="modal-body">
+            <form id="todoForm">
+                <input type="hidden" id="todoId">
+                
+                <div class="form-group">
+                    <label for="todoDescription">Description *</label>
+                    <textarea id="todoDescription" rows="3" required placeholder="What needs to be done?"></textarea>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="todoPriority">Priority</label>
+                        <select id="todoPriority">
+                            <option value="Low">Low</option>
+                            <option value="Medium" selected>Medium</option>
+                            <option value="High">High</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="todoDueDate">Due Date</label>
+                        <input type="date" id="todoDueDate">
+                    </div>
+                </div>
+                
+                {% if is_manager %}
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="todoAssignedTo">Assign To</label>
+                        <select id="todoAssignedTo">
+                            <option value="">Unassigned</option>
+                            {% for user in users %}
+                            <option value="{{ user.name }}">{{ user.full_name or user.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="todoColor">Color</label>
+                        <input type="color" id="todoColor" value="#3b82f6">
+                    </div>
+                </div>
+                {% endif %}
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button>
+            <button type="button" class="btn btn-primary" id="saveBtn">Save Todo</button>
+        </div>
+    </div>
+</div>
+
+<!-- Confirmation Modal -->
+<div id="confirmModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="confirmTitle">Confirm Action</h3>
+        </div>
+        <div class="modal-body">
+            <p id="confirmMessage">Are you sure you want to perform this action?</p>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" id="confirmCancel">Cancel</button>
+            <button type="button" class="btn btn-primary" id="confirmOk">Confirm</button>
+        </div>
+    </div>
+</div>
+
+<!-- Loading Overlay -->
+<div id="loadingOverlay" class="loading-overlay">
+    <div class="loading-spinner">
+        <div class="spinner"></div>
+        <div class="loading-text">Loading todos...</div>
+    </div>
+</div>
+
+<!-- Toast Container -->
+<div id="toastContainer" class="toast-container"></div>
+
+<!-- Pass data to JavaScript -->
+<script>
+window.todoKanbanData = {
+    currentUser: '{{ current_user }}',
+    isManager: {{ is_manager | tojson }},
+    users: {{ users | tojson }},
+    todos: {{ todos | tojson }},
+    todosByColumn: {{ todos_by_column | tojson }}
+};
+</script>
+
+<!-- Include navigation JavaScript -->
+<script src="/assets/erplite/js/app_navigation.js"></script>
+
+        </div> <!-- Close todo-kanban-app -->
+    </div> <!-- Close main-content -->
+</div> <!-- Close app-layout -->
+{% endblock %}

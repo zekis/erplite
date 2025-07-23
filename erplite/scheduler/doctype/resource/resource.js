@@ -149,7 +149,7 @@ function show_capacity_report(frm) {
                         schedule_date: ['between', [values.from_date, values.to_date]],
                         docstatus: ['!=', 2]
                     },
-                    fields: ['schedule_date', 'duration', 'project', 'task', 'status'],
+                    fields: ['schedule_date', 'duration', 'project', 'activity', 'status'],
                     order_by: 'schedule_date'
                 },
                 callback: function(r) {

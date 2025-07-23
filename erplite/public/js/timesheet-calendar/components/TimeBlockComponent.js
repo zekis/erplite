@@ -79,9 +79,9 @@ class TimeBlockComponent {
             // Store the source time block data for cloning
             const timeBlockData = {
                 project: sourceTimeBlock.dataset.project,
-                task: sourceTimeBlock.dataset.task,
+                activity: sourceTimeBlock.dataset.activity,
                 projectName: sourceTimeBlock.querySelector('.time-block-header').textContent,
-                taskName: sourceTimeBlock.querySelector('.time-block-task').textContent,
+                activityName: sourceTimeBlock.querySelector('.time-block-activity').textContent,
                 color: sourceTimeBlock.style.getPropertyValue('--project-color'),
                 duration: parseFloat(sourceTimeBlock.dataset.duration),
                 startHour: parseInt(sourceTimeBlock.dataset.startHour),
@@ -111,9 +111,9 @@ class TimeBlockComponent {
             if (headerElement) headerElement.textContent = data.projectName;
         }
         
-        if (data.taskName) {
-            const taskElement = timeBlock.querySelector('.time-block-task');
-            if (taskElement) taskElement.textContent = data.taskName;
+        if (data.activityName) {
+            const activityElement = timeBlock.querySelector('.time-block-activity');
+            if (activityElement) activityElement.textContent = data.activityName;
         }
         
         if (data.duration) {
@@ -189,9 +189,9 @@ class TimeBlockComponent {
         return {
             id: timeBlock.dataset.id,
             project: timeBlock.dataset.project,
-            task: timeBlock.dataset.task,
+            activity: timeBlock.dataset.activity,
             projectName: timeBlock.querySelector('.time-block-header').textContent,
-            taskName: timeBlock.querySelector('.time-block-task').textContent,
+            activityName: timeBlock.querySelector('.time-block-activity').textContent,
             color: timeBlock.style.getPropertyValue('--project-color'),
             date: dayColumn ? dayColumn.dataset.date : null,
             startHour: parseInt(timeBlock.dataset.startHour),
@@ -208,7 +208,7 @@ class TimeBlockComponent {
         const errors = [];
         
         if (!data.project) errors.push('Project is required');
-        if (!data.task) errors.push('Task is required');
+        if (!data.activity) errors.push('Activity is required');
         if (!data.date) errors.push('Date is required');
         if (data.duration <= 0) errors.push('Duration must be greater than 0');
         if (data.startHour < 0 || data.startHour > 23) errors.push('Start hour must be between 0 and 23');
@@ -248,7 +248,7 @@ class TimeBlockComponent {
                     type: 'overlap',
                     block: otherBlock,
                     data: otherData,
-                    message: `Overlaps with ${otherData.projectName} - ${otherData.taskName}`
+                    message: `Overlaps with ${otherData.projectName} - ${otherData.activityName}`
                 });
             }
         });
@@ -350,7 +350,7 @@ class TimeBlockComponent {
         
         return {
             project: data.projectName,
-            task: data.taskName,
+            activity: data.activityName,
             timeRange: `${startTime} - ${endTime}`,
             duration: `${data.duration}h`,
             description: data.description,

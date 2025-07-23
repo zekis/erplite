@@ -1,10 +1,10 @@
 /**
- * Sidebar component for project and task management
+ * Sidebar component for project and activity management
  */
 class SidebarComponent {
     constructor(app) {
         this.app = app;
-        this.pinnedTasks = new Set();
+        this.pinnedActivitys = new Set();
         this.init();
     }
     
@@ -14,10 +14,10 @@ class SidebarComponent {
     init() {
         this.setupSearchFunctionality();
         this.setupProjectToggling();
-        this.setupTaskToggling();
+        this.setupActivityToggling();
         this.setupPinningFunctionality();
         this.setupWeekNavigation();
-        this.loadPinnedTasks();
+        this.loadPinnedActivitys();
     }
     
     /**
@@ -55,7 +55,7 @@ class SidebarComponent {
         searchContainer.className = 'search-container';
         searchContainer.innerHTML = `
             <div class="search-input-wrapper">
-                <input type="text" id="sidebar-search" placeholder="Search projects and tasks..." class="search-input">
+                <input type="text" id="sidebar-search" placeholder="Search projects and activities..." class="search-input">
                 <button id="search-clear" class="search-clear" title="Clear search">×</button>
             </div>
         `;
@@ -146,17 +146,17 @@ class SidebarComponent {
                 background: #f3f4f6;
             }
             
-            .task-group {
+            .activity-group {
                 margin-left: 1rem;
                 border-left: 2px solid #e5e7eb;
                 padding-left: 0.5rem;
             }
             
-            .task-group.collapsed .task-block {
+            .activity-group.collapsed .activity-block {
                 display: none;
             }
             
-            .task-toggle {
+            .activity-toggle {
                 cursor: pointer;
                 user-select: none;
                 font-size: 0.75rem;
@@ -164,7 +164,7 @@ class SidebarComponent {
                 margin-right: 0.25rem;
             }
             
-            .task-buttons {
+            .activity-buttons {
                 display: flex;
                 gap: 0.25rem;
                 margin-left: auto;
@@ -216,7 +216,7 @@ class SidebarComponent {
             }
             
             
-            .pinned-tasks-section {
+            .pinned-activities-section {
                 border-bottom: 1px solid #e2e8f0;
                 margin-bottom: 1rem;
                 background: #f8fafc;
@@ -248,11 +248,11 @@ class SidebarComponent {
                 font-size: 0.75rem;
             }
             
-            .pinned-tasks-container {
+            .pinned-activities-container {
                 padding: 0.5rem;
             }
             
-            .pinned-task-clone {
+            .pinned-activity-clone {
                 margin-bottom: 0.25rem;
                 border-radius: 0.375rem;
                 background: white;
@@ -264,91 +264,91 @@ class SidebarComponent {
     }
     
     /**
-     * Setup task expand/collapse functionality
+     * Setup activity expand/collapse functionality
      */
-    setupTaskToggling() {
-        // This will be called after DOM updates to setup task toggles
-        this.refreshTaskToggles();
+    setupActivityToggling() {
+        // This will be called after DOM updates to setup activity toggles
+        this.refreshActivityToggles();
     }
     
     /**
-     * Refresh task toggle functionality
+     * Refresh activity toggle functionality
      */
-    refreshTaskToggles() {
+    refreshActivityToggles() {
         document.querySelectorAll('.project-group').forEach(projectGroup => {
-            const tasks = projectGroup.querySelectorAll('.task-block');
-            if (tasks.length > 3) { // Only add toggle if more than 3 tasks
-                this.addTaskToggle(projectGroup, tasks);
+            const activities = projectGroup.querySelectorAll('.activity-block');
+            if (activities.length > 3) { // Only add toggle if more than 3 activities
+                this.addActivityToggle(projectGroup, activities);
             }
         });
     }
     
     /**
-     * Add task toggle to project group
+     * Add activity toggle to project group
      */
-    addTaskToggle(projectGroup, tasks) {
+    addActivityToggle(projectGroup, activities) {
         // Check if toggle already exists
-        if (projectGroup.querySelector('.task-toggle')) return;
+        if (projectGroup.querySelector('.activity-toggle')) return;
         
         const projectHeader = projectGroup.querySelector('.project-header');
         if (!projectHeader) return;
         
-        // Create task toggle
-        const taskToggle = document.createElement('span');
-        taskToggle.className = 'task-toggle';
-        taskToggle.textContent = `▼ ${tasks.length} tasks`;
-        taskToggle.title = 'Click to expand/collapse tasks';
+        // Create activity toggle
+        const activityToggle = document.createElement('span');
+        activityToggle.className = 'activity-toggle';
+        activityToggle.textContent = `▼ ${activities.length} activities`;
+        activityToggle.title = 'Click to expand/collapse activities';
         
         // Insert after project name
         const projectName = projectHeader.querySelector('.project-name');
         if (projectName) {
-            projectName.appendChild(taskToggle);
+            projectName.appendChild(activityToggle);
         }
         
-        // Create task group container
-        const taskGroup = document.createElement('div');
-        taskGroup.className = 'task-group';
+        // Create activity group container
+        const activityGroup = document.createElement('div');
+        activityGroup.className = 'activity-group';
         
-        // Move tasks to task group
-        tasks.forEach(task => {
-            taskGroup.appendChild(task);
+        // Move activities to activity group
+        activities.forEach(activity => {
+            activityGroup.appendChild(activity);
         });
         
-        projectGroup.appendChild(taskGroup);
+        projectGroup.appendChild(activityGroup);
         
         // Add click handler
-        taskToggle.addEventListener('click', (e) => {
+        activityToggle.addEventListener('click', (e) => {
             e.stopPropagation();
-            this.toggleTasks(projectGroup, taskToggle);
+            this.toggleActivitys(projectGroup, activityToggle);
         });
         
-        // Initially collapse if more than 5 tasks
-        if (tasks.length > 5) {
-            this.toggleTasks(projectGroup, taskToggle);
+        // Initially collapse if more than 5 activities
+        if (activities.length > 5) {
+            this.toggleActivitys(projectGroup, activityToggle);
         }
     }
     
     /**
-     * Toggle task visibility
+     * Toggle activity visibility
      */
-    toggleTasks(projectGroup, taskToggle) {
-        const taskGroup = projectGroup.querySelector('.task-group');
-        if (!taskGroup) return;
+    toggleActivitys(projectGroup, activityToggle) {
+        const activityGroup = projectGroup.querySelector('.activity-group');
+        if (!activityGroup) return;
         
-        taskGroup.classList.toggle('collapsed');
+        activityGroup.classList.toggle('collapsed');
         
-        const isCollapsed = taskGroup.classList.contains('collapsed');
-        const taskCount = taskGroup.querySelectorAll('.task-block').length;
+        const isCollapsed = activityGroup.classList.contains('collapsed');
+        const activityCount = activityGroup.querySelectorAll('.activity-block').length;
         
-        taskToggle.textContent = `${isCollapsed ? '▶' : '▼'} ${taskCount} tasks`;
+        activityToggle.textContent = `${isCollapsed ? '▶' : '▼'} ${activityCount} activities`;
     }
     
     /**
      * Setup pinning functionality
      */
     setupPinningFunctionality() {
-        // Load pinned tasks from localStorage first for immediate UI
-        this.loadPinnedTasks();
+        // Load pinned activities from localStorage first for immediate UI
+        this.loadPinnedActivitys();
         
         // Add pin buttons with current state
         this.addPinButtons();
@@ -357,7 +357,7 @@ class SidebarComponent {
         this.fetchHeartStatusFromBackend().then(() => {
             // Refresh pin buttons after backend sync
             this.refreshPinButtons();
-            this.reorganizeTasks();
+            this.reorganizeActivitys();
         });
     }
     
@@ -372,37 +372,37 @@ class SidebarComponent {
                 return;
             }
             
-            // Get all task IDs from the sidebar
-            const taskIds = [];
-            document.querySelectorAll('.task-block').forEach(taskBlock => {
-                const taskId = taskBlock.dataset.task;
-                if (taskId) {
-                    taskIds.push(taskId);
+            // Get all activity IDs from the sidebar
+            const activityIds = [];
+            document.querySelectorAll('.activity-block').forEach(activityBlock => {
+                const activityId = activityBlock.dataset.activity;
+                if (activityId) {
+                    activityIds.push(activityId);
                 }
             });
             
-            if (taskIds.length === 0) {
+            if (activityIds.length === 0) {
                 resolve();
                 return;
             }
             
-            // Fetch heart status for all tasks using Comment doctype with comment_type = "Like"
+            // Fetch heart status for all activities using Comment doctype with comment_type = "Like"
             frappe.call({
                 method: 'frappe.client.get_list',
                 args: {
                     doctype: 'Comment',
                     filters: {
                         comment_type: 'Like',
-                        reference_doctype: 'Task',
-                        reference_name: ['in', taskIds],
+                        reference_doctype: 'Activity',
+                        reference_name: ['in', activityIds],
                         owner: frappe.session.user
                     },
                     fields: ['reference_name']
                 },
                 callback: (r) => {
                     if (r.message) {
-                        // Update pinned tasks based on backend data
-                        this.syncPinnedTasksFromBackend(r.message);
+                        // Update pinned activities based on backend data
+                        this.syncPinnedActivitysFromBackend(r.message);
                     }
                     resolve();
                 },
@@ -415,83 +415,83 @@ class SidebarComponent {
     }
     
     /**
-     * Sync pinned tasks from backend heart status
+     * Sync pinned activities from backend heart status
      */
-    syncPinnedTasksFromBackend(likeRecords) {
-        // Clear existing pinned tasks
-        this.pinnedTasks.clear();
+    syncPinnedActivitysFromBackend(likeRecords) {
+        // Clear existing pinned activities
+        this.pinnedActivitys.clear();
         
         // Process like records from backend
         likeRecords.forEach(likeRecord => {
-            const taskId = likeRecord.reference_name;
-            // Find the project for this task
-            const taskBlock = document.querySelector(`[data-task="${taskId}"]`);
-            if (taskBlock) {
-                const projectId = taskBlock.dataset.project;
-                const taskKey = `${projectId}:${taskId}`;
-                this.pinnedTasks.add(taskKey);
+            const activityId = likeRecord.reference_name;
+            // Find the project for this activity
+            const activityBlock = document.querySelector(`[data-activity="${activityId}"]`);
+            if (activityBlock) {
+                const projectId = activityBlock.dataset.project;
+                const activityKey = `${projectId}:${activityId}`;
+                this.pinnedActivitys.add(activityKey);
             }
         });
         
         // Save to localStorage for offline access
-        this.savePinnedTasks();
+        this.savePinnedActivitys();
         
-        console.log(`Synced ${this.pinnedTasks.size} pinned tasks from backend`);
+        console.log(`Synced ${this.pinnedActivitys.size} pinned activities from backend`);
     }
     
     /**
-     * Add pin buttons to task blocks
+     * Add pin buttons to activity blocks
      */
     addPinButtons() {
-        document.querySelectorAll('.task-block').forEach(taskBlock => {
-            if (taskBlock.querySelector('.pin-button')) return; // Already has pin button
+        document.querySelectorAll('.activity-block').forEach(activityBlock => {
+            if (activityBlock.querySelector('.pin-button')) return; // Already has pin button
             
             // Create button container
             const buttonContainer = document.createElement('div');
-            buttonContainer.className = 'task-buttons';
+            buttonContainer.className = 'activity-buttons';
             
             // Create open in desk button
             const openButton = document.createElement('button');
             openButton.className = 'open-button mdi';
             openButton.innerHTML = '<i class="mdi mdi-open-in-new"></i>';
-            openButton.title = 'Open task in desk view';
+            openButton.title = 'Open activity in desk view';
             
             // Create pin button
             const pinButton = document.createElement('button');
             pinButton.className = 'pin-button mdi';
             pinButton.innerHTML = '<i class="mdi mdi-pin-outline"></i>'; // Outline pin icon
-            pinButton.title = 'Pin this task to top';
+            pinButton.title = 'Pin this activity to top';
             
-            const taskId = taskBlock.dataset.task;
-            const projectId = taskBlock.dataset.project;
-            const taskKey = `${projectId}:${taskId}`;
+            const activityId = activityBlock.dataset.activity;
+            const projectId = activityBlock.dataset.project;
+            const activityKey = `${projectId}:${activityId}`;
             
             // Set initial pin state
-            if (this.pinnedTasks.has(taskKey)) {
+            if (this.pinnedActivitys.has(activityKey)) {
                 pinButton.innerHTML = '<i class="mdi mdi-pin"></i>'; // Filled pin icon
                 pinButton.classList.add('pinned');
-                pinButton.title = 'Unpin this task';
-                taskBlock.classList.add('pinned');
+                pinButton.title = 'Unpin this activity';
+                activityBlock.classList.add('pinned');
             }
             
             // Add event listeners
             openButton.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                this.openTaskInDesk(taskId);
+                this.openActivityInDesk(activityId);
             });
             
             pinButton.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                this.togglePin(taskBlock, pinButton);
+                this.togglePin(activityBlock, pinButton);
             });
             
             // Add buttons to container
             buttonContainer.appendChild(openButton);
             buttonContainer.appendChild(pinButton);
             
-            taskBlock.appendChild(buttonContainer);
+            activityBlock.appendChild(buttonContainer);
         });
     }
     
@@ -499,120 +499,120 @@ class SidebarComponent {
      * Refresh pin button states after backend sync
      */
     refreshPinButtons() {
-        document.querySelectorAll('.task-block').forEach(taskBlock => {
-            const pinButton = taskBlock.querySelector('.pin-button');
+        document.querySelectorAll('.activity-block').forEach(activityBlock => {
+            const pinButton = activityBlock.querySelector('.pin-button');
             if (!pinButton) return;
             
-            const taskId = taskBlock.dataset.task;
-            const projectId = taskBlock.dataset.project;
-            const taskKey = `${projectId}:${taskId}`;
+            const activityId = activityBlock.dataset.activity;
+            const projectId = activityBlock.dataset.project;
+            const activityKey = `${projectId}:${activityId}`;
             
-            // Update pin button state based on current pinned tasks
-            if (this.pinnedTasks.has(taskKey)) {
+            // Update pin button state based on current pinned activities
+            if (this.pinnedActivitys.has(activityKey)) {
                 pinButton.innerHTML = '<i class="mdi mdi-pin"></i>'; // Filled pin icon
                 pinButton.classList.add('pinned');
-                pinButton.title = 'Unpin this task';
-                taskBlock.classList.add('pinned');
+                pinButton.title = 'Unpin this activity';
+                activityBlock.classList.add('pinned');
             } else {
                 pinButton.innerHTML = '<i class="mdi mdi-pin-outline"></i>'; // Outline pin icon
                 pinButton.classList.remove('pinned');
-                pinButton.title = 'Pin this task to top';
-                taskBlock.classList.remove('pinned');
+                pinButton.title = 'Pin this activity to top';
+                activityBlock.classList.remove('pinned');
             }
         });
     }
     
     /**
-     * Open task in Frappe desk view
+     * Open activity in Frappe desk view
      */
-    openTaskInDesk(taskId) {
+    openActivityInDesk(activityId) {
         if (typeof frappe !== 'undefined' && frappe.set_route) {
-            frappe.set_route('Form', 'Task', taskId);
+            frappe.set_route('Form', 'Activity', activityId);
         } else {
             // Fallback: open in new tab
-            const url = `/app/task/${taskId}`;
+            const url = `/app/activity/${activityId}`;
             window.open(url, '_blank');
         }
     }
     
     /**
-     * Toggle pin state of a task
+     * Toggle pin state of a activity
      */
-    togglePin(taskBlock, pinButton) {
-        const taskId = taskBlock.dataset.task;
-        const projectId = taskBlock.dataset.project;
-        const taskKey = `${projectId}:${taskId}`;
+    togglePin(activityBlock, pinButton) {
+        const activityId = activityBlock.dataset.activity;
+        const projectId = activityBlock.dataset.project;
+        const activityKey = `${projectId}:${activityId}`;
         
-        if (this.pinnedTasks.has(taskKey)) {
+        if (this.pinnedActivitys.has(activityKey)) {
             // Unpin
-            this.pinnedTasks.delete(taskKey);
+            this.pinnedActivitys.delete(activityKey);
             
-            // Update the cloned task button (if this is a clone)
+            // Update the cloned activity button (if this is a clone)
             pinButton.innerHTML = '<i class="mdi mdi-pin-outline"></i>'; // Outline pin icon
             pinButton.classList.remove('pinned');
-            pinButton.title = 'Pin this task to top';
-            taskBlock.classList.remove('pinned');
+            pinButton.title = 'Pin this activity to top';
+            activityBlock.classList.remove('pinned');
             
-            // Find and update the original task in the project section
-            const originalTask = document.querySelector(`[data-project="${projectId}"][data-task="${taskId}"]:not(.pinned-task-clone)`);
-            if (originalTask) {
-                const originalPinButton = originalTask.querySelector('.pin-button');
+            // Find and update the original activity in the project section
+            const originalActivity = document.querySelector(`[data-project="${projectId}"][data-activity="${activityId}"]:not(.pinned-activity-clone)`);
+            if (originalActivity) {
+                const originalPinButton = originalActivity.querySelector('.pin-button');
                 if (originalPinButton) {
                     originalPinButton.innerHTML = '<i class="mdi mdi-pin-outline"></i>';
                     originalPinButton.classList.remove('pinned');
-                    originalPinButton.title = 'Pin this task to top';
+                    originalPinButton.title = 'Pin this activity to top';
                 }
-                originalTask.classList.remove('pinned');
+                originalActivity.classList.remove('pinned');
                 
-                // Show the original task back in its project
-                originalTask.style.display = '';
-                originalTask.classList.remove('hidden-pinned');
+                // Show the original activity back in its project
+                originalActivity.style.display = '';
+                originalActivity.classList.remove('hidden-pinned');
             }
             
             // Use Frappe's API to remove from favorites
-            this.updateFrappeHeart(taskId, false);
+            this.updateFrappeHeart(activityId, false);
         } else {
             // Pin
-            this.pinnedTasks.add(taskKey);
+            this.pinnedActivitys.add(activityKey);
             
-            // Update the current task button
+            // Update the current activity button
             pinButton.innerHTML = '<i class="mdi mdi-pin"></i>'; // Filled pin icon
             pinButton.classList.add('pinned');
-            pinButton.title = 'Unpin this task';
-            taskBlock.classList.add('pinned');
+            pinButton.title = 'Unpin this activity';
+            activityBlock.classList.add('pinned');
             
-            // Find and update the original task in the project section (if this is not the original)
-            if (taskBlock.classList.contains('pinned-task-clone')) {
-                const originalTask = document.querySelector(`[data-project="${projectId}"][data-task="${taskId}"]:not(.pinned-task-clone)`);
-                if (originalTask) {
-                    const originalPinButton = originalTask.querySelector('.pin-button');
+            // Find and update the original activity in the project section (if this is not the original)
+            if (activityBlock.classList.contains('pinned-activity-clone')) {
+                const originalActivity = document.querySelector(`[data-project="${projectId}"][data-activity="${activityId}"]:not(.pinned-activity-clone)`);
+                if (originalActivity) {
+                    const originalPinButton = originalActivity.querySelector('.pin-button');
                     if (originalPinButton) {
                         originalPinButton.innerHTML = '<i class="mdi mdi-pin"></i>';
                         originalPinButton.classList.add('pinned');
-                        originalPinButton.title = 'Unpin this task';
+                        originalPinButton.title = 'Unpin this activity';
                     }
-                    originalTask.classList.add('pinned');
+                    originalActivity.classList.add('pinned');
                 }
             }
             
             // Use Frappe's API to add to favorites
-            this.updateFrappeHeart(taskId, true);
+            this.updateFrappeHeart(activityId, true);
         }
         
-        this.savePinnedTasks();
-        this.reorganizeTasks();
+        this.savePinnedActivitys();
+        this.reorganizeActivitys();
     }
     
     /**
      * Update Frappe's heart/favorite status
      */
-    updateFrappeHeart(taskId, isPinned) {
+    updateFrappeHeart(activityId, isPinned) {
         if (typeof frappe === 'undefined' || !frappe.call) {
             console.warn('Frappe not available for heart update');
             return;
         }
 
-        console.log(`Attempting to ${isPinned ? 'pin' : 'unpin'} task ${taskId}`);
+        console.log(`Attempting to ${isPinned ? 'pin' : 'unpin'} activity ${activityId}`);
 
         if (isPinned) {
             // First check if already liked to avoid duplicates
@@ -622,15 +622,15 @@ class SidebarComponent {
                     doctype: 'Comment',
                     filters: {
                         comment_type: 'Like',
-                        reference_doctype: 'Task',
-                        reference_name: taskId,
+                        reference_doctype: 'Activity',
+                        reference_name: activityId,
                         owner: frappe.session.user
                     },
                     fields: ['name']
                 },
                 callback: (r) => {
                     if (r.message && r.message.length > 0) {
-                        console.log(`Task ${taskId} already liked by user`);
+                        console.log(`Activity ${activityId} already liked by user`);
                     } else {
                         // Insert new like
                         frappe.call({
@@ -639,19 +639,19 @@ class SidebarComponent {
                                 doc: {
                                     doctype: 'Comment',
                                     comment_type: 'Like',
-                                    reference_doctype: 'Task',
-                                    reference_name: taskId,
+                                    reference_doctype: 'Activity',
+                                    reference_name: activityId,
                                     content: 'Liked'
                                 }
                             },
                             callback: (insertResponse) => {
-                                console.log(`Task ${taskId} pinned successfully in backend`);
+                                console.log(`Activity ${activityId} pinned successfully in backend`);
                             },
                             error: (err) => {
                                 console.error('Failed to insert like comment:', err);
                                 if (this.app && this.app.components && this.app.components.toast) {
                                     this.app.components.toast.show(
-                                        `Failed to sync pin status with server for task ${taskId}`, 
+                                        `Failed to sync pin status with server for activity ${activityId}`, 
                                         'warning'
                                     );
                                 }
@@ -671,8 +671,8 @@ class SidebarComponent {
                     doctype: 'Comment',
                     filters: {
                         comment_type: 'Like',
-                        reference_doctype: 'Task',
-                        reference_name: taskId,
+                        reference_doctype: 'Activity',
+                        reference_name: activityId,
                         owner: frappe.session.user
                     },
                     fields: ['name']
@@ -687,20 +687,20 @@ class SidebarComponent {
                                 name: r.message[0].name
                             },
                             callback: (deleteResponse) => {
-                                console.log(`Task ${taskId} unpinned successfully in backend`);
+                                console.log(`Activity ${activityId} unpinned successfully in backend`);
                             },
                             error: (err) => {
                                 console.error('Failed to delete like comment:', err);
                                 if (this.app && this.app.components && this.app.components.toast) {
                                     this.app.components.toast.show(
-                                        `Failed to remove pin status from server for task ${taskId}`, 
+                                        `Failed to remove pin status from server for activity ${activityId}`, 
                                         'warning'
                                     );
                                 }
                             }
                         });
                     } else {
-                        console.log(`No like found to remove for task ${taskId}`);
+                        console.log(`No like found to remove for activity ${activityId}`);
                     }
                 },
                 error: (err) => {
@@ -711,46 +711,46 @@ class SidebarComponent {
     }
     
     /**
-     * Reorganize tasks to show pinned ones at top
+     * Reorganize activities to show pinned ones at top
      */
-    reorganizeTasks() {
-        // Create or update the dedicated pinned tasks section
-        this.createPinnedTasksSection();
+    reorganizeActivitys() {
+        // Create or update the dedicated pinned activities section
+        this.createPinnedActivitysSection();
         
-        // Hide pinned tasks from their original project locations (don't remove them)
+        // Hide pinned activities from their original project locations (don't remove them)
         document.querySelectorAll('.project-group').forEach(projectGroup => {
-            const taskContainer = projectGroup.querySelector('.task-group') || projectGroup;
-            const tasks = Array.from(taskContainer.querySelectorAll('.task-block'));
+            const activityContainer = projectGroup.querySelector('.activity-group') || projectGroup;
+            const activities = Array.from(activityContainer.querySelectorAll('.activity-block'));
             
-            // Hide pinned tasks from project groups (they'll be in the pinned section)
-            tasks.forEach(task => {
-                const taskKey = `${task.dataset.project}:${task.dataset.task}`;
-                if (this.pinnedTasks.has(taskKey)) {
-                    task.style.display = 'none';
-                    task.classList.add('hidden-pinned');
+            // Hide pinned activities from project groups (they'll be in the pinned section)
+            activities.forEach(activity => {
+                const activityKey = `${activity.dataset.project}:${activity.dataset.activity}`;
+                if (this.pinnedActivitys.has(activityKey)) {
+                    activity.style.display = 'none';
+                    activity.classList.add('hidden-pinned');
                 } else {
-                    task.style.display = '';
-                    task.classList.remove('hidden-pinned');
+                    activity.style.display = '';
+                    activity.classList.remove('hidden-pinned');
                 }
             });
             
-            // Sort remaining visible tasks alphabetically
-            const visibleTasks = Array.from(taskContainer.querySelectorAll('.task-block:not(.hidden-pinned)'));
-            visibleTasks.sort((a, b) => {
-                return a.dataset.taskName.localeCompare(b.dataset.taskName);
+            // Sort remaining visible activities alphabetically
+            const visibleActivitys = Array.from(activityContainer.querySelectorAll('.activity-block:not(.hidden-pinned)'));
+            visibleActivitys.sort((a, b) => {
+                return a.dataset.activityName.localeCompare(b.dataset.activityName);
             });
             
-            // Reorder visible tasks in DOM
-            visibleTasks.forEach(task => {
-                taskContainer.appendChild(task);
+            // Reorder visible activities in DOM
+            visibleActivitys.forEach(activity => {
+                activityContainer.appendChild(activity);
             });
         });
     }
     
     /**
-     * Create dedicated pinned tasks section at top of sidebar
+     * Create dedicated pinned activities section at top of sidebar
      */
-    createPinnedTasksSection() {
+    createPinnedActivitysSection() {
         const sidebar = document.querySelector('.sidebar');
         if (!sidebar) {
             console.warn('Sidebar not found');
@@ -758,23 +758,23 @@ class SidebarComponent {
         }
         
         // Remove existing pinned section
-        const existingPinnedSection = document.getElementById('pinned-tasks-section');
+        const existingPinnedSection = document.getElementById('pinned-activities-section');
         if (existingPinnedSection) {
             existingPinnedSection.remove();
         }
         
-        // If no pinned tasks, don't create section
-        if (this.pinnedTasks.size === 0) {
-            console.log('No pinned tasks to display');
+        // If no pinned activities, don't create section
+        if (this.pinnedActivitys.size === 0) {
+            console.log('No pinned activities to display');
             return;
         }
         
-        console.log(`Creating pinned section for ${this.pinnedTasks.size} tasks:`, [...this.pinnedTasks]);
+        console.log(`Creating pinned section for ${this.pinnedActivitys.size} activities:`, [...this.pinnedActivitys]);
         
-        // Create pinned tasks section
+        // Create pinned activities section
         const pinnedSection = document.createElement('div');
-        pinnedSection.id = 'pinned-tasks-section';
-        pinnedSection.className = 'pinned-tasks-section';
+        pinnedSection.id = 'pinned-activities-section';
+        pinnedSection.className = 'pinned-activities-section';
         
         // Create section header
         const sectionHeader = document.createElement('div');
@@ -782,75 +782,75 @@ class SidebarComponent {
         sectionHeader.innerHTML = `
             <div class="section-title">
                 <i class="mdi mdi-pin section-icon"></i>
-                <span class="section-text">Pinned Tasks</span>
-                <span class="section-count">(${this.pinnedTasks.size})</span>
+                <span class="section-text">Pinned Activitys</span>
+                <span class="section-count">(${this.pinnedActivitys.size})</span>
             </div>
         `;
         
         pinnedSection.appendChild(sectionHeader);
         
-        // Create container for pinned tasks
-        const pinnedTasksContainer = document.createElement('div');
-        pinnedTasksContainer.className = 'pinned-tasks-container';
+        // Create container for pinned activities
+        const pinnedActivitysContainer = document.createElement('div');
+        pinnedActivitysContainer.className = 'pinned-activities-container';
         
-        // Collect all pinned tasks and clone them
-        const pinnedTaskElements = [];
-        this.pinnedTasks.forEach(taskKey => {
-            const [projectId, taskId] = taskKey.split(':');
-            console.log(`Looking for task: project=${projectId}, task=${taskId}`);
+        // Collect all pinned activities and clone them
+        const pinnedActivityElements = [];
+        this.pinnedActivitys.forEach(activityKey => {
+            const [projectId, activityId] = activityKey.split(':');
+            console.log(`Looking for activity: project=${projectId}, activity=${activityId}`);
             
-            // Try multiple selectors to find the original task
-            let originalTask = document.querySelector(`[data-project="${projectId}"][data-task="${taskId}"]`);
+            // Try multiple selectors to find the original activity
+            let originalActivity = document.querySelector(`[data-project="${projectId}"][data-activity="${activityId}"]`);
             
-            // If not found, try looking in hidden tasks
-            if (!originalTask) {
-                originalTask = document.querySelector(`[data-project="${projectId}"][data-task="${taskId}"].hidden-pinned`);
+            // If not found, try looking in hidden activities
+            if (!originalActivity) {
+                originalActivity = document.querySelector(`[data-project="${projectId}"][data-activity="${activityId}"].hidden-pinned`);
             }
             
             // If still not found, try without hidden class
-            if (!originalTask) {
-                const allTasks = document.querySelectorAll(`[data-task="${taskId}"]`);
-                console.log(`Found ${allTasks.length} tasks with ID ${taskId}`);
-                originalTask = Array.from(allTasks).find(task => task.dataset.project === projectId);
+            if (!originalActivity) {
+                const allActivitys = document.querySelectorAll(`[data-activity="${activityId}"]`);
+                console.log(`Found ${allActivitys.length} activities with ID ${activityId}`);
+                originalActivity = Array.from(allActivitys).find(activity => activity.dataset.project === projectId);
             }
             
-            if (originalTask) {
-                console.log(`Found original task for ${taskKey}:`, originalTask);
+            if (originalActivity) {
+                console.log(`Found original activity for ${activityKey}:`, originalActivity);
                 
-                const clonedTask = originalTask.cloneNode(true);
-                clonedTask.classList.add('pinned-task-clone');
-                clonedTask.classList.remove('hidden-pinned'); // Make sure it's visible
-                clonedTask.style.display = ''; // Ensure it's not hidden
+                const clonedActivity = originalActivity.cloneNode(true);
+                clonedActivity.classList.add('pinned-activity-clone');
+                clonedActivity.classList.remove('hidden-pinned'); // Make sure it's visible
+                clonedActivity.style.display = ''; // Ensure it's not hidden
                 
                 // Re-add event listeners to cloned buttons
-                this.setupClonedTaskButtons(clonedTask, taskId);
+                this.setupClonedActivityButtons(clonedActivity, activityId);
                 
-                pinnedTaskElements.push({
-                    element: clonedTask,
-                    taskName: clonedTask.dataset.taskName || 'Unknown Task',
+                pinnedActivityElements.push({
+                    element: clonedActivity,
+                    activityName: clonedActivity.dataset.activityName || 'Unknown Activity',
                     projectName: this.getProjectName(projectId) || 'Unknown Project'
                 });
             } else {
-                console.warn(`Could not find original task for ${taskKey}`);
+                console.warn(`Could not find original activity for ${activityKey}`);
             }
         });
         
-        console.log(`Found ${pinnedTaskElements.length} pinned task elements to display`);
+        console.log(`Found ${pinnedActivityElements.length} pinned activity elements to display`);
         
-        // Sort pinned tasks alphabetically
-        pinnedTaskElements.sort((a, b) => {
-            const aName = `${a.projectName} - ${a.taskName}`;
-            const bName = `${b.projectName} - ${b.taskName}`;
+        // Sort pinned activities alphabetically
+        pinnedActivityElements.sort((a, b) => {
+            const aName = `${a.projectName} - ${a.activityName}`;
+            const bName = `${b.projectName} - ${b.activityName}`;
             return aName.localeCompare(bName);
         });
         
-        // Add sorted pinned tasks to container
-        pinnedTaskElements.forEach((item, index) => {
-            console.log(`Adding pinned task ${index + 1}:`, item.taskName);
-            pinnedTasksContainer.appendChild(item.element);
+        // Add sorted pinned activities to container
+        pinnedActivityElements.forEach((item, index) => {
+            console.log(`Adding pinned activity ${index + 1}:`, item.activityName);
+            pinnedActivitysContainer.appendChild(item.element);
         });
         
-        pinnedSection.appendChild(pinnedTasksContainer);
+        pinnedSection.appendChild(pinnedActivitysContainer);
         
         // Insert pinned section after search container
         const searchContainer = document.querySelector('.search-container');
@@ -862,21 +862,21 @@ class SidebarComponent {
             console.log('Inserted pinned section at top of sidebar');
         }
         
-        console.log('Pinned tasks section created successfully');
+        console.log('Pinned activities section created successfully');
     }
     
     /**
-     * Setup event listeners for cloned task buttons
+     * Setup event listeners for cloned activity buttons
      */
-    setupClonedTaskButtons(clonedTask, taskId) {
-        const openButton = clonedTask.querySelector('.open-button');
-        const pinButton = clonedTask.querySelector('.pin-button');
+    setupClonedActivityButtons(clonedActivity, activityId) {
+        const openButton = clonedActivity.querySelector('.open-button');
+        const pinButton = clonedActivity.querySelector('.pin-button');
         
         if (openButton) {
             openButton.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                this.openTaskInDesk(taskId);
+                this.openActivityInDesk(activityId);
             });
         }
         
@@ -884,61 +884,61 @@ class SidebarComponent {
             pinButton.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                this.togglePin(clonedTask, pinButton);
+                this.togglePin(clonedActivity, pinButton);
             });
         }
         
-        // Setup drag functionality for cloned tasks
-        this.setupClonedTaskDrag(clonedTask);
+        // Setup drag functionality for cloned activities
+        this.setupClonedActivityDrag(clonedActivity);
     }
     
     /**
-     * Setup drag functionality for cloned pinned tasks
+     * Setup drag functionality for cloned pinned activities
      */
-    setupClonedTaskDrag(clonedTask) {
-        // Make sure the cloned task is draggable
-        clonedTask.draggable = true;
+    setupClonedActivityDrag(clonedActivity) {
+        // Make sure the cloned activity is draggable
+        clonedActivity.draggable = true;
         
-        clonedTask.addEventListener('dragstart', (e) => {
-            clonedTask.classList.add('dragging');
+        clonedActivity.addEventListener('dragstart', (e) => {
+            clonedActivity.classList.add('dragging');
             
-            const taskData = {
-                project: clonedTask.dataset.project,
-                task: clonedTask.dataset.task,
-                projectName: clonedTask.dataset.projectName,
-                taskName: clonedTask.dataset.taskName,
-                color: clonedTask.dataset.color,
-                isExistingBlock: false // This is a new task from sidebar, not an existing time block
+            const activityData = {
+                project: clonedActivity.dataset.project,
+                activity: clonedActivity.dataset.activity,
+                projectName: clonedActivity.dataset.projectName,
+                activityName: clonedActivity.dataset.activityName,
+                color: clonedActivity.dataset.color,
+                isExistingBlock: false // This is a new activity from sidebar, not an existing time block
             };
             
-            e.dataTransfer.setData('text/plain', JSON.stringify(taskData));
+            e.dataTransfer.setData('text/plain', JSON.stringify(activityData));
             e.dataTransfer.effectAllowed = 'copy';
         });
         
-        clonedTask.addEventListener('dragend', (e) => {
-            clonedTask.classList.remove('dragging');
+        clonedActivity.addEventListener('dragend', (e) => {
+            clonedActivity.classList.remove('dragging');
         });
     }
     
     /**
-     * Save pinned tasks to localStorage
+     * Save pinned activities to localStorage
      */
-    savePinnedTasks() {
-        localStorage.setItem('timesheet_pinned_tasks', JSON.stringify([...this.pinnedTasks]));
+    savePinnedActivitys() {
+        localStorage.setItem('timesheet_pinned_activities', JSON.stringify([...this.pinnedActivitys]));
     }
     
     /**
-     * Load pinned tasks from localStorage
+     * Load pinned activities from localStorage
      */
-    loadPinnedTasks() {
-        const saved = localStorage.getItem('timesheet_pinned_tasks');
+    loadPinnedActivitys() {
+        const saved = localStorage.getItem('timesheet_pinned_activities');
         if (saved) {
             try {
                 const pinnedArray = JSON.parse(saved);
-                this.pinnedTasks = new Set(pinnedArray);
+                this.pinnedActivitys = new Set(pinnedArray);
             } catch (e) {
-                console.warn('Failed to load pinned tasks:', e);
-                this.pinnedTasks = new Set();
+                console.warn('Failed to load pinned activities:', e);
+                this.pinnedActivitys = new Set();
             }
         }
     }
@@ -950,7 +950,7 @@ class SidebarComponent {
         document.querySelectorAll('.project-header').forEach(header => {
             header.addEventListener('click', (e) => {
                 // Don't toggle if clicking on buttons
-                if (e.target.closest('.task-buttons') || e.target.closest('button')) {
+                if (e.target.closest('.activity-buttons') || e.target.closest('button')) {
                     return;
                 }
                 
@@ -1056,36 +1056,36 @@ class SidebarComponent {
     }
     
     /**
-     * Filter projects and tasks
+     * Filter projects and activities
      */
     filterProjects(searchTerm) {
         const term = searchTerm.toLowerCase().trim();
         
         document.querySelectorAll('.project-group').forEach(projectGroup => {
             const projectName = projectGroup.querySelector('.project-name').textContent.toLowerCase();
-            const tasks = projectGroup.querySelectorAll('.task-block');
+            const activities = projectGroup.querySelectorAll('.activity-block');
             
             let projectMatches = projectName.includes(term);
-            let hasVisibleTasks = false;
+            let hasVisibleActivitys = false;
             
-            // Check tasks
-            tasks.forEach(task => {
-                const taskName = task.dataset.taskName.toLowerCase();
-                const taskMatches = taskName.includes(term);
+            // Check activities
+            activities.forEach(activity => {
+                const activityName = activity.dataset.activityName.toLowerCase();
+                const activityMatches = activityName.includes(term);
                 
-                if (term === '' || taskMatches || projectMatches) {
-                    task.style.display = '';
-                    hasVisibleTasks = true;
+                if (term === '' || activityMatches || projectMatches) {
+                    activity.style.display = '';
+                    hasVisibleActivitys = true;
                 } else {
-                    task.style.display = 'none';
+                    activity.style.display = 'none';
                 }
             });
             
             // Show/hide project based on matches
-            if (term === '' || projectMatches || hasVisibleTasks) {
+            if (term === '' || projectMatches || hasVisibleActivitys) {
                 projectGroup.style.display = '';
-                // Expand project if it has matching tasks
-                if (hasVisibleTasks && term !== '' && projectGroup.classList.contains('collapsed')) {
+                // Expand project if it has matching activities
+                if (hasVisibleActivitys && term !== '' && projectGroup.classList.contains('collapsed')) {
                     this.toggleProject(projectGroup);
                 }
             } else {
@@ -1100,8 +1100,8 @@ class SidebarComponent {
     clearFilter() {
         document.querySelectorAll('.project-group').forEach(projectGroup => {
             projectGroup.style.display = '';
-            projectGroup.querySelectorAll('.task-block').forEach(task => {
-                task.style.display = '';
+            projectGroup.querySelectorAll('.activity-block').forEach(activity => {
+                activity.style.display = '';
             });
         });
     }
@@ -1112,35 +1112,35 @@ class SidebarComponent {
     getProjectStats() {
         const stats = {
             totalProjects: 0,
-            totalTasks: 0,
-            projectsWithTasks: 0,
-            averageTasksPerProject: 0
+            totalActivitys: 0,
+            projectsWithActivitys: 0,
+            averageActivitysPerProject: 0
         };
         
         const projectGroups = document.querySelectorAll('.project-group');
         stats.totalProjects = projectGroups.length;
         
         projectGroups.forEach(projectGroup => {
-            const tasks = projectGroup.querySelectorAll('.task-block');
-            const taskCount = tasks.length;
+            const activities = projectGroup.querySelectorAll('.activity-block');
+            const activityCount = activities.length;
             
-            stats.totalTasks += taskCount;
-            if (taskCount > 0) {
-                stats.projectsWithTasks++;
+            stats.totalActivitys += activityCount;
+            if (activityCount > 0) {
+                stats.projectsWithActivitys++;
             }
         });
         
         if (stats.totalProjects > 0) {
-            stats.averageTasksPerProject = Math.round(stats.totalTasks / stats.totalProjects * 10) / 10;
+            stats.averageActivitysPerProject = Math.round(stats.totalActivitys / stats.totalProjects * 10) / 10;
         }
         
         return stats;
     }
     
     /**
-     * Highlight project and task
+     * Highlight project and activity
      */
-    highlightProjectTask(projectId, taskId) {
+    highlightProjectActivity(projectId, activityId) {
         // Clear existing highlights
         this.clearHighlights();
         
@@ -1154,14 +1154,14 @@ class SidebarComponent {
                 this.toggleProject(projectGroup);
             }
             
-            // Highlight task
-            if (taskId) {
-                const taskBlock = projectGroup.querySelector(`[data-task="${taskId}"]`);
-                if (taskBlock) {
-                    taskBlock.classList.add('highlighted');
+            // Highlight activity
+            if (activityId) {
+                const activityBlock = projectGroup.querySelector(`[data-activity="${activityId}"]`);
+                if (activityBlock) {
+                    activityBlock.classList.add('highlighted');
                     
-                    // Scroll task into view
-                    DOMUtils.scrollIntoView(taskBlock, { block: 'nearest' });
+                    // Scroll activity into view
+                    DOMUtils.scrollIntoView(activityBlock, { block: 'nearest' });
                 }
             }
         }
@@ -1205,21 +1205,21 @@ class SidebarComponent {
     }
     
     /**
-     * Get task name
+     * Get activity name
      */
-    getTaskName(projectId, taskId) {
+    getActivityName(projectId, activityId) {
         const projectGroup = document.querySelector(`[data-project="${projectId}"]`);
         if (projectGroup) {
-            const taskBlock = projectGroup.querySelector(`[data-task="${taskId}"]`);
-            if (taskBlock) {
-                return taskBlock.dataset.taskName;
+            const activityBlock = projectGroup.querySelector(`[data-activity="${activityId}"]`);
+            if (activityBlock) {
+                return activityBlock.dataset.activityName;
             }
         }
-        return taskId;
+        return activityId;
     }
     
     /**
-     * Get all projects and tasks data
+     * Get all projects and activities data
      */
     getProjectsData() {
         const projects = [];
@@ -1229,12 +1229,12 @@ class SidebarComponent {
             const projectName = this.getProjectName(projectId);
             const projectColor = this.getProjectColor(projectId);
             
-            const tasks = [];
-            projectGroup.querySelectorAll('.task-block').forEach(taskBlock => {
-                tasks.push({
-                    id: taskBlock.dataset.task,
-                    name: taskBlock.dataset.taskName,
-                    priority: taskBlock.querySelector('.task-priority')?.textContent || null
+            const activities = [];
+            projectGroup.querySelectorAll('.activity-block').forEach(activityBlock => {
+                activities.push({
+                    id: activityBlock.dataset.activity,
+                    name: activityBlock.dataset.activityName,
+                    priority: activityBlock.querySelector('.activity-priority')?.textContent || null
                 });
             });
             
@@ -1242,7 +1242,7 @@ class SidebarComponent {
                 id: projectId,
                 name: projectName,
                 color: projectColor,
-                tasks: tasks,
+                activities: activities,
                 isCollapsed: projectGroup.classList.contains('collapsed')
             });
         });
@@ -1262,7 +1262,7 @@ class SidebarComponent {
         
         const menuItems = [
             {
-                text: 'Expand All Tasks',
+                text: 'Expand All Activitys',
                 icon: '📂',
                 action: () => {
                     if (projectGroup.classList.contains('collapsed')) {
@@ -1271,7 +1271,7 @@ class SidebarComponent {
                 }
             },
             {
-                text: 'Collapse Tasks',
+                text: 'Collapse Activitys',
                 icon: '📁',
                 action: () => {
                     if (!projectGroup.classList.contains('collapsed')) {
@@ -1326,9 +1326,9 @@ class SidebarComponent {
         this.setupProjectContextMenus();
         
         // Setup new features
-        this.refreshTaskToggles();
+        this.refreshActivityToggles();
         this.addPinButtons();
-        this.reorganizeTasks();
+        this.reorganizeActivitys();
     }
     
     /**

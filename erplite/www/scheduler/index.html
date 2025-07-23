@@ -4,10 +4,18 @@
 
 {% block head_include %}
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css">
+<link rel="stylesheet" href="/assets/erplite/css/app_navigation.css">
 {% endblock %}
 
+
+
 {% block page_content %}
-<div class="scheduler-app">
+<div class="app-layout">
+    {% include "templates/includes/app_navigation.html" %}
+    
+    <div class="main-content">
+        <!-- JavaScript files are loaded dynamically by index.js -->
+        <div class="scheduler-app">
     <!-- Main Grid Area -->
     <div class="scheduler-main">
 <div class="scheduler-header">
@@ -32,18 +40,18 @@
             </div>
             <div class="toolbar-right">
                 <div class="date-nav">
-                    <button onclick="navigateDate(-30)" class="nav-btn">‹‹</button>
-                    <button onclick="navigateDate(-7)" class="nav-btn">‹</button>
+                    <button class="nav-btn" data-days="-30">‹‹</button>
+                    <button class="nav-btn" data-days="-7">‹</button>
                     <div class="current-range">
                         <span id="dateRangeDisplay">Loading...</span>
                     </div>
-                    <button onclick="navigateDate(7)" class="nav-btn">›</button>
-                    <button onclick="navigateDate(30)" class="nav-btn">››</button>
+                    <button class="nav-btn" data-days="7">›</button>
+                    <button class="nav-btn" data-days="30">››</button>
                 </div>
-                <button class="btn btn-secondary" onclick="refreshData()">
+                <button class="btn btn-secondary" data-action="refresh">
                     <i class="mdi mdi-refresh"></i> Refresh
                 </button>
-                <button class="btn btn-secondary" onclick="exportSchedule()">
+                <button class="btn btn-secondary" data-action="export">
                     <i class="mdi mdi-export"></i> Export
                 </button>
             </div>
@@ -51,18 +59,32 @@
 
         <!-- Schedule Grid -->
         <div class="schedule-grid-container">
-            <!-- Grid Header -->
-            <div class="grid-header">
-                <div class="column-header project-task-column">Project / Task</div>
-                <div class="column-header person-column">Resource</div>
-                <div class="date-columns" id="dateColumns">
-                    <!-- Date columns will be populated by JavaScript -->
+            <!-- Fixed Left Section -->
+            <div class="fixed-left-section">
+                <!-- Fixed Left Header -->
+                <div class="fixed-left-header">
+                    <div class="column-header project-activity-column">Project / Activity</div>
+                    <div class="column-header role-column">Role</div>
+                    <div class="column-header resource-column">Resource</div>
+                </div>
+                
+                <!-- Fixed Left Body -->
+                <div class="fixed-left-body" id="fixedLeftBody">
+                    <!-- Fixed columns for each row will be populated by JavaScript -->
                 </div>
             </div>
-
-            <!-- Grid Body -->
-            <div class="grid-body" id="gridBody">
-                <!-- Schedule rows will be populated by JavaScript -->
+            
+            <!-- Scrollable Right Section -->
+            <div class="scrollable-right-section">
+                <!-- Scrollable Right Header -->
+                <div class="scrollable-right-header" id="dateColumns">
+                    <!-- Date columns will be populated by JavaScript -->
+                </div>
+                
+                <!-- Scrollable Right Body -->
+                <div class="scrollable-right-body" id="gridBody">
+                    <!-- Day cells for each row will be populated by JavaScript -->
+                </div>
             </div>
         </div>
 
@@ -82,7 +104,7 @@
             <span class="entry-project"></span>
             <span class="entry-duration"></span>
         </div>
-        <div class="entry-task"></div>
+        <div class="entry-activity"></div>
         <div class="entry-status"></div>
         <div class="entry-controls">
             <button class="control-btn edit-btn" title="Edit entry">
@@ -133,19 +155,19 @@
             <span class="close" onclick="closeEntryModal()">&times;</span>
         </div>
         <div class="modal-body">
-            <!-- Hidden fields for project and task (set by row) -->
+            <!-- Hidden fields for project and activity (set by row) -->
             <input type="hidden" id="entryProject">
-            <input type="hidden" id="entryTask">
+            <input type="hidden" id="entryActivity">
             
-            <!-- Project and Task display (read-only) -->
+            <!-- Project and Activity display (read-only) -->
             <div class="form-group">
                 <label>Project:</label>
                 <div id="entryProjectDisplay" style="padding: 0.75rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 0.5rem; color: #374151; font-weight: 500;"></div>
             </div>
             
             <div class="form-group">
-                <label>Task:</label>
-                <div id="entryTaskDisplay" style="padding: 0.75rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 0.5rem; color: #374151; font-weight: 500;"></div>
+                <label>Activity:</label>
+                <div id="entryActivityDisplay" style="padding: 0.75rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 0.5rem; color: #374151; font-weight: 500;"></div>
             </div>
             
             <div class="form-row">
@@ -207,27 +229,16 @@ window.schedulerData = {
     currentStartDate: '{{ current_start_date }}',
     projects: {{ projects | tojson }},
     resources: {{ resources | tojson }},
+    roles: {{ roles | tojson }},
     scheduleEntries: {{ schedule_entries | tojson }},
     projectColors: {{ project_colors | tojson }}
 };
 </script>
-{% endblock %}
 
-{% block script_include %}
-<!-- Scheduler Core Modules -->
-<script src="/assets/erplite/js/scheduler/core/EventBus.js"></script>
-<script src="/assets/erplite/js/scheduler/core/StateManager.js"></script>
-<script src="/assets/erplite/js/scheduler/core/DataProcessor.js"></script>
+<!-- Include navigation JavaScript -->
+<script src="/assets/erplite/js/app_navigation.js"></script>
 
-<!-- Scheduler Utilities -->
-<script src="/assets/erplite/js/scheduler/utils/DateUtils.js"></script>
-<script src="/assets/erplite/js/scheduler/utils/ColorUtils.js"></script>
-
-<!-- Scheduler Templates -->
-<script src="/assets/erplite/js/scheduler/templates/TemplateManager.js"></script>
-
-<!-- Main Scheduler Application -->
-<script src="/assets/erplite/js/scheduler/Scheduler.js"></script>
-
-<!-- index.js is automatically loaded by Frappe -->
+        </div> <!-- Close scheduler-app -->
+    </div> <!-- Close main-content -->
+</div> <!-- Close app-layout -->
 {% endblock %}

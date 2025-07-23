@@ -21,7 +21,7 @@ class TimeBlockManager {
         
         // Set content
         timeBlock.querySelector('.time-block-header').textContent = data.projectName;
-        timeBlock.querySelector('.time-block-task').textContent = data.taskName;
+        timeBlock.querySelector('.time-block-activity').textContent = data.activityName;
         timeBlock.querySelector('.time-block-duration').textContent = `${data.duration}h`;
         
         // Show description if duration is 1.5+ hours and description exists
@@ -33,18 +33,18 @@ class TimeBlockManager {
             descriptionElement.style.display = 'none';
         }
         
-        // Hide task name for very short tasks (0.5h) and duration for tasks under 1.5h
+        // Hide activityvity name for very shactivityactivities (0.5h) and duration for activityvitys under 1.5h
         const durationElement = timeBlock.querySelector('.time-block-duration');
-        const taskElement = timeBlock.querySelector('.time-block-task');
+        const activityElement = timeBlock.querySelector('.time-block-activity');
         
-        // Task name visibility (hide for 0.5h tasks)
+        // Activity name visibility (hide for 0.5h activities)
         if (data.duration <= 0.5) {
-            taskElement.style.display = 'none';
+            activityElement.style.display = 'none';
         } else {
-            taskElement.style.display = 'block';
+            activityElement.style.display = 'block';
         }
         
-        // Duration visibility (only show for tasks > 0.5h)
+        // Duration visibility (only show for activities > 0.5h)
         if (data.duration > 0.5) {
             durationElement.style.display = 'block';
         } else {
@@ -59,7 +59,7 @@ class TimeBlockManager {
         
         // Add data attributes
         timeBlock.dataset.project = data.project;
-        timeBlock.dataset.task = data.task;
+        timeBlock.dataset.activity = data.activity;
         timeBlock.dataset.duration = data.duration;
         timeBlock.dataset.startHour = data.startHour;
         timeBlock.dataset.startMinute = data.startMinute || 0;
@@ -184,7 +184,7 @@ class TimeBlockManager {
             // Update visibility based on new duration
             const descriptionElement = timeBlock.querySelector('.time-block-description');
             const durationElement = timeBlock.querySelector('.time-block-duration');
-            const taskElement = timeBlock.querySelector('.time-block-task');
+            const activityElement = timeBlock.querySelector('.time-block-activity');
             const description = timeBlock.dataset.description || '';
             
             // Description visibility (1.5+ hours AND has description)
@@ -195,14 +195,14 @@ class TimeBlockManager {
                 descriptionElement.style.display = 'none';
             }
             
-            // Task name visibility (hide for 0.5h tasks)
+            // Activity name visibility (hide for 0.5h activities)
             if (duration <= 0.5) {
-                taskElement.style.display = 'none';
+                activityElement.style.display = 'none';
             } else {
-                taskElement.style.display = 'block';
+                activityElement.style.display = 'block';
             }
             
-            // Duration visibility (only show for tasks > 0.5h)
+            // Duration visibility (only show for activities > 0.5h)
             if (duration > 0.5) {
                 durationElement.style.display = 'block';
             } else {
@@ -260,18 +260,18 @@ class TimeBlockManager {
             descriptionElement.style.display = 'none';
         }
         
-        // Update duration and task name visibility based on new duration
+        // Update duration and activity name visibility based on new duration
         const durationElement = timeBlock.querySelector('.time-block-duration');
-        const taskElement = timeBlock.querySelector('.time-block-task');
+        const activityElement = timeBlock.querySelector('.time-block-activity');
         
-        // Task name visibility (hide for 0.5h tasks)
+        // Activity name visibility (hide for 0.5h activities)
         if (newDuration <= 0.5) {
-            taskElement.style.display = 'none';
+            activityElement.style.display = 'none';
         } else {
-            taskElement.style.display = 'block';
+            activityElement.style.display = 'block';
         }
         
-        // Duration visibility (only show for tasks > 0.5h)
+        // Duration visibility (only show for activities > 0.5h)
         if (newDuration > 0.5) {
             durationElement.style.display = 'block';
         } else {
@@ -357,18 +357,18 @@ class TimeBlockManager {
         if (data.projectName) {
             timeBlock.querySelector('.time-block-header').textContent = data.projectName;
         }
-        if (data.taskName) {
-            timeBlock.querySelector('.time-block-task').textContent = data.taskName;
+        if (data.activityName) {
+            timeBlock.querySelector('.time-block-activity').textContent = data.activityName;
         }
         if (data.duration) {
             timeBlock.querySelector('.time-block-duration').textContent = `${data.duration}h`;
         }
         
-        // Update description, duration, and task name visibility
+        // Update description, duration, and activity name visibility
         if (data.description !== undefined || data.duration) {
             const descriptionElement = timeBlock.querySelector('.time-block-description');
             const durationElement = timeBlock.querySelector('.time-block-duration');
-            const taskElement = timeBlock.querySelector('.time-block-task');
+            const activityElement = timeBlock.querySelector('.time-block-activity');
             const description = data.description || timeBlock.dataset.description || '';
             const duration = data.duration || parseFloat(timeBlock.dataset.duration);
             
@@ -380,14 +380,14 @@ class TimeBlockManager {
                 descriptionElement.style.display = 'none';
             }
             
-            // Task name visibility (hide for 0.5h tasks)
+            // Activity name visibility (hide for 0.5h activities)
             if (duration <= 0.5) {
-                taskElement.style.display = 'none';
+                activityElement.style.display = 'none';
             } else {
-                taskElement.style.display = 'block';
+                activityElement.style.display = 'block';
             }
             
-            // Duration visibility (only show for tasks > 0.5h)
+            // Duration visibility (only show for activities > 0.5h)
             if (duration > 0.5) {
                 durationElement.style.display = 'block';
             } else {
@@ -444,9 +444,9 @@ class TimeBlockManager {
         // Create clone with same data
         const cloneData = {
             project: sourceBlock.dataset.project,
-            task: sourceBlock.dataset.task,
+            activity: sourceBlock.dataset.activity,
             projectName: sourceBlock.querySelector('.time-block-header').textContent,
-            taskName: sourceBlock.querySelector('.time-block-task').textContent,
+            activityName: sourceBlock.querySelector('.time-block-activity').textContent,
             color: sourceBlock.style.getPropertyValue('--project-color'),
             date: targetDate,
             startHour: startHour,

@@ -6,7 +6,7 @@ class QuickEntryComponent {
         this.app = app;
         this.quickEntryData = {
             selectedProject: null,
-            selectedTask: null,
+            selectedActivity: null,
             targetTimeSlot: null,
             targetDate: null,
             targetHour: null,
@@ -56,7 +56,7 @@ class QuickEntryComponent {
         this.quickEntryData.targetHour = parseInt(timeSlot.dataset.hour);
         this.quickEntryData.targetMinute = parseInt(timeSlot.dataset.minute || 0);
         this.quickEntryData.selectedProject = null;
-        this.quickEntryData.selectedTask = null;
+        this.quickEntryData.selectedActivity = null;
         
         this.populateProjects();
         
@@ -98,7 +98,7 @@ class QuickEntryComponent {
     resetQuickEntryData() {
         this.quickEntryData = {
             selectedProject: null,
-            selectedTask: null,
+            selectedActivity: null,
             targetTimeSlot: null,
             targetDate: null,
             targetHour: null,
@@ -127,8 +127,8 @@ class QuickEntryComponent {
             projectList.appendChild(projectItem);
         });
         
-        // Clear task list
-        this.clearTaskList();
+        // Clear activity list
+        this.clearActivityList();
         this.updateCreateButton();
     }
     
@@ -184,50 +184,50 @@ class QuickEntryComponent {
             color: projectColor
         };
         
-        // Populate tasks for selected project
-        this.populateTasks(projectId);
+        // Populate activities for selected project
+        this.populateActivitys(projectId);
     }
     
     /**
-     * Populate tasks list for selected project
+     * Populate activities list for selected project
      */
-    populateTasks(projectId) {
-        const taskList = document.getElementById('quickTaskList');
-        if (!taskList) return;
+    populateActivitys(projectId) {
+        const activityList = document.getElementById('quickActivityList');
+        if (!activityList) return;
         
-        taskList.innerHTML = '';
+        activityList.innerHTML = '';
         
-        // Find the project group and get its tasks
+        // Find the project group and get its activities
         const projectGroup = document.querySelector(`[data-project="${projectId}"]`);
         if (projectGroup) {
-            const tasks = projectGroup.querySelectorAll('.task-block');
+            const activities = projectGroup.querySelectorAll('.activity-block');
             
-            if (tasks.length === 0) {
-                taskList.innerHTML = '<div style="padding: 1rem; text-align: center; color: #64748b;">No tasks available for this project</div>';
+            if (activities.length === 0) {
+                activityList.innerHTML = '<div style="padding: 1rem; text-align: center; color: #64748b;">No activities available for this project</div>';
                 return;
             }
             
-            tasks.forEach(taskBlock => {
-                const taskId = taskBlock.dataset.task;
-                const taskName = taskBlock.dataset.taskName;
+            activities.forEach(activityBlock => {
+                const activityId = activityBlock.dataset.activity;
+                const activityName = activityBlock.dataset.activityName;
                 
-                const taskItem = this.createTaskItem(taskId, taskName);
-                taskList.appendChild(taskItem);
+                const activityItem = this.createActivityItem(activityId, activityName);
+                activityList.appendChild(activityItem);
             });
         }
         
-        // Reset task selection and update button
-        this.quickEntryData.selectedTask = null;
+        // Reset activity selection and update button
+        this.quickEntryData.selectedActivity = null;
         this.updateCreateButton();
     }
     
     /**
-     * Create task item element
+     * Create activity item element
      */
-    createTaskItem(taskId, taskName) {
-        const taskItem = DOMUtils.createElement('div', {
+    createActivityItem(activityId, activityName) {
+        const activityItem = DOMUtils.createElement('div', {
             className: 'quick-entry-item',
-            dataset: { task: taskId },
+            dataset: { activity: activityId },
             tabindex: '0'
         });
         
@@ -236,40 +236,40 @@ class QuickEntryComponent {
             style: { backgroundColor: this.quickEntryData.selectedProject.color }
         });
         
-        const nameSpan = DOMUtils.createElement('span', {}, taskName);
+        const nameSpan = DOMUtils.createElement('span', {}, activityName);
         
-        taskItem.appendChild(colorDiv);
-        taskItem.appendChild(nameSpan);
+        activityItem.appendChild(colorDiv);
+        activityItem.appendChild(nameSpan);
         
         // Add event listeners
-        taskItem.addEventListener('click', () => {
-            this.selectTask(taskItem, taskId, taskName);
+        activityItem.addEventListener('click', () => {
+            this.selectActivity(activityItem, activityId, activityName);
         });
         
-        taskItem.addEventListener('keydown', (e) => {
+        activityItem.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                this.selectTask(taskItem, taskId, taskName);
+                this.selectActivity(activityItem, activityId, activityName);
             }
         });
         
-        return taskItem;
+        return activityItem;
     }
     
     /**
-     * Select a task
+     * Select a activity
      */
-    selectTask(taskElement, taskId, taskName) {
+    selectActivity(activityElement, activityId, activityName) {
         // Clear previous selection
-        document.querySelectorAll('#quickTaskList .quick-entry-item').forEach(item => {
+        document.querySelectorAll('#quickActivityList .quick-entry-item').forEach(item => {
             item.classList.remove('selected');
         });
         
-        // Select current task
-        taskElement.classList.add('selected');
-        this.quickEntryData.selectedTask = {
-            id: taskId,
-            name: taskName
+        // Select current activity
+        activityElement.classList.add('selected');
+        this.quickEntryData.selectedActivity = {
+            id: activityId,
+            name: activityName
         };
         
         // Update create button
@@ -277,12 +277,12 @@ class QuickEntryComponent {
     }
     
     /**
-     * Clear task list
+     * Clear activity list
      */
-    clearTaskList() {
-        const taskList = document.getElementById('quickTaskList');
-        if (taskList) {
-            taskList.innerHTML = '<div style="padding: 1rem; text-align: center; color: #64748b;">Select a project first</div>';
+    clearActivityList() {
+        const activityList = document.getElementById('quickActivityList');
+        if (activityList) {
+            activityList.innerHTML = '<div style="padding: 1rem; text-align: center; color: #64748b;">Select a project first</div>';
         }
     }
     
@@ -292,7 +292,7 @@ class QuickEntryComponent {
     updateCreateButton() {
         const createBtn = document.getElementById('createQuickEntryBtn');
         if (createBtn) {
-            createBtn.disabled = !this.quickEntryData.selectedProject || !this.quickEntryData.selectedTask;
+            createBtn.disabled = !this.quickEntryData.selectedProject || !this.quickEntryData.selectedActivity;
         }
     }
     
@@ -300,8 +300,8 @@ class QuickEntryComponent {
      * Create quick entry
      */
     createEntry() {
-        if (!this.quickEntryData.selectedProject || !this.quickEntryData.selectedTask) {
-            this.app.components.toast.warning('Please select both project and task');
+        if (!this.quickEntryData.selectedProject || !this.quickEntryData.selectedActivity) {
+            this.app.components.toast.warning('Please select both project and activity');
             return;
         }
         
@@ -322,9 +322,9 @@ class QuickEntryComponent {
         // Create the time block
         const newTimeBlock = this.app.managers.timeBlock.createTimeBlock({
             project: this.quickEntryData.selectedProject.id,
-            task: this.quickEntryData.selectedTask.id,
+            activity: this.quickEntryData.selectedActivity.id,
             projectName: this.quickEntryData.selectedProject.name,
-            taskName: this.quickEntryData.selectedTask.name,
+            activityName: this.quickEntryData.selectedActivity.name,
             color: this.quickEntryData.selectedProject.color,
             date: this.quickEntryData.targetDate,
             startHour: this.quickEntryData.targetHour,
@@ -346,9 +346,9 @@ class QuickEntryComponent {
     }
     
     /**
-     * Show quick entry with pre-selected project and task
+     * Show quick entry with pre-selected project and activity
      */
-    showWithDefaults(timeSlot, projectId, taskId) {
+    showWithDefaults(timeSlot, projectId, activityId) {
         this.show(timeSlot);
         
         // Pre-select project
@@ -356,18 +356,18 @@ class QuickEntryComponent {
         if (projectItem) {
             projectItem.click();
             
-            // Pre-select task after tasks are populated
+            // Pre-select activity after activities are populated
             setTimeout(() => {
-                const taskItem = document.querySelector(`#quickTaskList [data-task="${taskId}"]`);
-                if (taskItem) {
-                    taskItem.click();
+                const activityItem = document.querySelector(`#quickActivityList [data-activity="${activityId}"]`);
+                if (activityItem) {
+                    activityItem.click();
                 }
             }, 100);
         }
     }
     
     /**
-     * Get recently used projects and tasks
+     * Get recently used projects and activities
      */
     getRecentlyUsed() {
         // Get recently used from localStorage or app state
@@ -376,17 +376,17 @@ class QuickEntryComponent {
             try {
                 return JSON.parse(recent);
             } catch (e) {
-                return { projects: [], tasks: [] };
+                return { projects: [], activities: [] };
             }
         }
-        return { projects: [], tasks: [] };
+        return { projects: [], activities: [] };
     }
     
     /**
-     * Save recently used project and task
+     * Save recently used project and activity
      */
     saveRecentlyUsed() {
-        if (!this.quickEntryData.selectedProject || !this.quickEntryData.selectedTask) return;
+        if (!this.quickEntryData.selectedProject || !this.quickEntryData.selectedActivity) return;
         
         const recent = this.getRecentlyUsed();
         
@@ -401,16 +401,16 @@ class QuickEntryComponent {
         recent.projects.unshift(projectEntry);
         recent.projects = recent.projects.slice(0, 5);
         
-        // Add to recent tasks (keep last 10)
-        const taskEntry = {
-            id: this.quickEntryData.selectedTask.id,
-            name: this.quickEntryData.selectedTask.name,
+        // Add to recent activities (keep last 10)
+        const activityEntry = {
+            id: this.quickEntryData.selectedActivity.id,
+            name: this.quickEntryData.selectedActivity.name,
             projectId: this.quickEntryData.selectedProject.id
         };
         
-        recent.tasks = recent.tasks.filter(t => t.id !== taskEntry.id || t.projectId !== taskEntry.projectId);
-        recent.tasks.unshift(taskEntry);
-        recent.tasks = recent.tasks.slice(0, 10);
+        recent.activities = recent.activities.filter(t => t.id !== activityEntry.id || t.projectId !== activityEntry.projectId);
+        recent.activities.unshift(activityEntry);
+        recent.activities = recent.activities.slice(0, 10);
         
         localStorage.setItem('quickEntry_recent', JSON.stringify(recent));
     }

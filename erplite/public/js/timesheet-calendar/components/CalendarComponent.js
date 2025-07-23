@@ -137,7 +137,7 @@ class CalendarComponent {
             totalHours: 0,
             daysWithEntries: new Set(),
             projectsUsed: new Set(),
-            tasksUsed: new Set(),
+            activitiesUsed: new Set(),
             averageBlockDuration: 0,
             longestBlock: 0,
             shortestBlock: Infinity
@@ -150,7 +150,7 @@ class CalendarComponent {
             stats.totalHours += duration;
             stats.daysWithEntries.add(data.date);
             stats.projectsUsed.add(data.project);
-            stats.tasksUsed.add(data.task);
+            stats.activitiesUsed.add(data.activity);
             
             stats.longestBlock = Math.max(stats.longestBlock, duration);
             stats.shortestBlock = Math.min(stats.shortestBlock, duration);
@@ -168,7 +168,7 @@ class CalendarComponent {
         // Convert sets to counts
         stats.daysWithEntries = stats.daysWithEntries.size;
         stats.projectsUsed = stats.projectsUsed.size;
-        stats.tasksUsed = stats.tasksUsed.size;
+        stats.activitiesUsed = stats.activitiesUsed.size;
         
         // Round total hours
         stats.totalHours = Math.round(stats.totalHours * 10) / 10;
@@ -252,7 +252,7 @@ class CalendarComponent {
                     .calendar th { background: #f5f5f5; font-weight: bold; }
                     .time-entry { background: #e3f2fd; margin: 2px 0; padding: 4px; border-radius: 3px; font-size: 12px; }
                     .project-name { font-weight: bold; }
-                    .task-name { color: #666; }
+                    .activity-name { color: #666; }
                     .duration { float: right; font-weight: bold; }
                     @media print { body { margin: 0; } }
                 </style>
@@ -328,7 +328,7 @@ class CalendarComponent {
                         html += `
                             <div class="time-entry">
                                 <div class="project-name">${data.projectName}</div>
-                                <div class="task-name">${data.taskName}</div>
+                                <div class="activity-name">${data.activityName}</div>
                                 <div class="duration">${data.duration}h</div>
                             </div>
                         `;

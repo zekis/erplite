@@ -10,11 +10,13 @@
  "field_order": [
   "naming_series",
   "project",
-  "task",
+  "activity",
+  "role",
   "resource",
   "column_break_5",
   "project_name",
-  "task_name",
+  "activity_name",
+  "role_name",
   "resource_name",
   "section_break_9",
   "daily_entries",
@@ -41,10 +43,16 @@
    "reqd": 1
   },
   {
-   "fieldname": "task",
+   "fieldname": "activity",
    "fieldtype": "Link",
-   "label": "Task",
-   "options": "Task"
+   "label": "Activity",
+   "options": "Activity"
+  },
+  {
+   "fieldname": "role",
+   "fieldtype": "Link",
+   "label": "Role",
+   "options": "Scheduler Role"
   },
   {
    "fieldname": "resource",
@@ -64,10 +72,17 @@
    "read_only": 1
   },
   {
-   "fetch_from": "task.task_name",
-   "fieldname": "task_name",
+   "fetch_from": "activity.subject",
+   "fieldname": "activity_name",
    "fieldtype": "Data",
-   "label": "Task Name",
+   "label": "Activity Name",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "role.role_name",
+   "fieldname": "role_name",
+   "fieldtype": "Data",
+   "label": "Role Name",
    "read_only": 1
   },
   {

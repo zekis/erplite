@@ -16,8 +16,12 @@ class Customer(Document):
     
     def set_full_name(self):
         """Set full name from first and last name"""
-        if self.first_name and self.last_name and not self.customer_name:
-            self.customer_name = f"{self.first_name} {self.last_name}"
+        # Check if fields exist before accessing them (defensive programming)
+        first_name = getattr(self, 'first_name', None)
+        last_name = getattr(self, 'last_name', None)
+        
+        if first_name and last_name and not self.customer_name:
+            self.customer_name = f"{first_name} {last_name}"
 
 @frappe.whitelist()
 def send_to_xero(docname):

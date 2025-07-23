@@ -16,13 +16,13 @@
   },
   {
    "fieldname": "content",
-   "fieldtype": "HTML Editor",
+   "fieldtype": "Markdown Editor",
    "label": "Content"
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-07-02 08:36:58.192597",
+ "modified": "2025-07-13 09:09:00.671778",
  "modified_by": "Administrator",
  "module": "Erplite",
  "name": "Knowledge Article",

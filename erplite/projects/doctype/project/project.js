@@ -10,9 +10,9 @@ frappe.ui.form.on('Project', {
         
         // Add custom buttons
         if (!frm.is_new()) {
-            frm.add_custom_button(__('View Tasks'), function() {
+            frm.add_custom_button(__('View Activities'), function() {
                 frappe.route_options = {"project": frm.doc.name};
-                frappe.set_route("List", "Task");
+                frappe.set_route("List", "Activity");
             });
             
             frm.add_custom_button(__('View Timesheets'), function() {

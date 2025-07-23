@@ -1,5 +1,5 @@
 /**
- * Manages drag and drop functionality for time blocks and tasks
+ * Manages drag and drop functionality for time blocks and activities
  */
 class DragDropManager {
     constructor(app) {
@@ -24,10 +24,10 @@ class DragDropManager {
     }
     
     /**
-     * Setup drag and drop for sidebar task blocks
+     * Setup drag and drop for sidebar activity blocks
      */
     setupSidebarDragAndDrop() {
-        document.querySelectorAll('.task-block').forEach(block => {
+        document.querySelectorAll('.activity-block').forEach(block => {
             block.addEventListener('dragstart', (e) => {
                 this.handleSidebarDragStart(e, block);
             });
@@ -44,16 +44,16 @@ class DragDropManager {
     handleSidebarDragStart(e, block) {
         block.classList.add('dragging');
         
-        const taskData = {
+        const activityData = {
             project: block.dataset.project,
-            task: block.dataset.task,
+            activity: block.dataset.activity,
             projectName: block.dataset.projectName,
-            taskName: block.dataset.taskName,
+            activityName: block.dataset.activityName,
             color: block.dataset.color,
             isExistingBlock: false
         };
         
-        e.dataTransfer.setData('text/plain', JSON.stringify(taskData));
+        e.dataTransfer.setData('text/plain', JSON.stringify(activityData));
         e.dataTransfer.effectAllowed = 'copy';
     }
     
@@ -121,9 +121,9 @@ class DragDropManager {
             
             touchDragData = {
                 project: timeBlock.dataset.project,
-                task: timeBlock.dataset.task,
+                activity: timeBlock.dataset.activity,
                 projectName: timeBlock.querySelector('.time-block-header').textContent,
-                taskName: timeBlock.querySelector('.time-block-task').textContent,
+                activityName: timeBlock.querySelector('.time-block-activity').textContent,
                 color: projectColor,
                 duration: parseFloat(timeBlock.dataset.duration),
                 startHour: parseInt(timeBlock.dataset.startHour),
@@ -186,9 +186,9 @@ class DragDropManager {
             
             const timeBlockData = {
                 project: timeBlock.dataset.project,
-                task: timeBlock.dataset.task,
+                activity: timeBlock.dataset.activity,
                 projectName: timeBlock.querySelector('.time-block-header').textContent,
-                taskName: timeBlock.querySelector('.time-block-task').textContent,
+                activityName: timeBlock.querySelector('.time-block-activity').textContent,
                 color: projectColor,
                 duration: parseFloat(timeBlock.dataset.duration),
                 startHour: parseInt(timeBlock.dataset.startHour),
@@ -418,7 +418,7 @@ class DragDropManager {
         preview.innerHTML = `
             <div style="padding: 0.5rem; font-size: 0.75rem; color: #3b82f6; font-weight: 500;">
                 ${this.dragState.draggedData.projectName}<br>
-                ${this.dragState.draggedData.taskName}<br>
+                ${this.dragState.draggedData.activityName}<br>
                 <span style="font-size: 0.625rem;">${duration}h</span>
             </div>
         `;
@@ -472,32 +472,32 @@ class DragDropManager {
         console.log('  - Drop target:', { date, hour, minute });
         console.log('  - Current timeBlocks array length:', this.app.state.timeBlocks.length);
         
-        let taskData;
+        let activityData;
         try {
-            taskData = JSON.parse(event.dataTransfer.getData('text/plain'));
-            console.log('  - Got taskData from dataTransfer');
+            activityData = JSON.parse(event.dataTransfer.getData('text/plain'));
+            console.log('  - Got activityData from dataTransfer');
         } catch (e) {
             // Fallback to global data if dataTransfer fails
-            taskData = window.currentDragData;
+            activityData = window.currentDragData;
             console.log('  - Fallback to global currentDragData');
         }
         
         // Use global data as backup if dataTransfer data is incomplete
-        if (!taskData || !taskData.dragOffset) {
-            taskData = window.currentDragData || taskData;
+        if (!activityData || !activityData.dragOffset) {
+            activityData = window.currentDragData || activityData;
             console.log('  - Using backup global data');
         }
         
-        console.log('  - Final taskData:', taskData);
+        console.log('  - Final activityData:', activityData);
         
         // Calculate the actual placement position based on drag offset with 30-minute precision
         let finalStartHour = hour;
         let finalStartMinute = minute;
         
-        if (taskData && taskData.isExistingBlock && taskData.dragOffset) {
+        if (activityData && activityData.isExistingBlock && activityData.dragOffset) {
             // Use the same mobile-aware calculation as the preview
             const pixelsPerMinute = this.isMobileLayout() ? 2 : 1; // Mobile: 60px/30min = 2px/min, Desktop: 30px/30min = 1px/min
-            const offsetInMinutes = Math.round(taskData.dragOffset.y / (30 * pixelsPerMinute)) * 30; // Snap to 30-minute intervals
+            const offsetInMinutes = Math.round(activityData.dragOffset.y / (30 * pixelsPerMinute)) * 30; // Snap to 30-minute intervals
             
             // Calculate final position using the same logic as preview
             const targetTotalMinutes = (hour * 60 + minute) - offsetInMinutes;
@@ -507,8 +507,8 @@ class DragDropManager {
             console.log('  - Calculated final position:', { finalStartHour, finalStartMinute });
         }
         
-        if (taskData.isExistingBlock) {
-            if (taskData.isDuplicate) {
+        if (activityData.isExistingBlock) {
+            if (activityData.isDuplicate) {
                 console.log('📋 DUPLICATE: Processing duplicate operation');
                 
                 // Duplicating an existing time block (right-click drag)
@@ -516,7 +516,7 @@ class DragDropManager {
                 console.log('  - Found original duplicating block:', !!originalBlock);
                 
                 // Check for overlaps before creating duplicate (don't exclude original since it's a copy)
-                const hasOverlap = TimeUtils.checkTimeOverlap(dayColumn, finalStartHour, finalStartMinute, taskData.duration);
+                const hasOverlap = TimeUtils.checkTimeOverlap(dayColumn, finalStartHour, finalStartMinute, activityData.duration);
                 
                 if (hasOverlap) {
                     console.log('  - ❌ Overlap detected, cancelling duplicate');
@@ -526,11 +526,11 @@ class DragDropManager {
                 
                 // Create the duplicate with preserved data but no ID (new entry)
                 const newTimeBlock = this.app.managers.timeBlock.createTimeBlock({
-                    ...taskData,
+                    ...activityData,
                     date: date,
                     startHour: finalStartHour,
                     startMinute: finalStartMinute,
-                    duration: taskData.duration, // Keep original duration
+                    duration: activityData.duration, // Keep original duration
                     id: null // Remove ID so it's treated as a new entry
                 });
                 
@@ -557,7 +557,7 @@ class DragDropManager {
                 }
                 
                 // Check for overlaps at the new location (excluding the original block)
-                const hasOverlap = TimeUtils.checkTimeOverlap(dayColumn, finalStartHour, finalStartMinute, taskData.duration, originalBlock);
+                const hasOverlap = TimeUtils.checkTimeOverlap(dayColumn, finalStartHour, finalStartMinute, activityData.duration, originalBlock);
                 
                 if (hasOverlap) {
                     this.app.components.toast.show('Cannot move entry here - time slot is already occupied', 'warning');
@@ -592,7 +592,7 @@ class DragDropManager {
         } else {
             console.log('🆕 NEW: Creating new time block from sidebar');
             
-            // Creating new time block from sidebar task
+            // Creating new time block from sidebar activity
             // Check for overlaps before creating new block
             const hasOverlap = TimeUtils.checkTimeOverlap(dayColumn, hour, 0, 1); // Default 1 hour
             
@@ -603,7 +603,7 @@ class DragDropManager {
             }
             
             const newTimeBlock = this.app.managers.timeBlock.createTimeBlock({
-                ...taskData,
+                ...activityData,
                 date: date,
                 startHour: hour,
                 startMinute: 0,
@@ -791,9 +791,9 @@ class DragDropManager {
             // Store the source time block data for cloning
             const timeBlockData = {
                 project: sourceTimeBlock.dataset.project,
-                task: sourceTimeBlock.dataset.task,
+                activity: sourceTimeBlock.dataset.activity,
                 projectName: sourceTimeBlock.querySelector('.time-block-header').textContent,
-                taskName: sourceTimeBlock.querySelector('.time-block-task').textContent,
+                activityName: sourceTimeBlock.querySelector('.time-block-activity').textContent,
                 color: sourceTimeBlock.style.getPropertyValue('--project-color'),
                 duration: parseFloat(sourceTimeBlock.dataset.duration),
                 startHour: parseInt(sourceTimeBlock.dataset.startHour),

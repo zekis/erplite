@@ -9,7 +9,8 @@
  "field_order": [
   "naming_series",
   "project",
-  "task",
+  "activity",
+  "role",
   "column_break_3",
   "resource",
   "schedule_date",
@@ -41,12 +42,19 @@
    "reqd": 1
   },
   {
-   "fieldname": "task",
+   "fieldname": "activity",
    "fieldtype": "Link",
    "in_list_view": 1,
-   "label": "Task",
-   "options": "Task",
+   "label": "Activity",
+   "options": "Activity",
    "reqd": 1
+  },
+  {
+   "fieldname": "role",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Role",
+   "options": "Scheduler Role"
   },
   {
    "fieldname": "column_break_3",

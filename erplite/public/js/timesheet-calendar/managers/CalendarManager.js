@@ -50,7 +50,7 @@ class CalendarManager {
         if (this.app.state.isFullDay) {
             this.rebuildCalendar(0, 24); // Full day: 0-24 hours
         } else {
-            this.rebuildCalendar(8, 18); // Working hours: 8-18
+            this.rebuildCalendar(6, 18); // Working hours: 6am-6pm
         }
         
         // Update toggle state
@@ -75,7 +75,7 @@ class CalendarManager {
         const currentMinute = now.getMinutes();
         
         // Only show line if within calendar hours
-        const startHour = this.app.state.isFullDay ? 0 : 8;
+        const startHour = this.app.state.isFullDay ? 0 : 6;
         const endHour = this.app.state.isFullDay ? 24 : 18;
         
         if (currentHour >= startHour && currentHour < endHour) {
@@ -138,7 +138,7 @@ class CalendarManager {
         if (container) {
             container.style.opacity = '0.6';
             container.style.cursor = 'not-allowed';
-            container.title = 'Full day view is required because there are time entries outside working hours (8 AM - 6 PM)';
+            container.title = 'Full day view is required because there are time entries outside working hours (6 AM - 6 PM)';
         }
         
         // Rebuild calendar to show full day
@@ -159,9 +159,9 @@ class CalendarManager {
             if (dayColumn) {
                 existingBlocks.push({
                     project: block.dataset.project,
-                    task: block.dataset.task,
+                    activity: block.dataset.activity,
                     projectName: block.querySelector('.time-block-header').textContent,
-                    taskName: block.querySelector('.time-block-task').textContent,
+                    activityName: block.querySelector('.time-block-activity').textContent,
                     color: block.style.getPropertyValue('--project-color'),
                     date: dayColumn.dataset.date,
                     startHour: parseInt(block.dataset.startHour),

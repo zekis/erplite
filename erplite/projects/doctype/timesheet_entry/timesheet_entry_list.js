@@ -68,8 +68,8 @@ function quick_check_in_dialog() {
                 // User has active timesheet, show check-out option
                 frappe.msgprint({
                     title: __('Active Timesheet Found'),
-                    message: __('You have an active timesheet for Project: {0}, Task: {1}. Would you like to check out?', 
-                        [r.message.project, r.message.task]),
+                    message: __('You have an active timesheet for Project: {0}, Activity: {1}. Would you like to check out?', 
+                        [r.message.project, r.message.activity]),
                     primary_action: {
                         label: __('Check Out'),
                         action: function() {
@@ -90,10 +90,10 @@ function quick_check_in_dialog() {
                             reqd: 1
                         },
                         {
-                            label: __('Task'),
-                            fieldname: 'task',
+                            label: __('Activity'),
+                            fieldname: 'activity',
                             fieldtype: 'Link',
-                            options: 'Task',
+                            options: 'Activity',
                             reqd: 1
                         },
                         {
@@ -122,17 +122,17 @@ function quick_check_in_dialog() {
                     }
                 });
                 
-                // Set up task filtering
+                // Set up activity filtering
                 d.fields_dict.project.df.onchange = function() {
                     let project = d.get_value('project');
-                    d.set_query('task', function() {
+                    d.set_query('activity', function() {
                         return {
                             filters: {
                                 'project': project
                             }
                         };
                     });
-                    d.set_value('task', '');
+                    d.set_value('activity', '');
                 };
                 
                 d.show();

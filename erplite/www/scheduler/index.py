@@ -22,6 +22,7 @@ def get_context(context):
             'current_start_date': scheduler_data.get('date_range', {}).get('start_date'),
             'projects': scheduler_data.get('projects', []),
             'resources': scheduler_data.get('resources', []),
+            'roles': scheduler_data.get('roles', []),
             'schedule_entries': scheduler_data.get('schedule_entries', []),
             'project_colors': scheduler_data.get('project_colors', {})
         })
@@ -33,6 +34,7 @@ def get_context(context):
             'current_start_date': frappe.utils.today(),
             'projects': [],
             'resources': [],
+            'roles': [],
             'schedule_entries': [],
             'project_colors': {}
         })

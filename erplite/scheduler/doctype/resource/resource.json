@@ -13,6 +13,7 @@
   "column_break_3",
   "status",
   "capacity",
+  "default_role",
   "section_break_6",
   "description"
  ],
@@ -61,6 +62,13 @@
    "fieldtype": "Float",
    "label": "Daily Capacity (Hours)",
    "precision": "2"
+  },
+  {
+   "fieldname": "default_role",
+   "fieldtype": "Link",
+   "label": "Default Role",
+   "options": "Scheduler Role",
+   "description": "Optional default role for this resource"
   },
   {
    "fieldname": "section_break_6",

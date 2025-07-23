@@ -27,9 +27,9 @@ function initializeExistingTimeBlocks() {
             
             createTimeBlock({
                 project: timesheet.project,
-                task: timesheet.task,
+                activity: timesheet.activity,
                 projectName: timesheet.project,
-                taskName: timesheet.task,
+                activityName: timesheet.activity,
                 color: projectColors[timesheet.project] || '#6b7280',
                 date: timesheet.date,
                 startHour: startTime.getHours(),
@@ -42,17 +42,17 @@ function initializeExistingTimeBlocks() {
 }
 
 function setupDragAndDrop() {
-    // Setup drag start for task blocks
-    document.querySelectorAll('.task-block').forEach(block => {
+    // Setup drag start for activity blocks
+    document.querySelectorAll('.activity-block').forEach(block => {
         block.addEventListener('dragstart', function(e) {
             draggedElement = this;
             this.classList.add('dragging');
             
             e.dataTransfer.setData('text/plain', JSON.stringify({
                 project: this.dataset.project,
-                task: this.dataset.task,
+                activity: this.dataset.activity,
                 projectName: this.dataset.projectName,
-                taskName: this.dataset.taskName,
+                activityName: this.dataset.activityName,
                 color: this.dataset.color
             }));
         });
@@ -88,11 +88,11 @@ function dropTimeBlock(event) {
     const date = dayColumn.dataset.date;
     const hour = parseInt(timeSlot.dataset.hour);
     
-    const taskData = JSON.parse(event.dataTransfer.getData('text/plain'));
+    const activityData = JSON.parse(event.dataTransfer.getData('text/plain'));
     
     // Create time block
     createTimeBlock({
-        ...taskData,
+        ...activityData,
         date: date,
         startHour: hour,
         startMinute: 0,
@@ -111,7 +111,7 @@ function createTimeBlock(data) {
     
     // Set content
     timeBlock.querySelector('.time-block-header').textContent = data.projectName;
-    timeBlock.querySelector('.time-block-task').textContent = data.taskName;
+    timeBlock.querySelector('.time-block-activity').textContent = data.activityName;
     timeBlock.querySelector('.time-block-duration').textContent = `${data.duration}h`;
     
     // Set style
@@ -121,7 +121,7 @@ function createTimeBlock(data) {
     
     // Add data attributes
     timeBlock.dataset.project = data.project;
-    timeBlock.dataset.task = data.task;
+    timeBlock.dataset.activity = data.activity;
     timeBlock.dataset.duration = data.duration;
     timeBlock.dataset.startHour = data.startHour;
     timeBlock.dataset.startMinute = data.startMinute || 0;
@@ -216,11 +216,11 @@ function editTimeBlock(event) {
                 reqd: 1
             },
             {
-                label: 'Task',
-                fieldname: 'task',
+                label: 'Activity',
+                fieldname: 'activity',
                 fieldtype: 'Link',
-                options: 'Task',
-                default: timeBlock.dataset.task,
+                options: 'Activity',
+                default: timeBlock.dataset.activity,
                 reqd: 1
             },
             {
@@ -317,7 +317,7 @@ function saveTimesheet() {
         entries.push({
             id: block.dataset.id || null,
             project: block.dataset.project,
-            task: block.dataset.task,
+            activity: block.dataset.activity,
             date: date,
             start_time: `${String(startHour).padStart(2, '0')}:${String(startMinute).padStart(2, '0')}`,
             duration: duration
@@ -343,26 +343,26 @@ function addQuickTime(hours) {
     const today = new Date().toISOString().split('T')[0];
     const currentHour = new Date().getHours();
     
-    // Find first available project/task
-    const firstTaskBlock = document.querySelector('.task-block');
-    if (!firstTaskBlock) {
-        frappe.msgprint('No tasks available. Please create a project and task first.');
+    // Find first available project/activity
+    const firstActivityBlock = document.querySelector('.activity-block');
+    if (!firstActivityBlock) {
+        frappe.msgprint('No activities available. Please create a project and activity first.');
         return;
     }
     
-    const taskData = {
-        project: firstTaskBlock.dataset.project,
-        task: firstTaskBlock.dataset.task,
-        projectName: firstTaskBlock.dataset.projectName,
-        taskName: firstTaskBlock.dataset.taskName,
-        color: firstTaskBlock.dataset.color,
+    const activityData = {
+        project: firstActivityBlock.dataset.project,
+        activity: firstActivityBlock.dataset.activity,
+        projectName: firstActivityBlock.dataset.projectName,
+        activityName: firstActivityBlock.dataset.activityName,
+        color: firstActivityBlock.dataset.color,
         date: today,
         startHour: Math.max(8, currentHour),
         startMinute: 0,
         duration: hours
     };
     
-    createTimeBlock(taskData);
+    createTimeBlock(activityData);
     updateDaySummaries();
 }
 

@@ -333,7 +333,7 @@ class ContextMenuComponent {
         const data = this.app.components.timeBlock.getTimeBlockData(timeBlock);
         const summary = this.app.components.timeBlock.getTimeBlockSummary(timeBlock);
         
-        const textData = `${summary.project} - ${summary.task}\n${summary.timeRange} (${summary.duration})\n${summary.date}`;
+        const textData = `${summary.project} - ${summary.activity}\n${summary.timeRange} (${summary.duration})\n${summary.date}`;
         
         if (navigator.clipboard) {
             navigator.clipboard.writeText(textData).then(() => {

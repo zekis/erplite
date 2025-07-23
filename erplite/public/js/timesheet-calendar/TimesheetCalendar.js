@@ -24,9 +24,12 @@ class TimesheetCalendar {
     /**
      * Initialize the application
      */
-    init() {
+    async init() {
         // Load data from window object (set by template)
         this.loadInitialData();
+        
+        // Load projects and activities data from API
+        await this.loadProjectsData();
         
         // Initialize managers
         this.initializeManagers();
@@ -51,6 +54,41 @@ class TimesheetCalendar {
             this.state.currentWeekStart = window.timesheetData.currentWeekStart;
             this.state.existingTimesheets = window.timesheetData.existingTimesheets;
             this.state.projectColors = window.timesheetData.projectColors;
+        }
+    }
+    
+    /**
+     * Load projects and activities data from API
+     */
+    async loadProjectsData() {
+        try {
+            const response = await new Promise((resolve, reject) => {
+                frappe.call({
+                    method: 'erplite.projects.api.get_projects_and_activities',
+                    callback: (r) => {
+                        if (r.message) {
+                            resolve(r.message);
+                        } else {
+                            reject(new Error('No data received'));
+                        }
+                    },
+                    error: (err) => {
+                        reject(err);
+                    }
+                });
+            });
+            
+            this.state.projectsData = response;
+            console.log('Projects data loaded:', response);
+            
+        } catch (error) {
+            console.error('Failed to load projects data:', error);
+            this.state.projectsData = {};
+            
+            // Show error toast if components are available
+            if (this.components && this.components.toast) {
+                this.components.toast.error('Failed to load projects data');
+            }
         }
     }
     
@@ -151,16 +189,16 @@ class TimesheetCalendar {
                 const startHour = startTime.getHours();
                 const endHour = endTime.getHours();
                 
-                // Check if any time entries are outside working hours (8-18)
-                if (startHour < 8 || startHour >= 18 || endHour < 8 || endHour > 18) {
+                // Check if any time entries are outside working hours (6-18)
+                if (startHour < 6 || startHour >= 18 || endHour < 6 || endHour > 18) {
                     hasEntriesOutsideWorkingHours = true;
                 }
                 
                 this.managers.timeBlock.createTimeBlock({
                     project: timesheet.project,
-                    task: timesheet.task,
+                    activity: timesheet.activity,
                     projectName: timesheet.project_name || timesheet.project,
-                    taskName: timesheet.task_name || timesheet.task,
+                    activityName: timesheet.activity_name || timesheet.activity,
                     color: this.state.projectColors[timesheet.project] || '#6b7280',
                     date: timesheet.date,
                     startHour: startHour,
@@ -280,26 +318,26 @@ class TimesheetCalendar {
         const today = new Date().toISOString().split('T')[0];
         const currentHour = new Date().getHours();
         
-        // Find first available project/task
-        const firstTaskBlock = document.querySelector('.task-block');
-        if (!firstTaskBlock) {
-            this.components.toast.show('No tasks available. Please create a project and task first.', 'warning');
+        // Find first available project/activity
+        const firstActivityBlock = document.querySelector('.activity-block');
+        if (!firstActivityBlock) {
+            this.components.toast.show('No activities available. Please create a project and activity first.', 'warning');
             return;
         }
         
-        const taskData = {
-            project: firstTaskBlock.dataset.project,
-            task: firstTaskBlock.dataset.task,
-            projectName: firstTaskBlock.dataset.projectName,
-            taskName: firstTaskBlock.dataset.taskName,
-            color: firstTaskBlock.dataset.color,
+        const activityData = {
+            project: firstActivityBlock.dataset.project,
+            activity: firstActivityBlock.dataset.activity,
+            projectName: firstActivityBlock.dataset.projectName,
+            activityName: firstActivityBlock.dataset.activityName,
+            color: firstActivityBlock.dataset.color,
             date: today,
-            startHour: Math.max(8, currentHour),
+            startHour: Math.max(6, currentHour),
             startMinute: 0,
             duration: hours
         };
         
-        this.managers.timeBlock.createTimeBlock(taskData);
+        this.managers.timeBlock.createTimeBlock(activityData);
         this.updateDaySummaries();
     }
     

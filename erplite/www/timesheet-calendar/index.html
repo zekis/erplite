@@ -4,14 +4,19 @@
 
 {% block head_include %}
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css">
+<link rel="stylesheet" href="/assets/erplite/css/app_navigation.css">
 {% endblock %}
 
 {% block page_content %}
-<div class="timesheet-calendar">
+<div class="app-layout">
+    {% include "templates/includes/app_navigation.html" %}
+    
+    <div class="main-content">
+        <div class="timesheet-calendar">
     <!-- Sidebar -->
     <div class="sidebar">
         <div class="sidebar-header">
-            <h2 class="sidebar-title">Projects & Tasks</h2>
+            <h2 class="sidebar-title">Projects & Activities</h2>
             <div class="week-nav">
                 <button onclick="changeWeek(-1)">‹</button>
                 <div class="current-week">
@@ -29,20 +34,20 @@
                 <div class="project-name">{{ project.project_name }}</div>
                 <div class="project-toggle">▼</div>
             </div>
-            <div class="task-list">
-                {% for task in project.tasks %}
-                <div class="task-block" 
+            <div class="activity-list">
+                {% for activity in project.activities %}
+                <div class="activity-block" 
                      draggable="true"
                      data-project="{{ project.name }}"
-                     data-task="{{ task.name }}"
+                     data-activity="{{ activity.name }}"
                      data-project-name="{{ project.project_name }}"
-                     data-task-name="{{ task.task_name }}"
+                     data-activity-name="{{ activity.subject }}"
                      data-color="{{ project_colors[project.name] }}">
-                    <div class="task-icon" style="background-color: {{ project_colors[project.name] }}"></div>
-                    <div class="task-name">{{ task.task_name }}</div>
-                    {% if task.priority %}
-                    <div class="task-priority priority-{{ task.priority.lower() }}">
-                        {{ task.priority }}
+                    <div class="activity-icon" style="background-color: {{ project_colors[project.name] }}"></div>
+                    <div class="activity-name">{{ activity.subject }}</div>
+                    {% if activity.priority %}
+                    <div class="activity-priority priority-{{ activity.priority.lower() }}">
+                        {{ activity.priority }}
                     </div>
                     {% endif %}
                 </div>
@@ -140,7 +145,7 @@
         <div class="resize-handle bottom" title="Drag to resize"></div>
         
         <div class="time-block-header"></div>
-        <div class="time-block-task"></div>
+        <div class="time-block-activity"></div>
         <div class="time-block-description" style="display: none;"></div>
         <div class="time-block-duration"></div>
         
@@ -173,15 +178,15 @@
             
             <div class="form-group">
                 <label for="editProject">Project:</label>
-                <select id="editProject" onchange="updateTaskOptions()">
+                <select id="editProject" onchange="updateActivityOptions()">
                     <option value="">Select Project</option>
                 </select>
             </div>
             
             <div class="form-group">
-                <label for="editTask">Task:</label>
-                <select id="editTask">
-                    <option value="">Select Task</option>
+                <label for="editActivity">Activity:</label>
+                <select id="editActivity">
+                    <option value="">Select Activity</option>
                 </select>
             </div>
             
@@ -225,9 +230,9 @@
                 </div>
             </div>
             <div class="quick-entry-section">
-                <label>Select Task:</label>
-                <div class="quick-entry-list" id="quickTaskList">
-                    <!-- Tasks will be populated here -->
+                <label>Select Activity:</label>
+                <div class="quick-entry-list" id="quickActivityList">
+                    <!-- Activities will be populated here -->
                 </div>
             </div>
             <div class="quick-entry-actions">
@@ -258,6 +263,13 @@ window.timesheetData = {
     projectColors: {{ project_colors | tojson }}
 };
 </script>
+
+<!-- Include navigation JavaScript -->
+<script src="/assets/erplite/js/app_navigation.js"></script>
+
+        </div> <!-- Close timesheet-calendar -->
+    </div> <!-- Close main-content -->
+</div> <!-- Close app-layout -->
 {% endblock %}
 
 {% block script_include %}

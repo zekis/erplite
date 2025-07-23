@@ -79,7 +79,7 @@ class StorageManager {
                 id: block.dataset.id || null,
                 temp_id: tempId,
                 project: block.dataset.project,
-                task: block.dataset.task,
+                activity: block.dataset.activity,
                 date: date,
                 start_time: TimeUtils.formatTime(startHour, startMinute),
                 duration: duration,
@@ -224,12 +224,12 @@ class StorageManager {
     }
     
     /**
-     * Get project and task data
+     * Get project and activity data
      */
     loadProjectData() {
         return new Promise((resolve, reject) => {
             frappe.call({
-                method: 'erplite.projects.api.get_projects_and_tasks',
+                method: 'erplite.projects.api.get_projects_and_activities',
                 callback: (r) => {
                     if (r.message) {
                         resolve(r.message);

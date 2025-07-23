@@ -1,0 +1,13 @@
+{
+    "js/scheduler.min.js": [
+        "public/js/scheduler/utils/SchedulerUtils.js",
+        "public/js/scheduler/utils/ResourceUtils.js",
+        "public/js/scheduler/data/DataManager.js",
+        "public/js/scheduler/rendering/RowRenderer.js",
+        "public/js/scheduler/timeblocks/TimeBlockManager.js",
+        "public/js/scheduler/toolbar/ToolbarManager.js",
+        "public/js/scheduler/DropdownManager.js",
+        "public/js/scheduler/ScheduleRowManager.js",
+        "public/js/scheduler/Scheduler.js"
+    ]
+}

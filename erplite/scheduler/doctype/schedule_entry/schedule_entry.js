@@ -53,9 +53,9 @@ frappe.ui.form.on('Schedule Entry', {
     },
     
     project: function(frm) {
-        // Filter tasks by project
+        // Filter activities by project
         if (frm.doc.project) {
-            frm.set_query('task', function() {
+            frm.set_query('activity', function() {
                 return {
                     filters: {
                         project: frm.doc.project
@@ -63,12 +63,12 @@ frappe.ui.form.on('Schedule Entry', {
                 };
             });
             
-            // Clear task if it doesn't belong to the new project
-            if (frm.doc.task) {
-                frappe.db.get_value('Task', frm.doc.task, 'project')
+            // Clear activity if it doesn't belong to the new project
+            if (frm.doc.activity) {
+                frappe.db.get_value('Activity', frm.doc.activity, 'project')
                     .then(r => {
                         if (r.message && r.message.project !== frm.doc.project) {
-                            frm.set_value('task', '');
+                            frm.set_value('activity', '');
                         }
                     });
             }
@@ -143,13 +143,13 @@ frappe.ui.form.on('Schedule Entry', {
     },
     
     status: function(frm) {
-        // Auto-update task progress when status changes
-        if (frm.doc.task && !frm.is_new()) {
-            // Trigger task progress update on server
+        // Auto-update activity progress when status changes
+        if (frm.doc.activity && !frm.is_new()) {
+            // Trigger activity progress update on server
             frappe.call({
-                method: 'erplite.scheduler.doctype.schedule_entry.schedule_entry.update_task_progress',
+                method: 'erplite.scheduler.doctype.schedule_entry.schedule_entry.update_activity_progress',
                 args: {
-                    task: frm.doc.task
+                    activity: frm.doc.activity
                 }
             });
         }
@@ -262,7 +262,7 @@ function check_time_conflicts(frm) {
                 start_time: ['is', 'set'],
                 end_time: ['is', 'set']
             },
-            fields: ['name', 'start_time', 'end_time', 'project', 'task']
+            fields: ['name', 'start_time', 'end_time', 'project', 'activity']
         },
         callback: function(r) {
             if (r.message && r.message.length > 0) {

@@ -104,7 +104,7 @@ frappe.ui.form.on('Timesheet Entry', {
             frm.set_df_property('check_in_time', 'read_only', 1);
             frm.set_df_property('check_out_time', 'read_only', 1);
             frm.set_df_property('project', 'read_only', 1);
-            frm.set_df_property('task', 'read_only', 1);
+            frm.set_df_property('activity', 'read_only', 1);
             frm.set_df_property('description', 'read_only', 1);
         }
         
@@ -115,9 +115,9 @@ frappe.ui.form.on('Timesheet Entry', {
     },
     
     project: function(frm) {
-        // Filter tasks based on selected project
+        // Filter activities based on selected project
         if (frm.doc.project) {
-            frm.set_query('task', function() {
+            frm.set_query('activity', function() {
                 return {
                     filters: {
                         'project': frm.doc.project
@@ -125,22 +125,22 @@ frappe.ui.form.on('Timesheet Entry', {
                 };
             });
             
-            // Clear task if project changes
-            if (frm.doc.task) {
-                frappe.db.get_value('Task', frm.doc.task, 'project')
+            // Clear activity if project changes
+            if (frm.doc.activity) {
+                frappe.db.get_value('Activity', frm.doc.activity, 'project')
                     .then(r => {
                         if (r.message && r.message.project !== frm.doc.project) {
-                            frm.set_value('task', '');
+                            frm.set_value('activity', '');
                         }
                     });
             }
         }
     },
     
-    task: function(frm) {
-        // Auto-fill location from task
-        if (frm.doc.task && !frm.doc.location) {
-            frappe.db.get_value('Task', frm.doc.task, 'location')
+    activity: function(frm) {
+        // Auto-fill location from activity
+        if (frm.doc.activity && !frm.doc.location) {
+            frappe.db.get_value('Activity', frm.doc.activity, 'location')
                 .then(r => {
                     if (r.message && r.message.location) {
                         frm.set_value('location', r.message.location);
@@ -177,8 +177,8 @@ frappe.timesheet.quick_check_in = function() {
                 // User has active timesheet, show check-out option
                 frappe.msgprint({
                     title: __('Active Timesheet Found'),
-                    message: __('You have an active timesheet for Project: {0}, Task: {1}. Would you like to check out?', 
-                        [r.message.project, r.message.task]),
+                    message: __('You have an active timesheet for Project: {0}, Activity: {1}. Would you like to check out?', 
+                        [r.message.project, r.message.activity]),
                     primary_action: {
                         label: __('Check Out'),
                         action: function() {
@@ -199,10 +199,10 @@ frappe.timesheet.quick_check_in = function() {
                             reqd: 1
                         },
                         {
-                            label: __('Task'),
-                            fieldname: 'task',
+                            label: __('Activity'),
+                            fieldname: 'activity',
                             fieldtype: 'Link',
-                            options: 'Task',
+                            options: 'Activity',
                             reqd: 1
                         },
                         {
@@ -229,17 +229,17 @@ frappe.timesheet.quick_check_in = function() {
                     }
                 });
                 
-                // Set up task filtering
+                // Set up activity filtering
                 d.fields_dict.project.df.onchange = function() {
                     let project = d.get_value('project');
-                    d.set_query('task', function() {
+                    d.set_query('activity', function() {
                         return {
                             filters: {
                                 'project': project
                             }
                         };
                     });
-                    d.set_value('task', '');
+                    d.set_value('activity', '');
                 };
                 
                 d.show();

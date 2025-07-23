@@ -8,12 +8,21 @@ class SchedulerApp {
             currentStartDate: null,
             projects: [],
             resources: [],
+            roles: [], // Add roles to state
             scheduleEntries: [],
             projectColors: {},
-            scheduleRows: [], // Array of {project, task, person, entries}
+            scheduleRows: [], // Array of {project, activity, person, entries}
             dateRange: 30,
             isLoading: false
         };
+        
+        // Initialize managers
+        this.dataManager = new DataManager(this);
+        this.rowManager = new ScheduleRowManager(this);
+        this.dropdownManager = new DropdownManager(this);
+        this.rowRenderer = new RowRenderer(this);
+        this.timeBlockManager = new TimeBlockManager(this);
+        this.toolbarManager = new ToolbarManager(this);
         
         this.init();
     }
@@ -27,8 +36,8 @@ class SchedulerApp {
         // Load initial data from window object (set by template)
         this.loadInitialData();
         
-        // Initialize drag and drop for template cards
-        this.initializeTemplateDragDrop();
+        // Initialize toolbar manager
+        this.toolbarManager.init();
         
         // Load and render initial data
         this.loadSchedulerData();
@@ -37,279 +46,24 @@ class SchedulerApp {
     }
     
     /**
-     * Load initial data from window object
+     * Load initial data from window object (set by template) - delegated to DataManager
      */
     loadInitialData() {
-        if (window.schedulerData) {
-            this.state.currentStartDate = window.schedulerData.currentStartDate || this.getTodayString();
-            this.state.projects = window.schedulerData.projects || [];
-            this.state.resources = window.schedulerData.resources || [];
-            this.state.scheduleEntries = window.schedulerData.scheduleEntries || [];
-            this.state.projectColors = window.schedulerData.projectColors || {};
-        } else {
-            this.state.currentStartDate = this.getTodayString();
-        }
+        this.dataManager.loadInitialData();
     }
     
     /**
-     * Load scheduler data from API
+     * Load scheduler data from API - delegated to DataManager
      */
     async loadSchedulerData() {
-        try {
-            this.setLoading(true);
-            
-            // Calculate end date
-            const endDate = this.addDays(this.state.currentStartDate, this.state.dateRange);
-            
-            // Make API calls for both old and new data
-            const [projectsResponse, scheduleRowsResponse] = await Promise.all([
-                this.apiCall('erplite.scheduler.api.get_scheduler_data', {
-                    start_date: this.state.currentStartDate,
-                    end_date: endDate
-                }),
-                this.apiCall('erplite.scheduler.api.get_schedule_rows', {
-                    start_date: this.state.currentStartDate,
-                    end_date: endDate
-                })
-            ]);
-            
-            if (projectsResponse) {
-                this.state.projects = projectsResponse.projects || [];
-                this.state.resources = projectsResponse.resources || [];
-                this.state.projectColors = projectsResponse.project_colors || {};
-            }
-            
-            if (scheduleRowsResponse) {
-                this.state.scheduleRows = this.processScheduleRowsFromAPI(scheduleRowsResponse);
-            } else {
-                this.processScheduleRows();
-            }
-            
+        const result = await this.dataManager.loadSchedulerData();
+        if (result.success) {
             this.renderAll();
-        } catch (error) {
-            console.error('Failed to load scheduler data:', error);
-            this.showToast('Failed to load scheduler data: ' + error.message, 'error');
-        } finally {
-            this.setLoading(false);
         }
+        return result;
     }
     
-    /**
-     * Process schedule rows from API response (Structure only - no time entries)
-     */
-    processScheduleRowsFromAPI(scheduleRowsData) {
-        const processedRows = [];
-        
-        // Group schedule rows by project
-        const projectGroups = {};
-        
-        scheduleRowsData.forEach(row => {
-            const projectKey = row.project || 'unassigned';
-            
-            if (!projectGroups[projectKey]) {
-                projectGroups[projectKey] = {
-                    project: row.project,
-                    projectName: row.project_name,
-                    rows: []
-                };
-            }
-            
-            // Only load the structure - no time entries for frontend development
-            projectGroups[projectKey].rows.push({
-                type: 'task-row',
-                scheduleRowId: row.name,
-                project: row.project,
-                projectName: row.project_name,
-                task: row.task,
-                taskName: row.task_name,
-                resource: row.resource,
-                resourceName: row.resource_name,
-                entries: [], // Empty entries for frontend development
-                dailyEntries: {} // Empty daily entries for frontend development
-            });
-        });
-        
-        // Add default projects that don't have schedule rows yet
-        this.addDefaultProjectsToGroups(projectGroups);
-        
-        // Convert to flat array with project headers and task rows
-        Object.keys(projectGroups).sort().forEach(projectKey => {
-            const projectGroup = projectGroups[projectKey];
-            
-            // Add project header row
-            processedRows.push({
-                type: 'project-header',
-                project: projectGroup.project,
-                projectName: projectGroup.projectName,
-                task: null,
-                taskName: null,
-                resource: null,
-                resourceName: null,
-                entries: []
-            });
-            
-            // Add existing schedule rows (structure only)
-            projectGroup.rows.forEach(row => {
-                processedRows.push(row);
-            });
-            
-            // Add blank task row for this project
-            processedRows.push({
-                type: 'task-row',
-                project: projectGroup.project,
-                projectName: projectGroup.projectName,
-                task: null,
-                taskName: null,
-                resource: null,
-                resourceName: null,
-                entries: [],
-                dailyEntries: {}
-            });
-        });
-        
-        return processedRows;
-    }
-    
-    /**
-     * Add default projects to project groups
-     */
-    addDefaultProjectsToGroups(projectGroups) {
-        // Get all projects that have status "Active" or "Open"
-        const openProjects = this.state.projects.filter(project => 
-            project.status === 'Active' || project.status === 'Open'
-        );
-        
-        // For each open project, ensure it exists in project groups
-        openProjects.forEach(project => {
-            const projectKey = project.name;
-            if (!projectGroups[projectKey]) {
-                projectGroups[projectKey] = {
-                    project: project.name,
-                    projectName: project.project_name,
-                    rows: []
-                };
-            }
-        });
-    }
-    
-    /**
-     * Process schedule entries into rows with project headers and task rows (legacy fallback)
-     */
-    processScheduleRows() {
-        this.state.scheduleRows = [];
-        
-        // Group entries by project and task
-        const projectGroups = {};
-        
-        this.state.scheduleEntries.forEach(entry => {
-            const projectKey = entry.project || 'unassigned';
-            const taskKey = entry.task || 'unassigned';
-            const resourceKey = entry.resource || 'unassigned';
-            
-            if (!projectGroups[projectKey]) {
-                projectGroups[projectKey] = {
-                    project: entry.project,
-                    projectName: entry.project_name || entry.project,
-                    tasks: {}
-                };
-            }
-            
-            if (!projectGroups[projectKey].tasks[taskKey]) {
-                projectGroups[projectKey].tasks[taskKey] = {
-                    task: entry.task,
-                    taskName: entry.task_name || entry.task,
-                    resources: {}
-                };
-            }
-            
-            if (!projectGroups[projectKey].tasks[taskKey].resources[resourceKey]) {
-                projectGroups[projectKey].tasks[taskKey].resources[resourceKey] = {
-                    resource: entry.resource,
-                    resourceName: entry.resource_name || this.getResourceName(entry.resource),
-                    entries: []
-                };
-            }
-            
-            projectGroups[projectKey].tasks[taskKey].resources[resourceKey].entries.push(entry);
-        });
-        
-        // Add default projects
-        this.addDefaultProjects(projectGroups);
-        
-        // Convert to flat array with project headers and task rows
-        Object.keys(projectGroups).sort().forEach(projectKey => {
-            const projectGroup = projectGroups[projectKey];
-            
-            // Add project header row
-            this.state.scheduleRows.push({
-                type: 'project-header',
-                project: projectGroup.project,
-                projectName: projectGroup.projectName,
-                task: null,
-                taskName: null,
-                resource: null,
-                resourceName: null,
-                entries: []
-            });
-            
-            // Add task rows
-            Object.keys(projectGroup.tasks).forEach(taskKey => {
-                const taskGroup = projectGroup.tasks[taskKey];
-                
-                Object.keys(taskGroup.resources).forEach(resourceKey => {
-                    const resourceGroup = taskGroup.resources[resourceKey];
-                    
-                    this.state.scheduleRows.push({
-                        type: 'task-row',
-                        project: projectGroup.project,
-                        projectName: projectGroup.projectName,
-                        task: taskGroup.task,
-                        taskName: taskGroup.taskName,
-                        resource: resourceGroup.resource,
-                        resourceName: resourceGroup.resourceName,
-                        entries: resourceGroup.entries
-                    });
-                });
-                
-                // Add blank row for adding more resources to this task
-                if (taskGroup.task) {
-                    this.state.scheduleRows.push({
-                        type: 'task-row',
-                        project: projectGroup.project,
-                        projectName: projectGroup.projectName,
-                        task: taskGroup.task,
-                        taskName: taskGroup.taskName,
-                        resource: null,
-                        resourceName: null,
-                        entries: []
-                    });
-                }
-            });
-            
-            // Add blank task row for this project
-            this.state.scheduleRows.push({
-                type: 'task-row',
-                project: projectGroup.project,
-                projectName: projectGroup.projectName,
-                task: null,
-                taskName: null,
-                resource: null,
-                resourceName: null,
-                entries: []
-            });
-        });
-        
-        // No need for empty project rows since we show all active projects
-    }
-    
-    /**
-     * Get resource name by ID
-     */
-    getResourceName(resourceId) {
-        if (!resourceId) return 'Unassigned';
-        const resource = this.state.resources.find(r => r.name === resourceId);
-        return resource ? resource.resource_name : resourceId;
-    }
+    // Data processing methods moved to DataManager class
     
     /**
      * Render all components
@@ -381,411 +135,51 @@ class SchedulerApp {
      * Render schedule rows
      */
     renderScheduleRows() {
-        const container = document.getElementById('gridBody');
-        if (!container) return;
+        const fixedLeftContainer = document.getElementById('fixedLeftBody');
+        const scrollableRightContainer = document.getElementById('gridBody');
         
-        container.innerHTML = '';
+        if (!fixedLeftContainer || !scrollableRightContainer) return;
+        
+        fixedLeftContainer.innerHTML = '';
+        scrollableRightContainer.innerHTML = '';
         
         this.state.scheduleRows.forEach((row, index) => {
-            const rowElement = this.createScheduleRow(row, index);
-            container.appendChild(rowElement);
+            const { fixedColumns, dayColumns } = this.rowRenderer.createScheduleRow(row, index);
+            fixedLeftContainer.appendChild(fixedColumns);
+            scrollableRightContainer.appendChild(dayColumns);
         });
+        
+        // Setup scroll synchronization between left and right sections
+        this.setupScrollSynchronization();
         
         // Render time block cards after all rows are created
-        this.renderTimeBlockCards();
+        this.timeBlockManager.renderTimeBlockCards();
     }
     
-    /**
-     * Render time block cards for schedule rows
-     */
-    renderTimeBlockCards() {
-        // Remove existing time block cards
-        document.querySelectorAll('.time-block-card').forEach(card => card.remove());
-        
-        this.state.scheduleRows.forEach((row, rowIndex) => {
-            if (row.type !== 'task-row' || !row.dailyEntries) return;
-            
-            // Parse entries
-            let entries = {};
-            try {
-                if (typeof row.dailyEntries === 'string') {
-                    entries = JSON.parse(row.dailyEntries);
-                } else {
-                    entries = row.dailyEntries;
-                }
-            } catch (e) {
-                console.warn('Failed to parse entries for row:', rowIndex);
-                return;
-            }
-            
-            // Check if it's optimized format or simple daily entries
-            if (entries.blocks || entries.individual_days) {
-                // Handle optimized format
-                if (entries.blocks) {
-                    entries.blocks.forEach(block => {
-                        this.renderTimeBlockCard(rowIndex, block, 'block', row);
-                    });
-                }
-                
-                if (entries.individual_days) {
-                    Object.keys(entries.individual_days).forEach(date => {
-                        const entry = entries.individual_days[date];
-                        this.renderTimeBlockCard(rowIndex, {
-                            start_date: date,
-                            end_date: date,
-                            ...entry
-                        }, 'individual', row);
-                    });
-                }
-            } else {
-                // Handle simple daily entries format (from templates)
-                const sortedDates = Object.keys(entries).sort();
-                
-                if (sortedDates.length === 0) return;
-                
-                // Group consecutive dates with identical entries into blocks
-                const blocks = this.groupConsecutiveEntries(entries);
-                
-                blocks.forEach(block => {
-                    this.renderTimeBlockCard(rowIndex, block, block.start_date === block.end_date ? 'individual' : 'block', row);
-                });
-            }
-        });
-    }
+    // Time block methods moved to TimeBlockManager class
     
     /**
-     * Render a single time block card
-     */
-    renderTimeBlockCard(rowIndex, blockData, type, row) {
-        const startDate = blockData.start_date;
-        const endDate = blockData.end_date;
-        
-        // Find the row element
-        const rowElement = document.querySelector(`[data-row-index="${rowIndex}"]`);
-        if (!rowElement) return;
-        
-        const daysContainer = rowElement.querySelector('.schedule-days');
-        if (!daysContainer) return;
-        
-        // Calculate position and width
-        const startCell = daysContainer.querySelector(`[data-date="${startDate}"]`);
-        const endCell = daysContainer.querySelector(`[data-date="${endDate}"]`);
-        
-        if (!startCell || !endCell) return;
-        
-        // Create the time block card
-        const card = document.createElement('div');
-        card.className = 'time-block-card';
-        card.dataset.rowIndex = rowIndex;
-        card.dataset.startDate = startDate;
-        card.dataset.endDate = endDate;
-        card.dataset.type = type;
-        
-        // Set project color
-        const projectColor = this.state.projectColors[row.project] || '#3b82f6';
-        card.style.setProperty('--project-color', projectColor);
-        card.style.background = projectColor;
-        card.style.borderColor = projectColor;
-        
-        // Calculate position
-        const startRect = startCell.getBoundingClientRect();
-        const endRect = endCell.getBoundingClientRect();
-        const containerRect = daysContainer.getBoundingClientRect();
-        
-        const left = startRect.left - containerRect.left;
-        const width = endRect.right - startRect.left;
-        
-        card.style.left = `${left}px`;
-        card.style.width = `${width}px`;
-        
-        // Add styling based on span
-        if (startDate === endDate) {
-            card.classList.add('single-day');
-        } else {
-            card.classList.add('start-day');
-            // We'll handle middle and end styling if needed
-        }
-        
-        // Create card content
-        const content = document.createElement('div');
-        content.className = 'card-content';
-        
-        const hours = blockData.hours || 8;
-        const startTime = blockData.start_time || '09:00';
-        const endTime = blockData.end_time || '17:00';
-        
-        if (type === 'block') {
-            const daysCount = this.calculateDaysBetween(startDate, endDate) + 1;
-            content.innerHTML = `
-                <div class="card-hours">${hours}h × ${daysCount}</div>
-                <div class="card-time">${startTime}-${endTime}</div>
-                ${row.resourceName ? `<div class="card-resource">${row.resourceName}</div>` : ''}
-            `;
-        } else {
-            content.innerHTML = `
-                <div class="card-hours">${hours}h</div>
-                <div class="card-time">${startTime}-${endTime}</div>
-                ${row.resourceName ? `<div class="card-resource">${row.resourceName}</div>` : ''}
-            `;
-        }
-        
-        card.appendChild(content);
-        
-        // Add resize handles
-        const leftHandle = document.createElement('div');
-        leftHandle.className = 'resize-handle left';
-        leftHandle.addEventListener('mousedown', (e) => this.startResize(e, card, 'left', rowIndex, blockData));
-        
-        const rightHandle = document.createElement('div');
-        rightHandle.className = 'resize-handle right';
-        rightHandle.addEventListener('mousedown', (e) => this.startResize(e, card, 'right', rowIndex, blockData));
-        
-        card.appendChild(leftHandle);
-        card.appendChild(rightHandle);
-        
-        // Add click handler (only on content area, not handles)
-        content.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.editTimeBlock(rowIndex, blockData, type);
-        });
-        
-        // Position the card
-        daysContainer.style.position = 'relative';
-        daysContainer.appendChild(card);
-    }
-    
-    /**
-     * Calculate days between two dates (inclusive)
+     * Calculate days between two dates (inclusive) - delegated to SchedulerUtils
      */
     calculateDaysBetween(startDate, endDate) {
-        try {
-            // Validate that inputs are actually date strings
-            if (!startDate || !endDate || typeof startDate !== 'string' || typeof endDate !== 'string') {
-                console.warn('Invalid date inputs in calculateDaysBetween:', startDate, endDate);
-                return 0;
-            }
-            
-            // Check if inputs look like dates (YYYY-MM-DD format)
-            const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-            if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
-                console.warn('Date format invalid in calculateDaysBetween:', startDate, endDate);
-                return 0;
-            }
-            
-            const start = new Date(startDate);
-            const end = new Date(endDate);
-            
-            // Check for invalid dates
-            if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-                console.warn('Invalid date objects in calculateDaysBetween:', startDate, endDate);
-                return 0;
-            }
-            
-            return Math.floor((end - start) / (1000 * 60 * 60 * 24));
-        } catch (error) {
-            console.error('Error calculating days between dates:', error);
-            return 0;
-        }
+        return SchedulerUtils.calculateDaysBetween(startDate, endDate);
     }
     
     /**
-     * Edit a time block
+     * Edit a time block - delegated to TimeBlockManager
      */
     editTimeBlock(rowIndex, blockData, type) {
-        const row = this.state.scheduleRows[rowIndex];
-        
-        if (type === 'block') {
-            const daysCount = this.calculateDaysBetween(blockData.start_date, blockData.end_date) + 1;
-            const newHours = prompt(`Edit hours for ${daysCount}-day block (${blockData.start_date} to ${blockData.end_date}):`, blockData.hours);
-            
-            if (newHours !== null && !isNaN(newHours) && newHours > 0) {
-                this.updateTimeBlock(rowIndex, blockData, { hours: parseFloat(newHours) });
-            }
-        } else {
-            const newHours = prompt(`Edit hours for ${blockData.start_date}:`, blockData.hours);
-            
-            if (newHours !== null && !isNaN(newHours) && newHours > 0) {
-                this.updateTimeBlock(rowIndex, blockData, { hours: parseFloat(newHours) });
-            }
-        }
+        this.timeBlockManager.editTimeBlock(rowIndex, blockData, type);
     }
     
     /**
-     * Update a time block
+     * Update a time block - delegated to TimeBlockManager
      */
     async updateTimeBlock(rowIndex, blockData, updates) {
-        const row = this.state.scheduleRows[rowIndex];
-        
-        if (!row.scheduleRowId) {
-            this.showToast('Schedule row not found', 'error');
-            return;
-        }
-        
-        try {
-            // Get current entries in daily format for editing
-            const response = await this.apiCall('erplite.scheduler.api.get_schedule_row_expanded', {
-                schedule_row: row.scheduleRowId
-            });
-            
-            if (response && response.success) {
-                const dailyEntries = response.daily_entries;
-                
-                // Update the affected dates
-                const startDate = new Date(blockData.start_date);
-                const endDate = new Date(blockData.end_date);
-                const currentDate = new Date(startDate);
-                
-                while (currentDate <= endDate) {
-                    const dateStr = currentDate.toISOString().split('T')[0];
-                    if (dailyEntries[dateStr]) {
-                        Object.assign(dailyEntries[dateStr], updates);
-                    }
-                    currentDate.setDate(currentDate.getDate() + 1);
-                }
-                
-                // Save the updated entries
-                const updateResponse = await this.apiCall('erplite.scheduler.api.update_schedule_row_entries', {
-                    schedule_row: row.scheduleRowId,
-                    entries_json: JSON.stringify(dailyEntries)
-                });
-                
-                if (updateResponse && updateResponse.success) {
-                    // Update local state with optimized entries
-                    row.dailyEntries = updateResponse.optimized_entries;
-                    
-                    this.showToast('Time block updated successfully!', 'success');
-                    this.renderTimeBlockCards(); // Re-render cards
-                } else {
-                    this.showToast('Failed to update time block', 'error');
-                }
-            }
-            
-        } catch (error) {
-            console.error('Error updating time block:', error);
-            this.showToast('Error updating time block: ' + error.message, 'error');
-        }
+        await this.timeBlockManager.updateTimeBlock(rowIndex, blockData, updates);
     }
     
-    /**
-     * Create a schedule row
-     */
-    createScheduleRow(row, index) {
-        const rowElement = document.createElement('div');
-        rowElement.className = 'schedule-row';
-        rowElement.dataset.rowIndex = index;
-        
-        // Add row type classes
-        if (row.type === 'project-header') {
-            rowElement.classList.add('project-header');
-            // Set a light shade of the project color as background if available
-            if (row.project && this.state.projectColors[row.project]) {
-                // Use a 10% opacity version of the project color
-                rowElement.style.background = this.hexToRgba(this.state.projectColors[row.project], 0.10);
-            }
-        } else if (row.type === 'task-row') {
-            rowElement.classList.add('task-row');
-        }
-        
-        // Combined Project/Task cell
-        const projectTaskCell = document.createElement('div');
-        projectTaskCell.className = 'schedule-cell project-task-cell';
-        projectTaskCell.dataset.type = 'project-task';
-        projectTaskCell.dataset.rowIndex = index;
-        
-        if (row.type === 'project-header') {
-            // Project header row
-            if (row.project) {
-                projectTaskCell.classList.add('filled');
-                projectTaskCell.textContent = row.projectName;
-                projectTaskCell.style.setProperty('--project-color', this.state.projectColors[row.project] || '#6b7280');
-                projectTaskCell.style.borderLeft = `4px solid var(--project-color)`;
-            } else {
-                projectTaskCell.classList.add('empty');
-                projectTaskCell.textContent = 'Select Project';
-                projectTaskCell.addEventListener('click', () => this.showProjectDropdown(projectTaskCell, index));
-            }
-        } else {
-            // Task row
-            if (row.task) {
-                projectTaskCell.classList.add('filled');
-                projectTaskCell.textContent = row.taskName;
-                projectTaskCell.style.position = 'relative';
-                
-                // Add row controls for task rows
-                const rowControls = document.createElement('div');
-                rowControls.className = 'row-controls';
-                rowControls.innerHTML = `
-                    <button class="row-control-btn copy-down-btn" title="Copy task down" onclick="copyTaskDown(${index})">
-                        <i class="mdi mdi-content-copy"></i>
-                    </button>
-                    <button class="row-control-btn delete-row-btn" title="Delete task" onclick="deleteScheduleRow(${index})">
-                        <i class="mdi mdi-delete"></i>
-                    </button>
-                `;
-                projectTaskCell.appendChild(rowControls);
-            } else if (row.project) {
-                projectTaskCell.classList.add('empty');
-                projectTaskCell.textContent = 'Select Task';
-                projectTaskCell.addEventListener('click', () => this.showTaskDropdown(projectTaskCell, index));
-            } else {
-                projectTaskCell.classList.add('empty');
-                projectTaskCell.textContent = 'Select Project First';
-            }
-        }
-        
-        // Person cell
-        const personCell = document.createElement('div');
-        personCell.className = 'schedule-cell person-cell';
-        personCell.dataset.type = 'person';
-        personCell.dataset.rowIndex = index;
-        
-        if (row.type === 'project-header') {
-            // Project headers show resource count
-            personCell.style.visibility = 'visible';
-            personCell.style.cursor = 'default';
-            personCell.classList.add('filled');
-            
-            // Calculate unique resources for this project
-            const projectRows = this.state.scheduleRows.filter(r => 
-                r.project === row.project && r.type === 'task-row' && r.resource
-            );
-            const uniqueResources = new Set(projectRows.map(r => r.resource));
-            const resourceCount = uniqueResources.size;
-            
-            personCell.textContent = resourceCount > 0 ? `${resourceCount} Resources` : 'No Resources';
-            personCell.style.fontSize = '0.875rem';
-            personCell.style.color = '#6b7280';
-        } else {
-            // Task rows can have resources
-            personCell.style.visibility = 'visible';
-            personCell.style.fontSize = '';
-            personCell.style.color = '';
-            if (row.resource) {
-                personCell.classList.add('filled');
-                personCell.textContent = row.resourceName;
-            } else {
-                personCell.classList.add('empty');
-                personCell.textContent = 'Select Resource';
-            }
-            personCell.addEventListener('click', () => this.showPersonDropdown(personCell, index));
-        }
-        
-        // Day cells
-        const daysContainer = document.createElement('div');
-        daysContainer.className = 'schedule-days';
-        
-        for (let i = 0; i < this.state.dateRange; i++) {
-            const date = this.addDays(this.state.currentStartDate, i);
-            const dayCell = this.createDayCell(row, date, index);
-            daysContainer.appendChild(dayCell);
-        }
-        
-        rowElement.appendChild(projectTaskCell);
-        rowElement.appendChild(personCell);
-        rowElement.appendChild(daysContainer);
-        
-        return rowElement;
-    }
+    // Row creation methods moved to RowRenderer class
     
     /**
      * Create a day cell
@@ -808,7 +202,7 @@ class SchedulerApp {
         cell.addEventListener('dragover', (e) => e.preventDefault());
         cell.addEventListener('dragenter', (e) => {
             e.preventDefault();
-            if (row.project && row.task && row.type === 'task-row') {
+            if (row.project && row.activity && row.type === 'activity-row') {
                 cell.classList.add('drop-zone');
             }
         });
@@ -828,7 +222,7 @@ class SchedulerApp {
                 
                 // Get total from Schedule Rows if available
                 const projectRows = this.state.scheduleRows.filter(r => 
-                    r.project === row.project && r.type === 'task-row' && r.dailyEntries
+                    r.project === row.project && r.type === 'activity-row' && r.dailyEntries
                 );
                 
                 projectRows.forEach(scheduleRow => {
@@ -867,7 +261,7 @@ class SchedulerApp {
             cell.style.cursor = 'default';
             cell.classList.add('disabled');
         } else {
-            // Task row logic - check for time entries in daily entries JSON
+            // Activity row logic - check for time entries in daily entries JSON
             let hasTimeEntry = false;
             
             // Check Schedule Row daily entries first
@@ -901,7 +295,7 @@ class SchedulerApp {
             }
             
             // Add simple hover functionality for valid cells
-            if (row.project && row.task) {
+            if (row.project && row.activity) {
                 cell.classList.add('valid-cell');
                 cell.style.cursor = 'pointer';
                 
@@ -919,7 +313,7 @@ class SchedulerApp {
             } else if (!hasTimeEntry) {
                 cell.classList.add('disabled');
                 cell.style.cursor = 'not-allowed';
-                cell.title = 'Select project and task first';
+                cell.title = 'Select project and activity first';
             }
         }
         
@@ -973,122 +367,48 @@ class SchedulerApp {
      * Show project dropdown
      */
     showProjectDropdown(cell, rowIndex) {
-        this.hideAllDropdowns();
-        
-        const dropdown = document.createElement('div');
-        dropdown.className = 'cell-dropdown';
-        dropdown.id = 'projectDropdown';
-        
-        this.state.projects.forEach(project => {
-            const item = document.createElement('div');
-            item.className = 'dropdown-item';
-            item.textContent = project.project_name;
-            item.addEventListener('click', () => {
-                this.selectProject(rowIndex, project);
-                this.hideAllDropdowns();
-            });
-            dropdown.appendChild(item);
-        });
-        
-        cell.style.position = 'relative';
-        cell.appendChild(dropdown);
-        
-        // Close dropdown when clicking outside
-        setTimeout(() => {
-            document.addEventListener('click', this.handleOutsideClick.bind(this), { once: true });
-        }, 100);
+        this.dropdownManager.showProjectDropdown(cell, rowIndex);
     }
     
     /**
-     * Show task dropdown
+     * Show activity dropdown
      */
-    showTaskDropdown(cell, rowIndex) {
-        const row = this.state.scheduleRows[rowIndex];
-        if (!row.project) return;
-        
-        this.hideAllDropdowns();
-        
-        const dropdown = document.createElement('div');
-        dropdown.className = 'cell-dropdown';
-        dropdown.id = 'taskDropdown';
-        
-        const project = this.state.projects.find(p => p.name === row.project);
-        if (project && project.tasks) {
-            project.tasks.forEach(task => {
-                const item = document.createElement('div');
-                item.className = 'dropdown-item';
-                item.textContent = task.task_name;
-                item.addEventListener('click', () => {
-                    this.selectTask(rowIndex, task);
-                    this.hideAllDropdowns();
-                });
-                dropdown.appendChild(item);
-            });
-        }
-        
-        cell.style.position = 'relative';
-        cell.appendChild(dropdown);
-        
-        // Close dropdown when clicking outside
-        setTimeout(() => {
-            document.addEventListener('click', this.handleOutsideClick.bind(this), { once: true });
-        }, 100);
+    showActivityDropdown(cell, rowIndex) {
+        this.dropdownManager.showActivityDropdown(cell, rowIndex);
     }
+
     
+    /**
+     * Show role dropdown
+     */
+    showRoleDropdown(cell, rowIndex) {
+        this.dropdownManager.showRoleDropdown(cell, rowIndex);
+    }
+
     /**
      * Show person dropdown
      */
     showPersonDropdown(cell, rowIndex) {
-        this.hideAllDropdowns();
-        
-        const dropdown = document.createElement('div');
-        dropdown.className = 'cell-dropdown';
-        dropdown.id = 'personDropdown';
-        
-        // Add "Unassigned" option
-        const unassignedItem = document.createElement('div');
-        unassignedItem.className = 'dropdown-item';
-        unassignedItem.textContent = 'Unassigned';
-        unassignedItem.addEventListener('click', () => {
-            this.selectPerson(rowIndex, null);
-            this.hideAllDropdowns();
-        });
-        dropdown.appendChild(unassignedItem);
-        
-        this.state.resources.forEach(resource => {
-            const item = document.createElement('div');
-            item.className = 'dropdown-item';
-            item.textContent = resource.resource_name;
-            item.addEventListener('click', () => {
-                this.selectPerson(rowIndex, resource);
-                this.hideAllDropdowns();
-            });
-            dropdown.appendChild(item);
-        });
-        
-        cell.style.position = 'relative';
-        cell.appendChild(dropdown);
-        
-        // Close dropdown when clicking outside
-        setTimeout(() => {
-            document.addEventListener('click', this.handleOutsideClick.bind(this), { once: true });
-        }, 100);
+        this.dropdownManager.showResourceDropdown(cell, rowIndex);
     }
     
     /**
      * Hide all dropdowns
      */
     hideAllDropdowns() {
-        const dropdowns = document.querySelectorAll('.cell-dropdown');
-        dropdowns.forEach(dropdown => dropdown.remove());
+        this.dropdownManager.hideAllDropdowns();
     }
     
     /**
      * Handle outside click to close dropdowns
      */
     handleOutsideClick(event) {
+        // Check if the click is outside both the dropdown and the cell that triggered it
         if (!event.target.closest('.cell-dropdown') && !event.target.closest('.schedule-cell')) {
             this.hideAllDropdowns();
+            // Remove the event listener after handling
+            document.removeEventListener('click', this.boundHandleOutsideClick);
+            this.boundHandleOutsideClick = null;
         }
     }
     
@@ -1096,110 +416,28 @@ class SchedulerApp {
      * Select project for a row
      */
     selectProject(rowIndex, project) {
-        this.state.scheduleRows[rowIndex].project = project.name;
-        this.state.scheduleRows[rowIndex].projectName = project.project_name;
-        this.state.scheduleRows[rowIndex].task = null;
-        this.state.scheduleRows[rowIndex].taskName = null;
-        
-        // Add a new blank row below when a project is selected
-        this.addNewRow();
-        
-        this.renderScheduleRows();
+        this.rowManager.selectProject(rowIndex, project);
     }
     
     /**
-     * Select task for a row
+     * Select activity for a row
      */
-    async selectTask(rowIndex, task) {
-        const row = this.state.scheduleRows[rowIndex];
-        row.task = task.name;
-        row.taskName = task.task_name;
-        
-        // Automatically create a Schedule Row when task is selected
-        try {
-            const response = await this.apiCall('erplite.scheduler.api.create_schedule_row_entry', {
-                project: row.project,
-                task: task.name,
-                resource: null // No resource initially
-            });
-            
-            if (response && response.success) {
-                // Store the schedule row ID for future updates
-                row.scheduleRowId = response.name;
-                row.dailyEntries = {};
-                console.log('Schedule Row created:', response.name);
-                this.showToast('Schedule row created for task', 'success');
-            } else {
-                console.warn('Failed to create schedule row:', response.message);
-                // Continue anyway - user can still work with the interface
-            }
-        } catch (error) {
-            console.warn('Error creating schedule row:', error);
-            // Continue anyway - fallback to old system
-        }
-        
-        // When a task is selected, add a new row with the same project but no task
-        this.state.scheduleRows.splice(rowIndex + 1, 0, {
-            type: 'task-row',
-            project: row.project,
-            projectName: row.projectName,
-            task: null,
-            taskName: null,
-            resource: null,
-            resourceName: null,
-            entries: [],
-            dailyEntries: {}
-        });
-        
-        this.renderScheduleRows();
+    async selectActivity(rowIndex, activity) {
+        await this.rowManager.selectActivity(rowIndex, activity);
     }
     
+    /**
+     * Select role for a row
+     */
+    async selectRole(rowIndex, role) {
+        await this.rowManager.selectRole(rowIndex, role);
+    }
+
     /**
      * Select person for a row
      */
     async selectPerson(rowIndex, resource) {
-        const row = this.state.scheduleRows[rowIndex];
-        row.resource = resource ? resource.name : null;
-        row.resourceName = resource ? resource.resource_name : 'Unassigned';
-        
-        // If we have a project and task, create/update Schedule Row with resource
-        if (row.project && row.task) {
-            try {
-                if (row.scheduleRowId) {
-                    // Update existing schedule row with resource
-                    const updateResponse = await this.apiCall('erplite.scheduler.api.update_schedule_row_resource', {
-                        schedule_row: row.scheduleRowId,
-                        resource: resource ? resource.name : null
-                    });
-                    
-                    if (updateResponse && updateResponse.success) {
-                        console.log('Schedule Row updated with resource:', row.scheduleRowId);
-                        this.showToast('Schedule row updated with resource', 'success');
-                    } else {
-                        console.warn('Failed to update schedule row with resource:', updateResponse.message);
-                    }
-                } else {
-                    // Create new schedule row with resource
-                    const response = await this.apiCall('erplite.scheduler.api.create_schedule_row_entry', {
-                        project: row.project,
-                        task: row.task,
-                        resource: resource ? resource.name : null
-                    });
-                    
-                    if (response && response.success) {
-                        row.scheduleRowId = response.name;
-                        row.dailyEntries = {};
-                        console.log('Schedule Row created with resource:', response.name);
-                        this.showToast('Schedule row created with resource', 'success');
-                    }
-                }
-            } catch (error) {
-                console.warn('Error updating schedule row with resource:', error);
-                // Continue anyway - fallback to old system
-            }
-        }
-        
-        this.renderScheduleRows();
+        await this.rowManager.selectResource(rowIndex, resource);
     }
     
     /**
@@ -1208,15 +446,15 @@ class SchedulerApp {
     createEntryForCell(rowIndex, date) {
         const row = this.state.scheduleRows[rowIndex];
         
-        if (!row.project || !row.task) {
-            this.showToast('Please select project and task first', 'warning');
+        if (!row.project || !row.activity) {
+            this.showToast('Please select project and activity first', 'warning');
             return;
         }
         
         // Pre-fill modal with row data
         this.openEntryModal(null, {
             project: row.project,
-            task: row.task,
+            activity: row.activity,
             resource: row.resource,
             date: date
         });
@@ -1238,7 +476,7 @@ class SchedulerApp {
                 projectGroups[projectKey] = {
                     project: project.name,
                     projectName: project.project_name,
-                    tasks: {}
+                    activities: {}
                 };
             }
         });
@@ -1252,8 +490,8 @@ class SchedulerApp {
             type: 'project-header',
             project: null,
             projectName: null,
-            task: null,
-            taskName: null,
+            activity: null,
+            activityName: null,
             resource: null,
             resourceName: null,
             entries: []
@@ -1269,8 +507,8 @@ class SchedulerApp {
         this.state.scheduleRows.push({
             project: null,
             projectName: null,
-            task: null,
-            taskName: null,
+            activity: null,
+            activityName: null,
             resource: null,
             resourceName: null,
             entries: []
@@ -1291,8 +529,8 @@ class SchedulerApp {
             const emptyRow = {
                 project: null,
                 projectName: null,
-                task: null,
-                taskName: null,
+                activity: null,
+                activityName: null,
                 resource: null,
                 resourceName: null,
                 entries: []
@@ -1370,15 +608,15 @@ class SchedulerApp {
     
     populateModalWithEntry(entry) {
         document.getElementById('entryProject').value = entry.project || '';
-        document.getElementById('entryTask').value = entry.task || '';
+        document.getElementById('entryActivity').value = entry.activity || '';
         document.getElementById('entryResource').value = entry.resource || '';
         document.getElementById('entryDate').value = entry.schedule_date || this.getTodayString();
         document.getElementById('entryDuration').value = entry.duration || 1;
         document.getElementById('entryPriority').value = entry.priority || 'Medium';
         document.getElementById('entryDescription').value = entry.description || '';
         
-        // Update task options based on selected project
-        this.updateEntryTaskOptions();
+        // Update activity options based on selected project
+        this.updateEntryActivityOptions();
         
         // Store entry ID for updates
         this.currentEditingEntry = entry.name;
@@ -1391,12 +629,12 @@ class SchedulerApp {
             document.getElementById('entryProjectDisplay').textContent = project ? project.project_name : prefill.project;
         }
         
-        if (prefill.task) {
-            document.getElementById('entryTask').value = prefill.task;
+        if (prefill.activity) {
+            document.getElementById('entryActivity').value = prefill.activity;
             const project = this.state.projects.find(p => p.name === prefill.project);
-            if (project && project.tasks) {
-                const task = project.tasks.find(t => t.name === prefill.task);
-                document.getElementById('entryTaskDisplay').textContent = task ? task.task_name : prefill.task;
+            if (project && project.activities) {
+                const activity = project.activities.find(t => t.name === prefill.activity);
+                document.getElementById('entryActivityDisplay').textContent = activity ? activity.activity_name : prefill.activity;
             }
         }
         
@@ -1404,20 +642,20 @@ class SchedulerApp {
         if (prefill.date) document.getElementById('entryDate').value = prefill.date;
     }
     
-    updateEntryTaskOptions() {
+    updateEntryActivityOptions() {
         const projectSelect = document.getElementById('entryProject');
-        const taskSelect = document.getElementById('entryTask');
+        const activitySelect = document.getElementById('entryActivity');
         
-        taskSelect.innerHTML = '<option value="">Select Task</option>';
+        activitySelect.innerHTML = '<option value="">Select Activity</option>';
         
         if (projectSelect.value) {
             const project = this.state.projects.find(p => p.name === projectSelect.value);
-            if (project && project.tasks) {
-                project.tasks.forEach(task => {
+            if (project && project.activities) {
+                project.activities.forEach(activity => {
                     const option = document.createElement('option');
-                    option.value = task.name;
-                    option.textContent = task.task_name;
-                    taskSelect.appendChild(option);
+                    option.value = activity.name;
+                    option.textContent = activity.activity_name;
+                    activitySelect.appendChild(option);
                 });
             }
         }
@@ -1425,7 +663,7 @@ class SchedulerApp {
     
     clearModal() {
         document.getElementById('entryProject').value = '';
-        document.getElementById('entryTask').value = '';
+        document.getElementById('entryActivity').value = '';
         document.getElementById('entryResource').value = '';
         document.getElementById('entryDate').value = this.getTodayString();
         document.getElementById('entryDuration').value = '1';
@@ -1436,7 +674,7 @@ class SchedulerApp {
     async saveEntry() {
         const formData = {
             project: document.getElementById('entryProject').value,
-            task: document.getElementById('entryTask').value,
+            activity: document.getElementById('entryActivity').value,
             resource: document.getElementById('entryResource').value || null,
             schedule_date: document.getElementById('entryDate').value,
             duration: parseFloat(document.getElementById('entryDuration').value),
@@ -1444,7 +682,7 @@ class SchedulerApp {
             description: document.getElementById('entryDescription').value
         };
         
-        if (!formData.project || !formData.task || !formData.schedule_date) {
+        if (!formData.project || !formData.activity || !formData.schedule_date) {
             this.showToast('Please fill in all required fields', 'error');
             return;
         }
@@ -1491,7 +729,7 @@ class SchedulerApp {
     async moveEntry(entryId, newRowIndex, newDate) {
         const newRow = this.state.scheduleRows[newRowIndex];
         
-        if (!newRow.project || !newRow.task) {
+        if (!newRow.project || !newRow.activity) {
             this.showToast('Cannot move entry to incomplete row', 'error');
             return;
         }
@@ -1503,7 +741,7 @@ class SchedulerApp {
                 name: entryId,
                 data: JSON.stringify({
                     project: newRow.project,
-                    task: newRow.task,
+                    activity: newRow.activity,
                     resource: newRow.resource,
                     schedule_date: newDate
                 })
@@ -1557,19 +795,19 @@ class SchedulerApp {
     }
     
     /**
-     * Copy task down - creates a duplicate task row below the current one
+     * Copy activity down - creates a duplicate activity row below the current one
      */
-    copyTaskDown(rowIndex) {
+    copyActivityDown(rowIndex) {
         if (rowIndex >= 0 && rowIndex < this.state.scheduleRows.length) {
             const sourceRow = this.state.scheduleRows[rowIndex];
             
-            // Create a copy of the task row
+            // Create a copy of the activity row
             const newRow = {
-                type: 'task-row',
+                type: 'activity-row',
                 project: sourceRow.project,
                 projectName: sourceRow.projectName,
-                task: sourceRow.task,
-                taskName: sourceRow.taskName,
+                activity: sourceRow.activity,
+                activityName: sourceRow.activityName,
                 resource: sourceRow.resource,
                 resourceName: sourceRow.resourceName,
                 entries: [] // New row starts with no entries
@@ -1580,18 +818,18 @@ class SchedulerApp {
             
             // Add another blank row after the copied row
             this.state.scheduleRows.splice(rowIndex + 2, 0, {
-                type: 'task-row',
+                type: 'activity-row',
                 project: sourceRow.project,
                 projectName: sourceRow.projectName,
-                task: null,
-                taskName: null,
+                activity: null,
+                activityName: null,
                 resource: null,
                 resourceName: null,
                 entries: []
             });
             
             this.renderScheduleRows();
-            this.showToast('Task copied down successfully!', 'success');
+            this.showToast('Activity copied down successfully!', 'success');
         }
     }
     
@@ -1895,15 +1133,18 @@ class SchedulerApp {
         }
     }
     
-    // Utility functions
+    /**
+     * Get today's date string - delegates to SchedulerUtils
+     */
     getTodayString() {
-        return new Date().toISOString().split('T')[0];
+        return SchedulerUtils.getTodayString();
     }
     
+    /**
+     * Add days to date string - delegates to SchedulerUtils
+     */
     addDays(dateString, days) {
-        const date = new Date(dateString);
-        date.setDate(date.getDate() + days);
-        return date.toISOString().split('T')[0];
+        return SchedulerUtils.addDays(dateString, days);
     }
     
     setLoading(loading) {
@@ -1920,28 +1161,16 @@ class SchedulerApp {
         }
     }
     
+    /**
+     * Make API call - delegates to DataManager
+     */
     async apiCall(method, args = {}) {
-        if (typeof frappe !== 'undefined' && frappe.call) {
-            return new Promise((resolve, reject) => {
-                frappe.call({
-                    method: method,
-                    args: args,
-                    callback: (response) => {
-                        resolve(response.message);
-                    },
-                    error: (error) => {
-                        reject(error);
-                    }
-                });
-            });
-        } else {
-            throw new Error('Frappe framework not available');
-        }
+        return await this.dataManager.apiCall(method, args);
     }
     
     // Cleanup
     cleanup() {
-        this.hideAllDropdowns();
+        this.dropdownManager.cleanup();
         console.log('Scheduler cleanup completed');
     }
     
@@ -1977,8 +1206,8 @@ class SchedulerApp {
     handleTemplateDrop(template, rowIndex, date) {
         const row = this.state.scheduleRows[rowIndex];
         
-        if (!row.project || !row.task) {
-            this.showToast('Please select project and task first', 'warning');
+        if (!row.project || !row.activity) {
+            this.showToast('Please select project and activity first', 'warning');
             return;
         }
         
@@ -2008,37 +1237,10 @@ class SchedulerApp {
     }
 
     /**
-     * Get template configuration
+     * Get template configuration - delegates to SchedulerUtils
      */
     getTemplateConfig(template) {
-        const configs = {
-            '8h': {
-                name: '8 Hour Shift',
-                hours: 8,
-                start_time: '09:00',
-                end_time: '17:00',
-                description: 'Standard 8-hour work day',
-                status: 'planned'
-            },
-            '12h': {
-                name: '12 Hour Shift',
-                hours: 12,
-                start_time: '07:00',
-                end_time: '19:00',
-                description: 'Extended 12-hour shift',
-                status: 'planned'
-            },
-            'leave': {
-                name: 'Leave',
-                hours: 8,
-                start_time: '00:00',
-                end_time: '23:59',
-                description: 'Time off / Leave',
-                status: 'leave'
-            }
-        };
-        
-        return configs[template] || configs['8h'];
+        return SchedulerUtils.getTemplateConfig(template);
     }
 
     /**
@@ -2074,332 +1276,34 @@ class SchedulerApp {
         return 'entry_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     }
 
+    // Time block resize methods moved to TimeBlockManager class
+    
     /**
-     * Start resizing a time block card
+     * Start resizing a time block card - delegated to TimeBlockManager
      */
     startResize(event, card, direction, rowIndex, blockData) {
-        event.preventDefault();
-        event.stopPropagation();
-        
-        // Store resize state
-        this.resizeState = {
-            active: true,
-            card: card,
-            direction: direction,
-            rowIndex: rowIndex,
-            blockData: blockData,
-            originalStartDate: blockData.start_date,
-            originalEndDate: blockData.end_date,
-            startX: event.clientX
-        };
-        
-        // Add resizing class
-        card.classList.add('resizing');
-        
-        // Bind event handlers
-        this.boundHandleResize = this.handleResize.bind(this);
-        this.boundEndResize = this.endResize.bind(this);
-        
-        document.addEventListener('mousemove', this.boundHandleResize);
-        document.addEventListener('mouseup', this.boundEndResize);
-        
-        // Prevent text selection
-        document.body.style.userSelect = 'none';
-        
-        console.log(`Started resizing ${direction} for block:`, blockData);
+        this.timeBlockManager.startResize(event, card, direction, rowIndex, blockData);
     }
     
     /**
-     * Handle resize movement
-     */
-    handleResize(event) {
-        if (!this.resizeState || !this.resizeState.active) return;
-        
-        const { card, direction, rowIndex } = this.resizeState;
-        const row = this.state.scheduleRows[rowIndex];
-        
-        // Find the row element and days container
-        const rowElement = document.querySelector(`[data-row-index="${rowIndex}"]`);
-        if (!rowElement) return;
-        
-        const daysContainer = rowElement.querySelector('.schedule-days');
-        if (!daysContainer) return;
-        
-        // Find the day cell under the mouse
-        const elementUnderMouse = document.elementFromPoint(event.clientX, event.clientY);
-        const targetCell = elementUnderMouse ? elementUnderMouse.closest('.day-cell') : null;
-        
-        if (!targetCell || !targetCell.dataset.date) return;
-        
-        const targetDate = targetCell.dataset.date;
-        
-        // Clear previous resize targets
-        document.querySelectorAll('.day-cell.resize-target').forEach(cell => {
-            cell.classList.remove('resize-target');
-        });
-        
-        // Calculate new date range based on resize direction
-        let newStartDate, newEndDate;
-        
-        if (direction === 'left') {
-            // Resizing from the left - change start date
-            newStartDate = targetDate;
-            newEndDate = this.resizeState.originalEndDate;
-            
-            // Ensure start is not after end
-            if (new Date(newStartDate) > new Date(newEndDate)) {
-                newStartDate = newEndDate;
-            }
-        } else {
-            // Resizing from the right - change end date
-            newStartDate = this.resizeState.originalStartDate;
-            newEndDate = targetDate;
-            
-            // Ensure end is not before start
-            if (new Date(newEndDate) < new Date(newStartDate)) {
-                newEndDate = newStartDate;
-            }
-        }
-        
-        // Highlight the new range
-        this.highlightDateRange(rowIndex, newStartDate, newEndDate);
-        
-        // Update the card visually
-        this.updateCardVisualDuringResize(card, daysContainer, newStartDate, newEndDate);
-        
-        // Store the new dates for when resize ends
-        this.resizeState.newStartDate = newStartDate;
-        this.resizeState.newEndDate = newEndDate;
-    }
-    
-    /**
-     * End resize operation
-     */
-    endResize(event) {
-        if (!this.resizeState || !this.resizeState.active) return;
-        
-        const { card, rowIndex, blockData, newStartDate, newEndDate } = this.resizeState;
-        
-        // Clean up event listeners
-        document.removeEventListener('mousemove', this.boundHandleResize);
-        document.removeEventListener('mouseup', this.boundEndResize);
-        
-        // Restore text selection
-        document.body.style.userSelect = '';
-        
-        // Remove resizing class
-        card.classList.remove('resizing');
-        
-        // Clear resize targets
-        document.querySelectorAll('.day-cell.resize-target').forEach(cell => {
-            cell.classList.remove('resize-target');
-        });
-        
-        // Apply the resize if dates changed
-        if (newStartDate && newEndDate && 
-            (newStartDate !== blockData.start_date || newEndDate !== blockData.end_date)) {
-            
-            this.applyResize(rowIndex, blockData, newStartDate, newEndDate);
-        }
-        
-        // Reset resize state
-        this.resizeState = null;
-        
-        console.log('Resize ended');
-    }
-    
-    /**
-     * Highlight date range during resize
-     */
-    highlightDateRange(rowIndex, startDate, endDate) {
-        // Clear previous highlights
-        document.querySelectorAll('.day-cell.resize-target').forEach(cell => {
-            cell.classList.remove('resize-target');
-        });
-        
-        // Highlight the new range
-        const start = new Date(startDate);
-        const end = new Date(endDate);
-        const currentDate = new Date(start);
-        
-        while (currentDate <= end) {
-            const dateStr = currentDate.toISOString().split('T')[0];
-            const cell = document.querySelector(`[data-date="${dateStr}"][data-row-index="${rowIndex}"]`);
-            if (cell) {
-                cell.classList.add('resize-target');
-            }
-            currentDate.setDate(currentDate.getDate() + 1);
-        }
-    }
-    
-    /**
-     * Update card visual appearance during resize
-     */
-    updateCardVisualDuringResize(card, daysContainer, startDate, endDate) {
-        const startCell = daysContainer.querySelector(`[data-date="${startDate}"]`);
-        const endCell = daysContainer.querySelector(`[data-date="${endDate}"]`);
-        
-        if (!startCell || !endCell) return;
-        
-        // Calculate new position and width
-        const startRect = startCell.getBoundingClientRect();
-        const endRect = endCell.getBoundingClientRect();
-        const containerRect = daysContainer.getBoundingClientRect();
-        
-        const left = startRect.left - containerRect.left;
-        const width = endRect.right - startRect.left;
-        
-        // Update card position and width
-        card.style.left = `${left}px`;
-        card.style.width = `${width}px`;
-        
-        // Update content to show new day count
-        const content = card.querySelector('.card-content');
-        if (content) {
-            const daysCount = this.calculateDaysBetween(startDate, endDate) + 1;
-            const hours = this.resizeState.blockData.hours || 8;
-            const startTime = this.resizeState.blockData.start_time || '09:00';
-            const endTime = this.resizeState.blockData.end_time || '17:00';
-            
-            if (daysCount > 1) {
-                content.innerHTML = `
-                    <div class="card-hours">${hours}h × ${daysCount}</div>
-                    <div class="card-time">${startTime}-${endTime}</div>
-                `;
-            } else {
-                content.innerHTML = `
-                    <div class="card-hours">${hours}h</div>
-                    <div class="card-time">${startTime}-${endTime}</div>
-                `;
-            }
-        }
-    }
-    
-    /**
-     * Apply the resize to the data model
-     */
-    applyResize(rowIndex, originalBlockData, newStartDate, newEndDate) {
-        const row = this.state.scheduleRows[rowIndex];
-        
-        if (!row.dailyEntries) {
-            row.dailyEntries = {};
-        }
-        
-        // Remove entries from the original date range
-        const originalStart = new Date(originalBlockData.start_date);
-        const originalEnd = new Date(originalBlockData.end_date);
-        const currentDate = new Date(originalStart);
-        
-        while (currentDate <= originalEnd) {
-            const dateStr = currentDate.toISOString().split('T')[0];
-            delete row.dailyEntries[dateStr];
-            currentDate.setDate(currentDate.getDate() + 1);
-        }
-        
-        // Add entries for the new date range
-        const newStart = new Date(newStartDate);
-        const newEnd = new Date(newEndDate);
-        const newCurrentDate = new Date(newStart);
-        
-        while (newCurrentDate <= newEnd) {
-            const dateStr = newCurrentDate.toISOString().split('T')[0];
-            row.dailyEntries[dateStr] = {
-                hours: originalBlockData.hours || 8,
-                start_time: originalBlockData.start_time || '09:00',
-                end_time: originalBlockData.end_time || '17:00',
-                description: originalBlockData.description || '',
-                status: originalBlockData.status || 'planned',
-                id: this.generateEntryId()
-            };
-            newCurrentDate.setDate(newCurrentDate.getDate() + 1);
-        }
-        
-        // Re-render to show the changes
-        this.renderScheduleRows();
-        this.renderTimeBlockCards();
-        
-        const daysCount = this.calculateDaysBetween(newStartDate, newEndDate) + 1;
-        this.showToast(`Time block resized to ${daysCount} day${daysCount > 1 ? 's' : ''}!`, 'success');
-    }
-
-    /**
-     * Group consecutive entries with identical properties into blocks
+     * Group consecutive entries - delegates to SchedulerUtils
      */
     groupConsecutiveEntries(entries) {
-        const sortedDates = Object.keys(entries).sort();
-        const blocks = [];
-        
-        if (sortedDates.length === 0) return blocks;
-        
-        let currentBlock = null;
-        
-        for (const date of sortedDates) {
-            const entry = entries[date];
-            
-            if (!currentBlock) {
-                // Start new block
-                currentBlock = {
-                    start_date: date,
-                    end_date: date,
-                    hours: entry.hours || 8,
-                    start_time: entry.start_time || '09:00',
-                    end_time: entry.end_time || '17:00',
-                    description: entry.description || '',
-                    status: entry.status || 'planned'
-                };
-            } else {
-                // Check if this entry can extend the current block
-                const canExtend = this.canEntriesBeGrouped(currentBlock, entry) &&
-                                this.isConsecutiveDate(currentBlock.end_date, date);
-                
-                if (canExtend) {
-                    // Extend current block
-                    currentBlock.end_date = date;
-                } else {
-                    // Finalize current block and start new one
-                    blocks.push(currentBlock);
-                    currentBlock = {
-                        start_date: date,
-                        end_date: date,
-                        hours: entry.hours || 8,
-                        start_time: entry.start_time || '09:00',
-                        end_time: entry.end_time || '17:00',
-                        description: entry.description || '',
-                        status: entry.status || 'planned'
-                    };
-                }
-            }
-        }
-        
-        // Add the last block
-        if (currentBlock) {
-            blocks.push(currentBlock);
-        }
-        
-        return blocks;
+        return SchedulerUtils.groupConsecutiveEntries(entries);
     }
     
     /**
-     * Check if two entries can be grouped together
+     * Check if entries can be grouped - delegates to SchedulerUtils
      */
     canEntriesBeGrouped(block, entry) {
-        return (
-            (entry.hours || 8) === block.hours &&
-            (entry.start_time || '09:00') === block.start_time &&
-            (entry.end_time || '17:00') === block.end_time &&
-            (entry.status || 'planned') === block.status
-        );
+        return SchedulerUtils.canEntriesBeGrouped(block, entry);
     }
     
     /**
-     * Check if two dates are consecutive
+     * Check if dates are consecutive - delegates to SchedulerUtils
      */
     isConsecutiveDate(date1, date2) {
-        const d1 = new Date(date1);
-        const d2 = new Date(date2);
-        const diffTime = d2.getTime() - d1.getTime();
-        const diffDays = diffTime / (1000 * 60 * 60 * 24);
-        return diffDays === 1;
+        return SchedulerUtils.isConsecutiveDate(date1, date2);
     }
 
     /**
@@ -2415,6 +1319,70 @@ class SchedulerApp {
         const g = (num >> 8) & 255;
         const b = num & 255;
         return `rgba(${r},${g},${b},${alpha})`;
+    }
+
+    /**
+     * Create resource avatar - delegates to ResourceUtils
+     */
+    createResourceAvatar(resource) {
+        return ResourceUtils.createResourceAvatar(resource);
+    }
+
+    /**
+     * Get resource color - delegates to ResourceUtils
+     */
+    getResourceColor(name) {
+        return ResourceUtils.getResourceColor(name);
+    }
+
+    /**
+     * Get resource type icon - delegates to ResourceUtils
+     */
+    getResourceTypeIcon(resourceType) {
+        return ResourceUtils.getResourceTypeIcon(resourceType);
+    }
+
+    /**
+     * Setup scroll synchronization between left and right sections
+     */
+    setupScrollSynchronization() {
+        const fixedLeftBody = document.getElementById('fixedLeftBody');
+        const scrollableRightBody = document.getElementById('gridBody');
+        
+        if (!fixedLeftBody || !scrollableRightBody) return;
+        
+        // Remove any existing scroll listeners to prevent duplicates
+        if (this.leftScrollHandler) {
+            fixedLeftBody.removeEventListener('scroll', this.leftScrollHandler);
+        }
+        if (this.rightScrollHandler) {
+            scrollableRightBody.removeEventListener('scroll', this.rightScrollHandler);
+        }
+        
+        // Flag to prevent infinite scroll loops
+        let isScrolling = false;
+        
+        // Sync right section when left section scrolls
+        this.leftScrollHandler = () => {
+            if (isScrolling) return;
+            isScrolling = true;
+            scrollableRightBody.scrollTop = fixedLeftBody.scrollTop;
+            setTimeout(() => { isScrolling = false; }, 10);
+        };
+        
+        // Sync left section when right section scrolls
+        this.rightScrollHandler = () => {
+            if (isScrolling) return;
+            isScrolling = true;
+            fixedLeftBody.scrollTop = scrollableRightBody.scrollTop;
+            setTimeout(() => { isScrolling = false; }, 10);
+        };
+        
+        // Add scroll event listeners
+        fixedLeftBody.addEventListener('scroll', this.leftScrollHandler);
+        scrollableRightBody.addEventListener('scroll', this.rightScrollHandler);
+        
+        console.log('Scroll synchronization setup complete');
     }
 }
 
@@ -2443,8 +1411,8 @@ window.deleteScheduleRow = function(rowIndex) {
     }
 };
 
-window.copyTaskDown = function(rowIndex) {
+window.copyActivityDown = function(rowIndex) {
     if (window.scheduler) {
-        window.scheduler.copyTaskDown(rowIndex);
+        window.scheduler.copyActivityDown(rowIndex);
     }
 };

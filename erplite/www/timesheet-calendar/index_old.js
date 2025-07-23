@@ -42,9 +42,9 @@ function initializeExistingTimeBlocks() {
             
             createTimeBlock({
                 project: timesheet.project,
-                task: timesheet.task,
+                activity: timesheet.activity,
                 projectName: timesheet.project_name || timesheet.project,
-                taskName: timesheet.task_name || timesheet.task,
+                activityName: timesheet.activity_name || timesheet.activity,
                 color: projectColors[timesheet.project] || '#6b7280',
                 date: timesheet.date,
                 startHour: startHour,
@@ -63,17 +63,17 @@ function initializeExistingTimeBlocks() {
 }
 
 function setupDragAndDrop() {
-    // Setup drag start for task blocks
-    document.querySelectorAll('.task-block').forEach(block => {
+    // Setup drag start for activity blocks
+    document.querySelectorAll('.activity-block').forEach(block => {
         block.addEventListener('dragstart', function(e) {
             draggedElement = this;
             this.classList.add('dragging');
             
             e.dataTransfer.setData('text/plain', JSON.stringify({
                 project: this.dataset.project,
-                task: this.dataset.task,
+                activity: this.dataset.activity,
                 projectName: this.dataset.projectName,
-                taskName: this.dataset.taskName,
+                activityName: this.dataset.activityName,
                 color: this.dataset.color
             }));
         });
@@ -161,7 +161,7 @@ function showDragPreview(timeSlot) {
     preview.innerHTML = `
         <div style="padding: 0.5rem; font-size: 0.75rem; color: #3b82f6; font-weight: 500;">
             ${dragState.draggedData.projectName}<br>
-            ${dragState.draggedData.taskName}<br>
+            ${dragState.draggedData.activityName}<br>
             <span style="font-size: 0.625rem;">${duration}h</span>
         </div>
     `;
@@ -212,28 +212,28 @@ function dropTimeBlock(event) {
     const hour = parseInt(timeSlot.dataset.hour);
     const minute = parseInt(timeSlot.dataset.minute || 0);
     
-    let taskData;
+    let activityData;
     try {
-        taskData = JSON.parse(event.dataTransfer.getData('text/plain'));
+        activityData = JSON.parse(event.dataTransfer.getData('text/plain'));
     } catch (e) {
         // Fallback to global data if dataTransfer fails
-        taskData = window.currentDragData;
+        activityData = window.currentDragData;
     }
     
     // Use global data as backup if dataTransfer data is incomplete
-    if (!taskData || !taskData.dragOffset) {
-        taskData = window.currentDragData || taskData;
+    if (!activityData || !activityData.dragOffset) {
+        activityData = window.currentDragData || activityData;
     }
     
-    console.log('Drop taskData:', taskData);
+    console.log('Drop activityData:', activityData);
     
     // Calculate the actual placement position based on drag offset with 30-minute precision
     let finalStartHour = hour;
     let finalStartMinute = minute;
     
-    if (taskData && taskData.isExistingBlock && taskData.dragOffset) {
+    if (activityData && activityData.isExistingBlock && activityData.dragOffset) {
         // Calculate offset in 30-minute increments (30px = 0.5 hours)
-        const offsetInMinutes = Math.round(taskData.dragOffset.y / 30) * 30; // Snap to 30-minute intervals
+        const offsetInMinutes = Math.round(activityData.dragOffset.y / 30) * 30; // Snap to 30-minute intervals
         const offsetHours = Math.floor(offsetInMinutes / 60);
         const offsetMinutes = offsetInMinutes % 60;
         
@@ -242,16 +242,16 @@ function dropTimeBlock(event) {
         finalStartHour = Math.max(0, Math.floor(targetTotalMinutes / 60));
         finalStartMinute = Math.max(0, targetTotalMinutes % 60);
         
-        console.log(`Drag offset: ${taskData.dragOffset.y}px, offsetInMinutes: ${offsetInMinutes}, finalStartHour: ${finalStartHour}, finalStartMinute: ${finalStartMinute}`);
+        console.log(`Drag offset: ${activityData.dragOffset.y}px, offsetInMinutes: ${offsetInMinutes}, finalStartHour: ${finalStartHour}, finalStartMinute: ${finalStartMinute}`);
     }
     
-    if (taskData.isExistingBlock) {
-        if (taskData.isDuplicate) {
+    if (activityData.isExistingBlock) {
+        if (activityData.isDuplicate) {
             // Duplicating an existing time block (right-click drag)
             const originalBlock = document.querySelector('.time-block.duplicating');
             
             // Check for overlaps before creating duplicate (don't exclude original since it's a copy)
-            const hasOverlap = checkTimeOverlap(dayColumn, finalStartHour, finalStartMinute, taskData.duration);
+            const hasOverlap = checkTimeOverlap(dayColumn, finalStartHour, finalStartMinute, activityData.duration);
             
             if (hasOverlap) {
                 showToast('Cannot place duplicate here - time slot is already occupied', 'warning');
@@ -260,11 +260,11 @@ function dropTimeBlock(event) {
             
             // Create the duplicate with preserved data but no ID (new entry)
             const newTimeBlock = createTimeBlock({
-                ...taskData,
+                ...activityData,
                 date: date,
                 startHour: finalStartHour,
                 startMinute: finalStartMinute,
-                duration: taskData.duration, // Keep original duration
+                duration: activityData.duration, // Keep original duration
                 id: null // Remove ID so it's treated as a new entry
             });
             
@@ -286,7 +286,7 @@ function dropTimeBlock(event) {
                 originalBlock.remove();
                 
                 // Now check for overlap without the original block in the DOM
-                const hasOverlapAfterMove = checkTimeOverlap(dayColumn, finalStartHour, finalStartMinute, taskData.duration);
+                const hasOverlapAfterMove = checkTimeOverlap(dayColumn, finalStartHour, finalStartMinute, activityData.duration);
                 
                 if (hasOverlapAfterMove) {
                     // Restore the original block to its position
@@ -306,11 +306,11 @@ function dropTimeBlock(event) {
             
             // Create the moved time block with preserved data and calculated position
             createTimeBlock({
-                ...taskData,
+                ...activityData,
                 date: date,
                 startHour: finalStartHour,
                 startMinute: finalStartMinute,
-                duration: taskData.duration // Keep original duration
+                duration: activityData.duration // Keep original duration
             });
             
             showToast('Time entry moved successfully!', 'success');
@@ -318,7 +318,7 @@ function dropTimeBlock(event) {
             setTimeout(() => saveTimesheet(), 500);
         }
     } else {
-        // Creating new time block from sidebar task
+        // Creating new time block from sidebar activity
         // Check for overlaps before creating new block
         const hasOverlap = checkTimeOverlap(dayColumn, hour, 0, 1); // Default 1 hour
         
@@ -328,7 +328,7 @@ function dropTimeBlock(event) {
         }
         
         createTimeBlock({
-            ...taskData,
+            ...activityData,
             date: date,
             startHour: hour,
             startMinute: 0,
@@ -348,7 +348,7 @@ function createTimeBlock(data) {
     
     // Set content
     timeBlock.querySelector('.time-block-header').textContent = data.projectName;
-    timeBlock.querySelector('.time-block-task').textContent = data.taskName;
+    timeBlock.querySelector('.time-block-activity').textContent = data.activityName;
     timeBlock.querySelector('.time-block-duration').textContent = `${data.duration}h`;
     
     // Show description if duration is 1.5+ hours and description exists
@@ -368,7 +368,7 @@ function createTimeBlock(data) {
     
     // Add data attributes
     timeBlock.dataset.project = data.project;
-    timeBlock.dataset.task = data.task;
+    timeBlock.dataset.activity = data.activity;
     timeBlock.dataset.duration = data.duration;
     timeBlock.dataset.startHour = data.startHour;
     timeBlock.dataset.startMinute = data.startMinute || 0;
@@ -446,9 +446,9 @@ function setupTimeBlockDragging(timeBlock) {
         
         const timeBlockData = {
             project: this.dataset.project,
-            task: this.dataset.task,
+            activity: this.dataset.activity,
             projectName: this.querySelector('.time-block-header').textContent,
-            taskName: this.querySelector('.time-block-task').textContent,
+            activityName: this.querySelector('.time-block-activity').textContent,
             color: projectColor,
             duration: parseFloat(this.dataset.duration),
             startHour: parseInt(this.dataset.startHour),
@@ -719,9 +719,9 @@ function setupCloneDragging(cloneBtn, sourceTimeBlock) {
         // Store the source time block data for cloning
         const timeBlockData = {
             project: sourceTimeBlock.dataset.project,
-            task: sourceTimeBlock.dataset.task,
+            activity: sourceTimeBlock.dataset.activity,
             projectName: sourceTimeBlock.querySelector('.time-block-header').textContent,
-            taskName: sourceTimeBlock.querySelector('.time-block-task').textContent,
+            activityName: sourceTimeBlock.querySelector('.time-block-activity').textContent,
             color: sourceTimeBlock.style.backgroundColor,
             duration: parseFloat(sourceTimeBlock.dataset.duration),
             startHour: parseInt(sourceTimeBlock.dataset.startHour),
@@ -899,9 +899,9 @@ function cloneTimeBlock(sourceBlock, direction) {
     // Create clone with same data
     const cloneData = {
         project: sourceBlock.dataset.project,
-        task: sourceBlock.dataset.task,
+        activity: sourceBlock.dataset.activity,
         projectName: sourceBlock.querySelector('.time-block-header').textContent,
-        taskName: sourceBlock.querySelector('.time-block-task').textContent,
+        activityName: sourceBlock.querySelector('.time-block-activity').textContent,
         color: sourceBlock.style.backgroundColor,
         date: targetDate,
         startHour: startHour,
@@ -962,11 +962,11 @@ function populateEditModal(timeBlock) {
         projectSelect.appendChild(option);
     });
     
-    // Update task options based on selected project
+    // Update activity options based on selected project
     updateTaskOptions();
     
-    // Set current task
-    document.getElementById('editTask').value = timeBlock.dataset.task;
+    // Set current activity
+    document.getElementById('editTask').value = timeBlock.dataset.activity;
     
     // Set times
     document.getElementById('editStartTime').value = 
@@ -980,21 +980,21 @@ function populateEditModal(timeBlock) {
 
 function updateTaskOptions() {
     const projectSelect = document.getElementById('editProject');
-    const taskSelect = document.getElementById('editTask');
+    const activitySelect = document.getElementById('editTask');
     const selectedProject = projectSelect.value;
     
-    taskSelect.innerHTML = '<option value="">Select Task</option>';
+    activitySelect.innerHTML = '<option value="">Select Task</option>';
     
     if (selectedProject) {
         const projectGroup = document.querySelector(`[data-project="${selectedProject}"]`);
         if (projectGroup) {
-            projectGroup.querySelectorAll('.task-block').forEach(taskBlock => {
-                const taskId = taskBlock.dataset.task;
-                const taskName = taskBlock.dataset.taskName;
+            projectGroup.querySelectorAll('.activity-block').forEach(activityBlock => {
+                const activityId = activityBlock.dataset.activity;
+                const activityName = activityBlock.dataset.activityName;
                 const option = document.createElement('option');
-                option.value = taskId;
-                option.textContent = taskName;
-                taskSelect.appendChild(option);
+                option.value = activityId;
+                option.textContent = activityName;
+                activitySelect.appendChild(option);
             });
         }
     }
@@ -1009,12 +1009,12 @@ function saveTimeBlockEdit() {
     if (!currentEditingBlock) return;
     
     const projectSelect = document.getElementById('editProject');
-    const taskSelect = document.getElementById('editTask');
+    const activitySelect = document.getElementById('editTask');
     const startTime = document.getElementById('editStartTime').value;
     const endTime = document.getElementById('editEndTime').value;
     const description = document.getElementById('editDescription').value;
     
-    if (!projectSelect.value || !taskSelect.value || !startTime || !endTime) {
+    if (!projectSelect.value || !activitySelect.value || !startTime || !endTime) {
         alert('Please fill in all required fields');
         return;
     }
@@ -1029,9 +1029,9 @@ function saveTimeBlockEdit() {
         return;
     }
     
-    // Get project and task names
+    // Get project and activity names
     const projectName = projectSelect.options[projectSelect.selectedIndex].text;
-    const taskName = taskSelect.options[taskSelect.selectedIndex].text;
+    const activityName = activitySelect.options[activitySelect.selectedIndex].text;
     
     // Get project color
     const projectGroup = document.querySelector(`[data-project="${projectSelect.value}"]`);
@@ -1041,7 +1041,7 @@ function saveTimeBlockEdit() {
     
     // Update the time block
     currentEditingBlock.dataset.project = projectSelect.value;
-    currentEditingBlock.dataset.task = taskSelect.value;
+    currentEditingBlock.dataset.activity = activitySelect.value;
     currentEditingBlock.dataset.startHour = startHour;
     currentEditingBlock.dataset.startMinute = startMinute;
     currentEditingBlock.dataset.duration = duration;
@@ -1049,7 +1049,7 @@ function saveTimeBlockEdit() {
     
     // Update visual content
     currentEditingBlock.querySelector('.time-block-header').textContent = projectName;
-    currentEditingBlock.querySelector('.time-block-task').textContent = taskName;
+    currentEditingBlock.querySelector('.time-block-activity').textContent = activityName;
     currentEditingBlock.querySelector('.time-block-duration').textContent = `${duration.toFixed(1)}h`;
     
     // Update description visibility based on new duration
@@ -1252,7 +1252,7 @@ function saveTimesheet() {
             id: block.dataset.id || null,
             temp_id: tempId,
             project: block.dataset.project,
-            task: block.dataset.task,
+            activity: block.dataset.activity,
             date: date,
             start_time: `${String(startHour).padStart(2, '0')}:${String(startMinute).padStart(2, '0')}`,
             duration: duration,
@@ -1297,18 +1297,18 @@ function addQuickTime(hours) {
     const today = new Date().toISOString().split('T')[0];
     const currentHour = new Date().getHours();
     
-    // Find first available project/task
-    const firstTaskBlock = document.querySelector('.task-block');
+    // Find first available project/activity
+    const firstTaskBlock = document.querySelector('.activity-block');
     if (!firstTaskBlock) {
-        alert('No tasks available. Please create a project and task first.');
+        alert('No activities available. Please create a project and activity first.');
         return;
     }
     
-    const taskData = {
+    const activityData = {
         project: firstTaskBlock.dataset.project,
-        task: firstTaskBlock.dataset.task,
+        activity: firstTaskBlock.dataset.activity,
         projectName: firstTaskBlock.dataset.projectName,
-        taskName: firstTaskBlock.dataset.taskName,
+        activityName: firstTaskBlock.dataset.activityName,
         color: firstTaskBlock.dataset.color,
         date: today,
         startHour: Math.max(8, currentHour),
@@ -1316,7 +1316,7 @@ function addQuickTime(hours) {
         duration: hours
     };
     
-    createTimeBlock(taskData);
+    createTimeBlock(activityData);
     updateDaySummaries();
 }
 
@@ -1409,9 +1409,9 @@ function rebuildCalendar(startHour, endHour) {
         const dayColumn = block.closest('.day-column');
         existingBlocks.push({
             project: block.dataset.project,
-            task: block.dataset.task,
+            activity: block.dataset.activity,
             projectName: block.querySelector('.time-block-header').textContent,
-            taskName: block.querySelector('.time-block-task').textContent,
+            activityName: block.querySelector('.time-block-activity').textContent,
             color: block.style.backgroundColor,
             date: dayColumn.dataset.date,
             startHour: parseInt(block.dataset.startHour),
@@ -1482,7 +1482,7 @@ function createTimeBlockWithRange(data, startHour) {
     
     // Set content
     timeBlock.querySelector('.time-block-header').textContent = data.projectName;
-    timeBlock.querySelector('.time-block-task').textContent = data.taskName;
+    timeBlock.querySelector('.time-block-activity').textContent = data.activityName;
     timeBlock.querySelector('.time-block-duration').textContent = `${data.duration}h`;
     
     // Set style with adjusted positioning
@@ -1492,7 +1492,7 @@ function createTimeBlockWithRange(data, startHour) {
     
     // Add data attributes
     timeBlock.dataset.project = data.project;
-    timeBlock.dataset.task = data.task;
+    timeBlock.dataset.activity = data.activity;
     timeBlock.dataset.duration = data.duration;
     timeBlock.dataset.startHour = data.startHour;
     timeBlock.dataset.startMinute = data.startMinute || 0;
@@ -1515,7 +1515,7 @@ function createTimeBlockWithRange(data, startHour) {
 // Quick Entry Functions
 let quickEntryData = {
     selectedProject: null,
-    selectedTask: null,
+    selectedactivity: null,
     targetTimeSlot: null,
     targetDate: null,
     targetHour: null
@@ -1570,7 +1570,7 @@ function populateQuickEntryProjects() {
         projectList.appendChild(projectItem);
     });
     
-    // Clear task list
+    // Clear activity list
     document.getElementById('quickTaskList').innerHTML = '<div style="padding: 1rem; text-align: center; color: #64748b;">Select a project first</div>';
     document.getElementById('createQuickEntryBtn').disabled = true;
 }
@@ -1589,60 +1589,60 @@ function selectQuickEntryProject(projectElement, projectId, projectName, project
         color: projectColor
     };
     
-    // Populate tasks for selected project
+    // Populate activities for selected project
     populateQuickEntryTasks(projectId);
 }
 
 function populateQuickEntryTasks(projectId) {
-    const taskList = document.getElementById('quickTaskList');
-    taskList.innerHTML = '';
+    const activityList = document.getElementById('quickTaskList');
+    activityList.innerHTML = '';
     
-    // Find the project group and get its tasks
+    // Find the project group and get its activities
     const projectGroup = document.querySelector(`[data-project="${projectId}"]`);
     if (projectGroup) {
-        const tasks = projectGroup.querySelectorAll('.task-block');
+        const activities = projectGroup.querySelectorAll('.activity-block');
         
-        if (tasks.length === 0) {
-            taskList.innerHTML = '<div style="padding: 1rem; text-align: center; color: #64748b;">No tasks available for this project</div>';
+        if (activities.length === 0) {
+            activityList.innerHTML = '<div style="padding: 1rem; text-align: center; color: #64748b;">No activities available for this project</div>';
             return;
         }
         
-        tasks.forEach(taskBlock => {
-            const taskId = taskBlock.dataset.task;
-            const taskName = taskBlock.dataset.taskName;
+        activities.forEach(activityBlock => {
+            const activityId = activityBlock.dataset.activity;
+            const activityName = activityBlock.dataset.activityName;
             
-            const taskItem = document.createElement('div');
-            taskItem.className = 'quick-entry-item';
-            taskItem.dataset.task = taskId;
-            taskItem.innerHTML = `
+            const activityItem = document.createElement('div');
+            activityItem.className = 'quick-entry-item';
+            activityItem.dataset.activity = activityId;
+            activityItem.innerHTML = `
                 <div class="quick-entry-item-color" style="background-color: ${quickEntryData.selectedProject.color}"></div>
-                <span>${taskName}</span>
+                <span>${activityName}</span>
             `;
             
-            taskItem.addEventListener('click', function() {
-                selectQuickEntryTask(this, taskId, taskName);
+            activityItem.addEventListener('click', function() {
+                selectQuickEntryTask(this, activityId, activityName);
             });
             
-            taskList.appendChild(taskItem);
+            activityList.appendChild(activityItem);
         });
     }
     
-    // Reset task selection and disable create button
+    // Reset activity selection and disable create button
     quickEntryData.selectedTask = null;
     document.getElementById('createQuickEntryBtn').disabled = true;
 }
 
-function selectQuickEntryTask(taskElement, taskId, taskName) {
+function selectQuickEntryTask(activityElement, activityId, activityName) {
     // Clear previous selection
     document.querySelectorAll('#quickTaskList .quick-entry-item').forEach(item => {
         item.classList.remove('selected');
     });
     
-    // Select current task
-    taskElement.classList.add('selected');
+    // Select current activity
+    activityElement.classList.add('selected');
     quickEntryData.selectedTask = {
-        id: taskId,
-        name: taskName
+        id: activityId,
+        name: activityName
     };
     
     // Enable create button
@@ -1651,7 +1651,7 @@ function selectQuickEntryTask(taskElement, taskId, taskName) {
 
 function createQuickEntry() {
     if (!quickEntryData.selectedProject || !quickEntryData.selectedTask) {
-        showToast('Please select both project and task', 'warning');
+        showToast('Please select both project and activity', 'warning');
         return;
     }
     
@@ -1667,9 +1667,9 @@ function createQuickEntry() {
     // Create the time block
     const newTimeBlock = createTimeBlock({
         project: quickEntryData.selectedProject.id,
-        task: quickEntryData.selectedTask.id,
+        activity: quickEntryData.selectedTask.id,
         projectName: quickEntryData.selectedProject.name,
-        taskName: quickEntryData.selectedTask.name,
+        activityName: quickEntryData.selectedTask.name,
         color: quickEntryData.selectedProject.color,
         date: quickEntryData.targetDate,
         startHour: quickEntryData.targetHour,
@@ -1694,7 +1694,7 @@ function closeQuickEntry() {
     document.getElementById('quickEntryPopup').style.display = 'none';
     quickEntryData = {
         selectedProject: null,
-        selectedTask: null,
+        selectedActivity: null,
         targetTimeSlot: null,
         targetDate: null,
         targetHour: null

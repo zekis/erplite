@@ -36,7 +36,7 @@ class ModalComponent {
         // Setup project change handler
         const projectSelect = document.getElementById('editProject');
         if (projectSelect) {
-            projectSelect.addEventListener('change', () => this.updateTaskOptions());
+            projectSelect.addEventListener('change', () => this.updateActivityOptions());
         }
     }
     
@@ -102,13 +102,13 @@ class ModalComponent {
         // Populate project dropdown
         this.populateProjectDropdown(timeBlock.dataset.project);
         
-        // Update task options based on selected project
-        this.updateTaskOptions();
+        // Update activity options based on selected project
+        this.updateActivityOptions();
         
-        // Set current task
-        const taskSelect = document.getElementById('editTask');
-        if (taskSelect) {
-            taskSelect.value = timeBlock.dataset.task;
+        // Set current activity
+        const activitySelect = document.getElementById('editActivity');
+        if (activitySelect) {
+            activitySelect.value = timeBlock.dataset.activity;
         }
         
         // Set times
@@ -174,28 +174,27 @@ class ModalComponent {
     }
     
     /**
-     * Update task options based on selected project
+     * Update activity options based on selected project
      */
-    updateTaskOptions() {
+    updateActivityOptions() {
         const projectSelect = document.getElementById('editProject');
-        const taskSelect = document.getElementById('editTask');
+        const activitySelect = document.getElementById('editActivity');
         
-        if (!projectSelect || !taskSelect) return;
+        if (!projectSelect || !activitySelect) return;
         
         const selectedProject = projectSelect.value;
         
-        taskSelect.innerHTML = '<option value="">Select Task</option>';
+        activitySelect.innerHTML = '<option value="">Select Activity</option>';
         
-        if (selectedProject) {
-            const projectGroup = document.querySelector(`[data-project="${selectedProject}"]`);
-            if (projectGroup) {
-                projectGroup.querySelectorAll('.task-block').forEach(taskBlock => {
-                    const taskId = taskBlock.dataset.task;
-                    const taskName = taskBlock.dataset.taskName;
+        if (selectedProject && this.app.state.projectsData) {
+            // Use API data instead of DOM elements
+            const projectData = this.app.state.projectsData[selectedProject];
+            if (projectData && projectData.activities) {
+                projectData.activities.forEach(activity => {
                     const option = document.createElement('option');
-                    option.value = taskId;
-                    option.textContent = taskName;
-                    taskSelect.appendChild(option);
+                    option.value = activity.name;
+                    option.textContent = activity.activity_name || activity.name;
+                    activitySelect.appendChild(option);
                 });
             }
         }
@@ -240,7 +239,7 @@ class ModalComponent {
      */
     getFormData() {
         const projectSelect = document.getElementById('editProject');
-        const taskSelect = document.getElementById('editTask');
+        const activitySelect = document.getElementById('editActivity');
         const startTimeInput = document.getElementById('editStartTime');
         const endTimeInput = document.getElementById('editEndTime');
         const descriptionInput = document.getElementById('editDescription');
@@ -251,9 +250,9 @@ class ModalComponent {
         
         return {
             project: projectSelect.value,
-            task: taskSelect.value,
+            activity: activitySelect.value,
             projectName: projectSelect.options[projectSelect.selectedIndex]?.text || '',
-            taskName: taskSelect.options[taskSelect.selectedIndex]?.text || '',
+            activityName: activitySelect.options[activitySelect.selectedIndex]?.text || '',
             startHour: startTime.hour,
             startMinute: startTime.minute,
             duration: duration,
@@ -268,7 +267,7 @@ class ModalComponent {
         const errors = [];
         
         if (!data.project) errors.push('Please select a project');
-        if (!data.task) errors.push('Please select a task');
+        if (!data.activity) errors.push('Please select a activity');
         if (data.duration <= 0) errors.push('End time must be after start time');
         if (data.startHour < 0 || data.startHour > 23) errors.push('Invalid start time');
         if (data.startMinute < 0 || data.startMinute > 59) errors.push('Invalid start time');
@@ -307,7 +306,7 @@ class ModalComponent {
         
         // Update data attributes
         this.currentEditingBlock.dataset.project = data.project;
-        this.currentEditingBlock.dataset.task = data.task;
+        this.currentEditingBlock.dataset.activity = data.activity;
         this.currentEditingBlock.dataset.startHour = data.startHour;
         this.currentEditingBlock.dataset.startMinute = data.startMinute;
         this.currentEditingBlock.dataset.duration = data.duration;
@@ -316,7 +315,7 @@ class ModalComponent {
         // Update visual appearance using TimeBlockManager
         this.app.managers.timeBlock.updateTimeBlock(this.currentEditingBlock, {
             projectName: data.projectName,
-            taskName: data.taskName,
+            activityName: data.activityName,
             duration: data.duration,
             description: data.description,
             color: projectColor,
@@ -452,9 +451,9 @@ window.closeEditModal = function() {
     }
 };
 
-window.updateTaskOptions = function() {
+window.updateActivityOptions = function() {
     if (window.app && window.app.components.modal) {
-        window.app.components.modal.updateTaskOptions();
+        window.app.components.modal.updateActivityOptions();
     }
 };
 

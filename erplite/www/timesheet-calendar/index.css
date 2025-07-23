@@ -94,17 +94,17 @@
     transform: rotate(-90deg);
 }
 
-.task-list {
+.activity-list {
     margin-left: 1.75rem;
     transition: all 0.3s ease;
 }
 
-.project-group.collapsed .task-list {
+.project-group.collapsed .activity-list {
     max-height: 0;
     overflow: hidden;
 }
 
-.task-block {
+.activity-block {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -120,17 +120,17 @@
     min-height: 48px; /* Ensure minimum height */
 }
 
-.task-block:hover {
+.activity-block:hover {
     border-color: #cbd5e1;
     transform: translateY(-1px);
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
 }
 
-.task-block:active {
+.activity-block:active {
     cursor: grabbing;
 }
 
-.task-block.dragging {
+.activity-block.dragging {
     opacity: 0.5;
     transform: rotate(5deg);
 }
@@ -148,14 +148,14 @@
     box-shadow: 0 0 0 2px #3b82f6;
 }
 
-.task-icon {
+.activity-icon {
     width: 0.75rem;
     height: 0.75rem;
     border-radius: 0.125rem;
     flex-shrink: 0;
 }
 
-.task-name {
+.activity-name {
     font-size: 0.875rem;
     color: #374151;
     flex: 1;
@@ -164,7 +164,7 @@
     text-overflow: ellipsis;
 }
 
-.task-priority {
+.activity-priority {
     font-size: 0.75rem;
     padding: 0.125rem 0.375rem;
     border-radius: 0.25rem;
@@ -498,7 +498,7 @@
     max-width: 100%;
 }
 
-.time-block-task {
+.time-block-activity {
     opacity: 0.8;
     color: #64748b;
     white-space: nowrap;
@@ -1340,7 +1340,7 @@
         font-weight: 700;
     }
     
-    .time-block-task {
+    .time-block-activity {
         font-size: 1rem;
         opacity: 0.9;
         line-height: 1.4;
