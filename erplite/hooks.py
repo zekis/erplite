@@ -16,9 +16,14 @@ add_to_apps_screen = [
 		"name": "erplite",
 		"logo": "/assets/erplite/images/erplite-logo.png",
 		"title": "ERPLite",
-		"route": "/todo",
+		"route": "/erplite",
 		"has_permission": "erplite.projects.api.has_timesheet_permission"
 	}
+]
+
+# Website route rules for Vue.js frontend
+website_route_rules = [
+	{"from_route": "/erplite/<path:app_path>", "to_route": "erplite"},
 ]
 
 # Includes in <head>

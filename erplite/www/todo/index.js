@@ -217,9 +217,9 @@ document.addEventListener('keydown', function(event) {
 // Handle page visibility changes
 document.addEventListener('visibilitychange', function() {
     if (!document.hidden && window.todoKanban) {
-        // Refresh data when page becomes visible again
+        // Only do quiet refresh when page becomes visible to avoid disrupting user interaction
         setTimeout(() => {
-            window.todoKanban.refreshTodos();
+            window.todoKanban.quietRefresh();
         }, 1000);
     }
 });
@@ -241,24 +241,16 @@ window.addEventListener('beforeunload', function() {
 // Enhanced drag and drop handlers - delegating to drag drop manager but keeping simple pattern
 let draggedCard = null;
 
-// Card expand/collapse functionality
+// Card expand/collapse functionality - only handle button clicks, not general card clicks
 window.handleCardClick = function(event) {
-    // Don't expand/collapse if clicking on interactive elements
-    if (event.target.matches('select, input, button, .card-action-btn, .expand-btn, .collapse-btn')) {
-        return;
-    }
-    
-    const card = event.currentTarget;
-    const isCollapsed = card.classList.contains('collapsed');
-    
-    if (isCollapsed) {
-        expandCard(card);
-    } else {
-        collapseCard(card);
-    }
+    // Do nothing - we only want expand/collapse to happen via the specific buttons
+    // This prevents accidental toggling when editing text or interacting with other elements
+    return;
 };
 
 function expandCard(card) {
+    const todoId = card.getAttribute('data-todo-id');
+    
     card.classList.remove('collapsed');
     card.classList.add('expanded');
     
@@ -270,9 +262,16 @@ function expandCard(card) {
         expandBtn.classList.remove('expand-btn');
         expandBtn.classList.add('collapse-btn');
     }
+    
+    // Notify column manager to save the expanded state
+    if (window.todoKanban && window.todoKanban.columnManager) {
+        window.todoKanban.columnManager.toggleCard(todoId, true);
+    }
 }
 
 function collapseCard(card) {
+    const todoId = card.getAttribute('data-todo-id');
+    
     card.classList.remove('expanded');
     card.classList.add('collapsed');
     
@@ -283,6 +282,11 @@ function collapseCard(card) {
         collapseBtn.title = 'Expand card';
         collapseBtn.classList.remove('collapse-btn');
         collapseBtn.classList.add('expand-btn');
+    }
+    
+    // Notify column manager to save the collapsed state
+    if (window.todoKanban && window.todoKanban.columnManager) {
+        window.todoKanban.columnManager.toggleCard(todoId, false);
     }
 }
 

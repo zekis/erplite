@@ -30,7 +30,6 @@ class TodoCardRenderer {
         // Ensure card is draggable (critical for browser drag functionality)
         card.draggable = true;
         card.setAttribute('draggable', 'true');
-        console.log('Card rendered with draggable:', card.draggable, card.getAttribute('draggable'), 'for todo:', todo.name);
         
         // Set custom color if available
         if (todo.color) {
@@ -155,8 +154,8 @@ class TodoCardRenderer {
             description.setAttribute('data-full-text', plainText);
             description.setAttribute('data-original-text', plainText);
             
-            // Show truncated text initially
-            description.textContent = TodoUtils.truncateText(plainText, 120);
+            // Show full text in expanded cards (no truncation)
+            description.textContent = plainText;
             description.title = plainText; // Full text on hover
             
             // Make description editable
@@ -356,7 +355,7 @@ class TodoCardRenderer {
                 e.target.classList.add('editing');
             });
             
-            // Handle blur - save changes and truncate if needed
+            // Handle blur - save changes and keep full text visible
             description.addEventListener('blur', (e) => {
                 const card = e.target.closest('.todo-card');
                 if (card) {
@@ -375,8 +374,8 @@ class TodoCardRenderer {
                 e.target.setAttribute('data-full-text', newText);
                 e.target.setAttribute('data-original-text', newText);
                 
-                // Show truncated version again
-                e.target.textContent = TodoUtils.truncateText(newText, 120);
+                // Keep full text visible (no truncation in expanded cards)
+                e.target.textContent = newText;
                 e.target.title = newText; // Update hover text
             });
             

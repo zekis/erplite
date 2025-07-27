@@ -1,0 +1,34 @@
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+/* Custom styles for ERPLite */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+/* Frappe UI overrides */
+.frappe-card {
+  @apply bg-white rounded-lg shadow-sm border border-gray-200;
+}
+
+.frappe-button {
+  @apply px-4 py-2 rounded-md font-medium transition-colors;
+}
+
+.frappe-button-primary {
+  @apply bg-blue-600 text-white hover:bg-blue-700;
+}
+
+.frappe-button-secondary {
+  @apply bg-gray-100 text-gray-700 hover:bg-gray-200;
+}

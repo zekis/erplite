@@ -140,6 +140,9 @@ class SchedulerApp {
         
         if (!fixedLeftContainer || !scrollableRightContainer) return;
         
+        // Preserve shift context during re-renders
+        const preservedShiftContext = this.shiftContext;
+        
         fixedLeftContainer.innerHTML = '';
         scrollableRightContainer.innerHTML = '';
         
@@ -154,6 +157,21 @@ class SchedulerApp {
         
         // Render time block cards after all rows are created
         this.timeBlockManager.renderTimeBlockCards();
+        
+        // Restore shift context after re-render
+        if (preservedShiftContext) {
+            this.shiftContext = preservedShiftContext;
+            
+            // Restore visual selection if context exists
+            if (preservedShiftContext.selectedDates) {
+                preservedShiftContext.selectedDates.forEach(date => {
+                    const cell = document.querySelector(`[data-date="${date}"][data-row-index="${preservedShiftContext.rowIndex}"]`);
+                    if (cell) {
+                        cell.classList.add('drag-selected');
+                    }
+                });
+            }
+        }
     }
     
     // Time block methods moved to TimeBlockManager class
@@ -197,19 +215,17 @@ class SchedulerApp {
             cell.classList.add('weekend');
         }
         
-        // Add drag and drop attributes for both templates and entries
-        cell.addEventListener('drop', (e) => this.handleCellDrop(e, rowIndex, date));
-        cell.addEventListener('dragover', (e) => e.preventDefault());
-        cell.addEventListener('dragenter', (e) => {
-            e.preventDefault();
-            if (row.project && row.activity && row.type === 'activity-row') {
-                cell.classList.add('drop-zone');
-            }
-        });
-        cell.addEventListener('dragleave', (e) => {
-            e.preventDefault();
-            cell.classList.remove('drop-zone');
-        });
+        // Remove old drag and drop handlers - we'll use new click/drag system
+        // Add new click and drag selection handlers for activity rows
+        if (row.type === 'activity-row' && row.project && row.activity) {
+            cell.classList.add('interactive');
+            
+            // Single click handler
+            cell.addEventListener('click', (e) => this.handleCellClick(e, rowIndex, date));
+            
+            // Drag selection handlers
+            cell.addEventListener('mousedown', (e) => this.handleCellMouseDown(e, rowIndex, date));
+        }
         
         const entriesContainer = document.createElement('div');
         entriesContainer.className = 'day-entries';
@@ -848,10 +864,18 @@ class SchedulerApp {
         
         const hours = typeof entry === 'object' ? entry.hours : entry;
         const description = typeof entry === 'object' ? entry.description : '';
+        const startTime = typeof entry === 'object' ? entry.start_time || '09:00' : '09:00';
+        const endTime = typeof entry === 'object' ? entry.end_time || '17:00' : '17:00';
+        const isNightShift = typeof entry === 'object' ? entry.is_night_shift || false : false;
+        
+        // Add night shift class if applicable
+        if (isNightShift) {
+            element.classList.add('night-shift');
+        }
         
         element.innerHTML = `
             <div class="time-entry-hours">${hours}h</div>
-            <div class="time-entry-time">9:00 - 17:00</div>
+            <div class="time-entry-time">${startTime} - ${endTime}</div>
         `;
         
         // Add click handler for editing
@@ -939,8 +963,6 @@ class SchedulerApp {
         if (startCell) {
             startCell.classList.add('drag-selecting');
         }
-        
-        console.log('Started drag selection from:', startDate);
     }
     
     /**
@@ -992,8 +1014,6 @@ class SchedulerApp {
                 dayCell.classList.add('drag-selected');
             }
         });
-        
-        console.log('Drag selection updated:', this.dragSelection.selectedDates);
     }
     
     /**
@@ -1383,6 +1403,389 @@ class SchedulerApp {
         scrollableRightBody.addEventListener('scroll', this.rightScrollHandler);
         
         console.log('Scroll synchronization setup complete');
+    }
+
+    /**
+     * Handle single cell click - show context menu
+     */
+    handleCellClick(event, rowIndex, date) {
+        event.preventDefault();
+        event.stopPropagation();
+        
+        const row = this.state.scheduleRows[rowIndex];
+        
+        // Check if row has project and activity
+        if (!row.project || !row.activity) {
+            this.showToast('Please select project and activity first', 'warning');
+            return;
+        }
+        
+        // Store context for shift creation
+        this.shiftContext = {
+            selectedDates: [date],
+            rowIndex: rowIndex,
+            row: row
+        };
+        
+        // Show context menu
+        this.showShiftContextMenu(event.clientX, event.clientY);
+    }
+
+    /**
+     * Handle mouse down for drag selection
+     */
+    handleCellMouseDown(event, rowIndex, date) {
+        // Only start drag on left mouse button
+        if (event.button !== 0) return;
+        
+        const row = this.state.scheduleRows[rowIndex];
+        
+        // Check if row has project and activity
+        if (!row.project || !row.activity) {
+            this.showToast('Please select project and activity first', 'warning');
+            return;
+        }
+        
+        // Prevent default to avoid text selection
+        event.preventDefault();
+        
+        // Initialize drag selection
+        this.dragSelection = {
+            active: true,
+            rowIndex: rowIndex,
+            startDate: date,
+            currentDate: date,
+            selectedDates: [date],
+            startX: event.clientX,
+            startY: event.clientY
+        };
+        
+        // Add document event listeners
+        this.boundHandleDragSelection = this.handleDragSelection.bind(this);
+        this.boundEndDragSelection = this.endDragSelection.bind(this);
+        
+        document.addEventListener('mousemove', this.boundHandleDragSelection);
+        document.addEventListener('mouseup', this.boundEndDragSelection);
+        
+        // Prevent text selection
+        document.body.classList.add('no-select');
+        
+        // Mark starting cell
+        const cell = event.target.closest('.day-cell');
+        if (cell) {
+            cell.classList.add('drag-selecting');
+        }
+    }
+
+    /**
+     * End drag selection and show context menu
+     */
+    endDragSelection(event) {
+        if (!this.dragSelection || !this.dragSelection.active) return;
+        
+        // Clean up event listeners
+        document.removeEventListener('mousemove', this.boundHandleDragSelection);
+        document.removeEventListener('mouseup', this.boundEndDragSelection);
+        
+        // Restore text selection
+        document.body.classList.remove('no-select');
+        
+        // Convert drag-selecting to drag-selected and keep styling
+        document.querySelectorAll('.day-cell.drag-selecting').forEach(cell => {
+            cell.classList.remove('drag-selecting');
+            cell.classList.add('drag-selected');
+        });
+        
+        const selectedDates = this.dragSelection.selectedDates;
+        const rowIndex = this.dragSelection.rowIndex;
+        const row = this.state.scheduleRows[rowIndex];
+        
+        // Store context for shift creation
+        this.shiftContext = {
+            selectedDates: selectedDates,
+            rowIndex: rowIndex,
+            row: row
+        };
+        
+        // Reset drag selection but keep the visual selection
+        this.dragSelection = null;
+        
+        // Show context menu at mouse position
+        this.showShiftContextMenu(event.clientX, event.clientY);
+    }
+
+    /**
+     * Show shift context menu
+     */
+    showShiftContextMenu(x, y) {
+        const menu = document.getElementById('shiftContextMenu');
+        if (!menu) return;
+        
+        // Position menu
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
+        menu.style.display = 'block';
+        
+        // Ensure menu stays within viewport
+        const rect = menu.getBoundingClientRect();
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        
+        if (rect.right > viewportWidth) {
+            menu.style.left = `${x - rect.width}px`;
+        }
+        if (rect.bottom > viewportHeight) {
+            menu.style.top = `${y - rect.height}px`;
+        }
+        
+        // Hide menu when clicking outside
+        setTimeout(() => {
+            document.addEventListener('click', this.hideShiftContextMenu.bind(this), { once: true });
+        }, 10);
+    }
+
+    /**
+     * Hide shift context menu
+     */
+    hideShiftContextMenu(clearContext = true) {
+        const menu = document.getElementById('shiftContextMenu');
+        if (menu) {
+            menu.style.display = 'none';
+        }
+        
+        // Only clear selection and context if explicitly requested (when canceling, not when opening dialog)
+        if (clearContext) {
+            // Clear selection styling when menu is dismissed
+            document.querySelectorAll('.day-cell.drag-selected').forEach(cell => {
+                cell.classList.remove('drag-selected');
+            });
+            
+            // Clear shift context
+            this.shiftContext = null;
+        }
+    }
+
+    /**
+     * Open create shift dialog
+     */
+    openCreateShiftDialog() {
+        // Hide the context menu but don't clear the selection
+        const menu = document.getElementById('shiftContextMenu');
+        if (menu) {
+            menu.style.display = 'none';
+        }
+        
+        if (!this.shiftContext) return;
+        
+        const modal = document.getElementById('createShiftModal');
+        const dateRangeDisplay = document.getElementById('shiftDateRange');
+        
+        // Store context in modal data attributes for persistence
+        modal.dataset.shiftContext = JSON.stringify(this.shiftContext);
+        
+        // Display selected dates
+        const dates = this.shiftContext.selectedDates;
+        let dateText;
+        if (dates.length === 1) {
+            dateText = `Selected Date: ${this.formatDateForDisplay(dates[0])}`;
+        } else {
+            const startDate = dates[0];
+            const endDate = dates[dates.length - 1];
+            dateText = `Selected Dates: ${this.formatDateForDisplay(startDate)} to ${this.formatDateForDisplay(endDate)} (${dates.length} days)`;
+        }
+        dateRangeDisplay.textContent = dateText;
+        
+        // Reset form
+        document.getElementById('shiftStartTime').value = '09:00';
+        document.getElementById('shiftEndTime').value = '17:00';
+        document.getElementById('nightShiftToggle').checked = false;
+        document.getElementById('shiftNotes').value = '';
+        
+        // Calculate initial hours
+        this.calculateShiftHours();
+        
+        // Add event listeners for time changes
+        document.getElementById('shiftStartTime').addEventListener('change', this.calculateShiftHours.bind(this));
+        document.getElementById('shiftEndTime').addEventListener('change', this.calculateShiftHours.bind(this));
+        
+        // Show modal
+        modal.style.display = 'block';
+    }
+
+    /**
+     * Close shift modal
+     */
+    closeShiftModal() {
+        const modal = document.getElementById('createShiftModal');
+        modal.style.display = 'none';
+        
+        // Clear selection styling when modal is closed
+        document.querySelectorAll('.day-cell.drag-selected').forEach(cell => {
+            cell.classList.remove('drag-selected');
+        });
+        
+        // Clean up context
+        this.shiftContext = null;
+    }
+
+    /**
+     * Calculate shift hours
+     */
+    calculateShiftHours() {
+        const startTime = document.getElementById('shiftStartTime').value;
+        const endTime = document.getElementById('shiftEndTime').value;
+        
+        if (!startTime || !endTime) return;
+        
+        const start = this.timeToMinutes(startTime);
+        const end = this.timeToMinutes(endTime);
+        
+        let durationMinutes;
+        if (end >= start) {
+            durationMinutes = end - start;
+        } else {
+            // Handle overnight shifts
+            durationMinutes = (24 * 60) - start + end;
+        }
+        
+        const hours = durationMinutes / 60;
+        document.getElementById('calculatedHours').textContent = hours.toFixed(1);
+    }
+
+    /**
+     * Convert time string to minutes
+     */
+    timeToMinutes(timeString) {
+        const [hours, minutes] = timeString.split(':').map(Number);
+        return hours * 60 + minutes;
+    }
+
+    /**
+     * Save shift
+     */
+    async saveShift() {
+        // Get context from modal data attribute (stored when dialog opened)
+        const modal = document.getElementById('createShiftModal');
+        let shiftContext = null;
+        
+        if (modal && modal.dataset.shiftContext) {
+            try {
+                shiftContext = JSON.parse(modal.dataset.shiftContext);
+            } catch (e) {
+                console.error('Failed to parse shift context from modal:', e);
+                return;
+            }
+        }
+        
+        if (!shiftContext) {
+            return;
+        }
+        
+        const startTime = document.getElementById('shiftStartTime').value;
+        const endTime = document.getElementById('shiftEndTime').value;
+        const isNightShift = document.getElementById('nightShiftToggle').checked;
+        const notes = document.getElementById('shiftNotes').value;
+        
+        // Calculate hours
+        const start = this.timeToMinutes(startTime);
+        const end = this.timeToMinutes(endTime);
+        let durationMinutes;
+        if (end >= start) {
+            durationMinutes = end - start;
+        } else {
+            durationMinutes = (24 * 60) - start + end;
+        }
+        const hours = durationMinutes / 60;
+        
+        const row = shiftContext.row;
+        const dates = shiftContext.selectedDates;
+        
+        console.log('Saving shift for row:', row);
+        console.log('Selected dates:', dates);
+        console.log('Shift hours:', hours);
+        
+        try {
+            this.setLoading(true);
+            
+            // Create shift entries for all selected dates
+            if (!row.dailyEntries) {
+                row.dailyEntries = {};
+            }
+            
+            dates.forEach(date => {
+                row.dailyEntries[date] = {
+                    hours: hours,
+                    start_time: startTime,
+                    end_time: endTime,
+                    description: notes,
+                    status: "planned",
+                    is_night_shift: isNightShift
+                };
+            });
+            
+            console.log('Updated dailyEntries:', row.dailyEntries);
+            
+            // Update the Schedule Row in database if it exists
+            if (row.scheduleRowId) {
+                const response = await this.apiCall('erplite.scheduler.api.update_schedule_row_entries', {
+                    schedule_row: row.scheduleRowId,
+                    entries_json: JSON.stringify(row.dailyEntries)
+                });
+                
+                if (response && response.success) {
+                    this.showToast(`Shift created for ${dates.length} day${dates.length > 1 ? 's' : ''}!`, 'success');
+                    this.closeShiftModal();
+                    this.renderScheduleRows();
+                } else {
+                    this.showToast('Failed to save shift', 'error');
+                }
+            } else {
+                // Create schedule row first, then add entries
+                const createRowResponse = await this.apiCall('erplite.scheduler.api.create_schedule_row_entry', {
+                    project: row.project,
+                    activity: row.activity,
+                    resource: row.resource,
+                    role: row.role
+                });
+                
+                if (createRowResponse && createRowResponse.success) {
+                    row.scheduleRowId = createRowResponse.name;
+                    
+                    const response = await this.apiCall('erplite.scheduler.api.update_schedule_row_entries', {
+                        schedule_row: row.scheduleRowId,
+                        entries_json: JSON.stringify(row.dailyEntries)
+                    });
+                    
+                    if (response && response.success) {
+                        this.showToast(`Shift created for ${dates.length} day${dates.length > 1 ? 's' : ''}!`, 'success');
+                        this.closeShiftModal();
+                        this.renderScheduleRows();
+                    } else {
+                        this.showToast('Failed to save shift entries', 'error');
+                    }
+                } else {
+                    this.showToast('Failed to create schedule row', 'error');
+                }
+            }
+            
+        } catch (error) {
+            console.error('Error saving shift:', error);
+            this.showToast('Error saving shift: ' + error.message, 'error');
+        } finally {
+            this.setLoading(false);
+        }
+    }
+
+    /**
+     * Format date for display
+     */
+    formatDateForDisplay(dateString) {
+        const date = new Date(dateString);
+        return date.toLocaleDateString('en-US', { 
+            weekday: 'short', 
+            month: 'short', 
+            day: 'numeric' 
+        });
     }
 }
 

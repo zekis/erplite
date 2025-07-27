@@ -26,9 +26,22 @@ class StorageManager {
         
         const entries = this.prepareEntriesForSave();
         
+        // Prepare arguments for API call
+        const args = { entries: entries };
+        
+        // If admin is viewing another user's timesheet, pass target user
+        if (this.app.state.isTimesheetAdmin && this.app.state.currentTargetUser) {
+            args.target_user = this.app.state.currentTargetUser;
+            console.log('Saving timesheet entries for target user:', this.app.state.currentTargetUser);
+        } else {
+            console.log('Saving timesheet entries for current user (no target user)');
+        }
+        
+        console.log('Save args:', args);
+        
         frappe.call({
             method: 'erplite.projects.api.save_timesheet_entries',
-            args: { entries: entries },
+            args: args,
             callback: (r) => {
                 this.handleSaveResponse(r);
             },

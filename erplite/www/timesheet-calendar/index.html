@@ -17,13 +17,6 @@
     <div class="sidebar">
         <div class="sidebar-header">
             <h2 class="sidebar-title">Projects & Activities</h2>
-            <div class="week-nav">
-                <button onclick="changeWeek(-1)">‹</button>
-                <div class="current-week">
-                    {{ week_dates[0].strftime('%b %d') }} - {{ week_dates[6].strftime('%b %d, %Y') }}
-                </div>
-                <button onclick="changeWeek(1)">›</button>
-            </div>
         </div>
 
         <!-- Projects -->
@@ -61,7 +54,25 @@
     <div class="calendar-container">
         <div class="calendar-header">
             <div class="calendar-title-section">
-                <h1 class="calendar-title">{{ user }}'s Weekly Timesheet</h1>
+                <!-- Regular title for non-admins -->
+                <h1 class="calendar-title" id="regularTitle">{{ user }}'s Weekly Timesheet</h1>
+                
+                <!-- Admin user selector (hidden by default) -->
+                <div class="admin-user-selector" id="adminUserSelector" style="display: none;">
+                    <select id="timesheetUserSelect" onchange="switchTimesheetUser()">
+                        <option value="">Select User</option>
+                    </select>
+                    <span class="timesheet-suffix">'s Weekly Timesheet</span>
+                </div>
+                
+                <!-- Week Navigation -->
+                <div class="week-nav">
+                    <button onclick="changeWeek(-1)">‹</button>
+                    <div class="current-week">
+                        {{ week_dates[0].strftime('%b %d') }} - {{ week_dates[6].strftime('%b %d, %Y') }}
+                    </div>
+                    <button onclick="changeWeek(1)">›</button>
+                </div>
             </div>
             <div class="calendar-actions">
                 <div class="hour-toggle-container">
@@ -72,6 +83,12 @@
                     </label>
                     <span class="toggle-label">Full Day</span>
                 </div>
+                
+                <!-- Admin Assign Activities Button (hidden by default) -->
+                <button id="assignActivitiesBtn" class="assign-activities-btn" style="display: none;" onclick="showAssignActivitiesDialog()">
+                    <i class="mdi mdi-account-plus"></i>
+                    Assign Activities
+                </button>
             </div>
         </div>
 
@@ -101,12 +118,12 @@
                 {% for date in week_dates %}
                 <div class="day-column" data-date="{{ date.strftime('%Y-%m-%d') }}">
                     <div class="time-labels">
-                        {% for hour in range(8, 18) %}
+                        {% for hour in range(6, 19) %}
                         <div class="time-label">{{ hour }}:00</div>
                         {% endfor %}
                     </div>
                     
-                    {% for hour in range(8, 18) %}
+                    {% for hour in range(6, 19) %}
                     <div class="time-slot" 
                          data-hour="{{ hour }}"
                          data-minute="0"
@@ -252,6 +269,42 @@
     <div class="context-menu-item" onclick="deleteFromContext()">
         <span class="context-icon">🗑️</span>
         Delete Entry
+    </div>
+</div>
+
+<!-- Assign Activities Modal -->
+<div id="assignActivitiesModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Assign Activities to User</h3>
+            <span class="close" onclick="closeAssignActivitiesDialog()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label for="assignUser">Select User:</label>
+                <select id="assignUser">
+                    <option value="">Select User</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="assignProject">Select Project:</label>
+                <select id="assignProject" onchange="loadProjectActivities()">
+                    <option value="">Select Project</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>Available Activities:</label>
+                <div class="activity-assignment-list" id="activityAssignmentList">
+                    <p class="no-activities">Select a project to see available activities</p>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeAssignActivitiesDialog()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveActivityAssignments()" id="saveAssignmentsBtn" disabled>Assign Selected</button>
+        </div>
     </div>
 </div>
 

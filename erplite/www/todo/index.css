@@ -620,15 +620,17 @@
     font-size: 0.875rem;
     color: var(--gray-700);
     line-height: 1.5;
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
     cursor: text;
     border-radius: 0.25rem;
     padding: 0.25rem;
     margin: -0.25rem;
     transition: all 0.2s;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    /* Remove truncation - show full text in expanded cards */
+    display: block;
+    overflow: visible;
 }
 
 .card-description:hover {
@@ -641,10 +643,6 @@
     background: white;
     border: 1px solid var(--primary-color);
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
-    display: block;
-    -webkit-line-clamp: unset;
-    -webkit-box-orient: unset;
-    overflow: visible;
     white-space: pre-wrap;
     min-height: 2.5rem;
     max-height: none;
@@ -1154,10 +1152,6 @@
     
     .todo-card {
         padding: 0.75rem;
-    }
-    
-    .card-description {
-        -webkit-line-clamp: 2;
     }
 }
 

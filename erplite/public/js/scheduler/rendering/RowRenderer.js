@@ -311,19 +311,16 @@ class RowRenderer {
             cell.classList.add('weekend');
         }
         
-        // Add drag and drop attributes for both templates and entries
-        cell.addEventListener('drop', (e) => this.app.handleCellDrop(e, rowIndex, date));
-        cell.addEventListener('dragover', (e) => e.preventDefault());
-        cell.addEventListener('dragenter', (e) => {
-            e.preventDefault();
-            if (row.project && row.activity && row.type === 'activity-row') {
-                cell.classList.add('drop-zone');
-            }
-        });
-        cell.addEventListener('dragleave', (e) => {
-            e.preventDefault();
-            cell.classList.remove('drop-zone');
-        });
+        // Add new click and drag selection handlers for activity rows
+        if (row.type === 'activity-row' && row.project && row.activity) {
+            cell.classList.add('interactive');
+            
+            // Single click handler
+            cell.addEventListener('click', (e) => this.app.handleCellClick(e, rowIndex, date));
+            
+            // Drag selection handlers
+            cell.addEventListener('mousedown', (e) => this.app.handleCellMouseDown(e, rowIndex, date));
+        }
         
         const entriesContainer = document.createElement('div');
         entriesContainer.className = 'day-entries';

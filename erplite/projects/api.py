@@ -12,6 +12,28 @@ def has_timesheet_permission():
     return True
 
 @frappe.whitelist()
+def is_timesheet_admin():
+    """Check if the current user is a timesheet admin"""
+    # Check if user has System Manager role or a custom Timesheet Admin role
+    user_roles = frappe.get_roles(frappe.session.user)
+    return "System Manager" in user_roles or "Timesheet Admin" in user_roles
+
+@frappe.whitelist()
+def get_timesheet_users():
+    """Get list of users for timesheet admin to switch between"""
+    if not is_timesheet_admin():
+        return []
+    
+    # Get all active users
+    users = frappe.get_all("User", 
+        fields=["name", "full_name", "email"],
+        filters={"enabled": 1, "user_type": "System User"},
+        order_by="full_name"
+    )
+    
+    return users
+
+@frappe.whitelist()
 def get_timesheet_app_data():
     """Get data for timesheet app dashboard"""
     from erplite.projects.dashboard_widgets import get_timesheet_widget_data
@@ -32,11 +54,19 @@ def delete_timesheet_entry(entry_id):
         return {"success": False, "message": f"Error deleting timesheet: {str(e)}"}
 
 @frappe.whitelist()
-def save_timesheet_entries(entries):
+def save_timesheet_entries(entries, target_user=None):
     """Save timesheet entries from calendar interface"""
     try:
         import json
         from datetime import datetime
+        
+        # Determine which user to save entries for
+        if target_user and is_timesheet_admin():
+            # Admin creating entries for another user
+            employee_user = target_user
+        else:
+            # Regular user or admin creating entries for themselves
+            employee_user = frappe.session.user
         
         # Parse entries if it's a JSON string
         if isinstance(entries, str):
@@ -80,9 +110,9 @@ def save_timesheet_entries(entries):
                     "description": description
                 })
             else:
-                # Create new entry
+                # Create new entry for the specified user
                 timesheet_doc = frappe.new_doc("Timesheet Entry")
-                timesheet_doc.employee = frappe.session.user
+                timesheet_doc.employee = employee_user
                 timesheet_doc.project = project
                 timesheet_doc.activity = activity
                 timesheet_doc.date = date
@@ -112,9 +142,17 @@ def save_timesheet_entries(entries):
         return {"success": False, "message": f"Error saving timesheet: {str(e)}"}
 
 @frappe.whitelist()
-def get_projects_and_activities():
+def get_projects_and_activities(target_user=None):
     """Get all projects and their activities for the timesheet calendar"""
     try:
+        # Determine which user's activities to show
+        if target_user and is_timesheet_admin():
+            # Admin viewing another user's activities
+            user_to_filter = target_user
+        else:
+            # Regular user or admin viewing their own activities
+            user_to_filter = frappe.session.user
+        
         # Get all projects
         projects = frappe.get_all("Project", 
             fields=["name", "project_name"], 
@@ -124,11 +162,14 @@ def get_projects_and_activities():
         
         result = {}
         for project in projects:
-            # Get activities for this project
+            # Get activities for this project that are assigned to the target user
             activities = frappe.get_all("Activity", 
-                fields=["name", "activity_name", "description"],
-                filters={"project": project.name},
-                order_by="activity_name"
+                fields=["name", "subject", "description"],
+                filters={
+                    "project": project.name,
+                    "assigned_to": user_to_filter
+                },
+                order_by="subject"
             )
             
             result[project.name] = {
@@ -143,10 +184,18 @@ def get_projects_and_activities():
         return {}
 
 @frappe.whitelist()
-def get_week_timesheets(week_start):
+def get_week_timesheets(week_start, target_user=None):
     """Get timesheet entries for a specific week"""
     try:
         from datetime import datetime, timedelta
+        
+        # Determine which user's timesheets to get
+        if target_user and is_timesheet_admin():
+            # Admin viewing another user's timesheets
+            user_to_filter = target_user
+        else:
+            # Regular user or admin viewing their own timesheets
+            user_to_filter = frappe.session.user
         
         # Parse week start date
         start_date = datetime.strptime(week_start, "%Y-%m-%d").date()
@@ -157,7 +206,7 @@ def get_week_timesheets(week_start):
             fields=["name", "project", "activity", "date", "check_in_time", "duration_hours", "description"],
             filters={
                 "date": ["between", [start_date, end_date]],
-                "employee": frappe.session.user
+                "employee": user_to_filter
             },
             order_by="date, check_in_time"
         )
@@ -305,3 +354,81 @@ def get_user_preferences():
     except Exception as e:
         frappe.log_error(f"Error getting user preferences: {str(e)}")
         return {}
+
+@frappe.whitelist()
+def get_all_projects_and_activities():
+    """Get all projects and activities for admin assignment dialog"""
+    try:
+        if not is_timesheet_admin():
+            return {"success": False, "message": "Access denied"}
+        
+        # Get all projects
+        projects = frappe.get_all("Project", 
+            fields=["name", "project_name"], 
+            filters={"status": ["!=", "Cancelled"]},
+            order_by="project_name"
+        )
+        
+        result = {}
+        for project in projects:
+            # Get all activities for this project (not filtered by user)
+            activities = frappe.get_all("Activity", 
+                fields=["name", "subject", "description", "assigned_to"],
+                filters={"project": project.name},
+                order_by="subject"
+            )
+            
+            result[project.name] = {
+                "project_name": project.project_name,
+                "activities": activities
+            }
+        
+        return {"success": True, "data": result}
+        
+    except Exception as e:
+        frappe.log_error(f"Error getting all projects and activities: {str(e)}")
+        return {"success": False, "message": str(e)}
+
+@frappe.whitelist()
+def assign_activities_to_user(user, activity_assignments):
+    """Assign activities to a user"""
+    try:
+        import json
+        
+        if not is_timesheet_admin():
+            return {"success": False, "message": "Access denied"}
+        
+        # Parse assignments if it's a JSON string
+        if isinstance(activity_assignments, str):
+            activity_assignments = json.loads(activity_assignments)
+        
+        updated_count = 0
+        
+        for assignment in activity_assignments:
+            activity_id = assignment.get('activity_id')
+            should_assign = assignment.get('assign', False)
+            
+            if activity_id:
+                activity_doc = frappe.get_doc("Activity", activity_id)
+                
+                if should_assign:
+                    # Assign user to activity
+                    activity_doc.assigned_to = user
+                else:
+                    # Unassign user from activity (if currently assigned to this user)
+                    if activity_doc.assigned_to == user:
+                        activity_doc.assigned_to = None
+                
+                activity_doc.save()
+                updated_count += 1
+        
+        frappe.db.commit()
+        
+        return {
+            "success": True, 
+            "message": f"Successfully updated {updated_count} activity assignments for {user}"
+        }
+        
+    except Exception as e:
+        frappe.log_error(f"Error assigning activities to user: {str(e)}")
+        return {"success": False, "message": str(e)}

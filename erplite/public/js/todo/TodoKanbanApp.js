@@ -774,19 +774,52 @@ class TodoKanbanApp {
      */
     async quietRefresh() {
         try {
+            // Check if user is actively editing any task description
+            if (this.isUserEditing()) {
+                return;
+            }
+            
             // Fetch fresh data from server without showing loading
             await this.dataManager.getTodos();
             
             // Apply current filters and re-render
             this.applyCurrentFilters();
             
-            // Log quietly for debugging
-            console.log('Auto-refresh completed silently');
-            
         } catch (error) {
             console.error('Quiet refresh failed:', error);
             // Don't show error messages to keep it quiet
         }
+    }
+    
+    /**
+     * Check if user is currently editing any task description
+     */
+    isUserEditing() {
+        // Check for focused editable elements
+        const activeElement = document.activeElement;
+        
+        // Check if active element is a card description being edited
+        if (activeElement && activeElement.classList.contains('card-description')) {
+            return true;
+        }
+        
+        // Check if any card description has the 'editing' class
+        const editingDescriptions = document.querySelectorAll('.card-description.editing');
+        if (editingDescriptions.length > 0) {
+            return true;
+        }
+        
+        // Check if any contenteditable element is focused
+        if (activeElement && activeElement.contentEditable === 'true') {
+            return true;
+        }
+        
+        // Check for any input fields or textareas that might be focused
+        if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
+            return true;
+        }
+        
+        return false;
     }
     
     /**

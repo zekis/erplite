@@ -50,7 +50,7 @@ class CalendarManager {
         if (this.app.state.isFullDay) {
             this.rebuildCalendar(0, 24); // Full day: 0-24 hours
         } else {
-            this.rebuildCalendar(6, 18); // Working hours: 6am-6pm
+            this.rebuildCalendar(6, 19); // Working hours: 6am-6pm
         }
         
         // Update toggle state

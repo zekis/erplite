@@ -96,11 +96,23 @@ class TimeBlockManager {
         card.dataset.endDate = endDate;
         card.dataset.type = type;
         
-        // Set project color
+        // Set project color and night shift styling
         const projectColor = this.app.state.projectColors[row.project] || '#3b82f6';
         card.style.setProperty('--project-color', projectColor);
-        card.style.background = projectColor;
-        card.style.borderColor = projectColor;
+        
+        // Check if this is a night shift
+        const isNightShift = blockData.is_night_shift || false;
+        
+        if (isNightShift) {
+            card.classList.add('night-shift');
+            // Use darker version of project color for night shifts
+            const darkColor = this.darkenColor(projectColor, 0.3);
+            card.style.background = darkColor;
+            card.style.borderColor = darkColor;
+        } else {
+            card.style.background = projectColor;
+            card.style.borderColor = projectColor;
+        }
         
         // Calculate position
         const startRect = startCell.getBoundingClientRect();
@@ -653,6 +665,28 @@ class TimeBlockManager {
         if (newHours !== null && !isNaN(newHours) && newHours > 0) {
             this.updateTimeEntry(scheduleRowId, date, parseFloat(newHours));
         }
+    }
+
+    /**
+     * Darken a color by a percentage
+     */
+    darkenColor(color, percent) {
+        // Remove # if present
+        color = color.replace('#', '');
+        
+        // Convert to RGB
+        const num = parseInt(color, 16);
+        const r = (num >> 16) & 255;
+        const g = (num >> 8) & 255;
+        const b = num & 255;
+        
+        // Darken each component
+        const newR = Math.floor(r * (1 - percent));
+        const newG = Math.floor(g * (1 - percent));
+        const newB = Math.floor(b * (1 - percent));
+        
+        // Convert back to hex
+        return `#${((newR << 16) | (newG << 8) | newB).toString(16).padStart(6, '0')}`;
     }
 
     /**

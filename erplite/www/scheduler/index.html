@@ -28,14 +28,14 @@
         <!-- Toolbar -->
         <div class="scheduler-toolbar">
             <div class="toolbar-left">
-                <div class="template-card" draggable="true" data-template="8h">
-                    <span class="mdi mdi-clock-outline"></span> 8h
+                <div class="template-card disabled" data-template="8h">
+                    <span class="mdi mdi-clock-outline"></span> 8h (Coming Soon)
                 </div>
-                <div class="template-card" draggable="true" data-template="12h">
-                    <span class="mdi mdi-clock-outline"></span> 12h
+                <div class="template-card disabled" data-template="12h">
+                    <span class="mdi mdi-clock-outline"></span> 12h (Coming Soon)
                 </div>
-                <div class="template-card" draggable="true" data-template="leave">
-                    <span class="mdi mdi-beach"></span> Leave
+                <div class="template-card disabled" data-template="leave">
+                    <span class="mdi mdi-beach"></span> Leave (Coming Soon)
                 </div>
             </div>
             <div class="toolbar-right">
@@ -217,6 +217,54 @@
     <div class="loading-spinner">
         <div class="spinner"></div>
         <div class="loading-text">Loading scheduler data...</div>
+    </div>
+</div>
+
+<!-- Context Menu for Shift Creation -->
+<div id="shiftContextMenu" class="context-menu" style="display: none;">
+    <div class="context-menu-item" onclick="openCreateShiftDialog()">
+        <i class="mdi mdi-clock-plus"></i>
+        Create Shift
+    </div>
+</div>
+
+<!-- Create Shift Modal -->
+<div id="createShiftModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Create Shift</h3>
+            <span class="close" onclick="closeShiftModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <div class="date-range-display" id="shiftDateRange">
+                <!-- Shows selected dates -->
+            </div>
+            <div class="form-group">
+                <label for="shiftStartTime">Start Time:</label>
+                <input type="time" id="shiftStartTime" value="09:00">
+            </div>
+            <div class="form-group">
+                <label for="shiftEndTime">End Time:</label>
+                <input type="time" id="shiftEndTime" value="17:00">
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="nightShiftToggle">
+                    Night Shift (darker shading)
+                </label>
+            </div>
+            <div class="form-group">
+                <label for="shiftNotes">Notes:</label>
+                <textarea id="shiftNotes" rows="3" placeholder="Optional shift notes..."></textarea>
+            </div>
+            <div class="hours-display">
+                Hours: <span id="calculatedHours">8.0</span>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeShiftModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveShift()">Create Shift</button>
+        </div>
     </div>
 </div>
 

@@ -195,6 +195,25 @@ window.addNewRow = function() {
     }
 };
 
+// Shift creation global functions
+window.openCreateShiftDialog = function() {
+    if (window.scheduler) {
+        window.scheduler.openCreateShiftDialog();
+    }
+};
+
+window.closeShiftModal = function() {
+    if (window.scheduler) {
+        window.scheduler.closeShiftModal();
+    }
+};
+
+window.saveShift = function() {
+    if (window.scheduler) {
+        window.scheduler.saveShift();
+    }
+};
+
 // Drag and drop global functions
 window.allowDrop = function(event) {
     event.preventDefault();

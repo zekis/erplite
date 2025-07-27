@@ -55,8 +55,35 @@ timesheet_doc.activity = activity  # Save to correct field
 ## Next Steps
 1. ✅ Test timesheet entry creation in the calendar interface
 2. ✅ Verify that entries save successfully without validation errors
-3. Test edit dialog activity dropdown population
+3. ✅ Test edit dialog activity dropdown population
 4. Test loading existing entries for a week
+
+## Additional Update - Calendar View Hours
+**Request**: Update the calendar view to show 6am to 6pm as the half day view instead of 8am to 6pm.
+
+**Changes Made**:
+- Updated `CalendarManager.toggleHourRange()` to use 6-18 hours for half day view
+- Updated `CalendarManager.highlightCurrentTime()` to use 6am start time for current time line
+- Updated `CalendarManager.forceFullDayView()` tooltip to reflect new 6am-6pm range
+- Updated `TimesheetCalendar.initializeExistingTimeBlocks()` to check for entries outside 6-18 hours
+- Updated `TimesheetCalendar.addQuickTime()` to use 6am minimum start time
+- **Fixed HTML Template**: Updated `erplite/www/timesheet-calendar/index.html` to show hours 6-19 instead of 8-18 in the initial calendar rendering
+- **Fixed Range Issue**: Updated all JavaScript ranges from 6-18 to 6-19 to include the full 6pm hour (18:00-18:59)
+
+**Result**: Half day view now shows 6am to 6pm instead of 8am to 6pm, providing 2 additional hours in the morning for timesheet entries. The calendar properly displays the complete 6am-6pm range including the full 6pm hour on initial page load and when toggling views.
+
+## Additional Update - Sidebar Collapse Consolidation
+**Request**: Consolidate the duplicate collapse buttons in the projects and activities list - there was a project-level collapse and another activity-level collapse when there were many tasks.
+
+**Changes Made**:
+- Removed the redundant activity-level collapse system (`addActivityToggle()`, `toggleActivitys()` methods)
+- Enhanced the main project toggle to show activity count: `▼ 5 activities` instead of just `▼`
+- Updated `enhanceProjectToggles()` to display activity counts in the toggle text
+- Updated `toggleProject()` to maintain activity count in both collapsed and expanded states
+- Projects with more than 5 activities are initially collapsed to reduce clutter
+- Single, consistent collapse mechanism for better UX
+
+**Result**: Cleaner sidebar interface with a single, informative collapse button per project that shows the activity count and eliminates confusion from having multiple collapse mechanisms.
 
 ## Technical Notes
 - Frontend was already correctly updated to use `activity` terminology

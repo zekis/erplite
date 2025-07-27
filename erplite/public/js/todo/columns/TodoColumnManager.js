@@ -242,6 +242,9 @@ class TodoColumnManager {
             if (cardElement) {
                 cardElement.classList.add('grouped-card');
                 groupBody.appendChild(cardElement);
+                
+                // Restore card state for grouped cards immediately after rendering
+                this.restoreCardState(cardElement, {});
             }
         });
         
@@ -1025,14 +1028,34 @@ class TodoColumnManager {
             cardStates[todoId];
         
         if (wasExpanded) {
-            // Restore expanded state - remove collapsed class if present
+            // Restore expanded state - remove collapsed class and add expanded class
             cardElement.classList.remove('collapsed');
+            cardElement.classList.add('expanded');
+            
+            // Update the button state to collapse button
+            const expandBtn = cardElement.querySelector('.expand-btn');
+            if (expandBtn) {
+                expandBtn.innerHTML = '<i class="mdi mdi-chevron-up"></i>';
+                expandBtn.title = 'Collapse card';
+                expandBtn.classList.remove('expand-btn');
+                expandBtn.classList.add('collapse-btn');
+            }
             
             // Update persistent storage to ensure it's saved
             this.cardStates[todoId] = true;
         } else if (wasExpanded === false) {
-            // Explicitly collapsed - add collapsed class
+            // Explicitly collapsed - add collapsed class and remove expanded class
+            cardElement.classList.remove('expanded');
             cardElement.classList.add('collapsed');
+            
+            // Update the button state to expand button
+            const collapseBtn = cardElement.querySelector('.collapse-btn');
+            if (collapseBtn) {
+                collapseBtn.innerHTML = '<i class="mdi mdi-chevron-down"></i>';
+                collapseBtn.title = 'Expand card';
+                collapseBtn.classList.remove('collapse-btn');
+                collapseBtn.classList.add('expand-btn');
+            }
             
             // Update persistent storage
             this.cardStates[todoId] = false;
@@ -1046,8 +1069,6 @@ class TodoColumnManager {
     toggleCard(todoId, isExpanded) {
         // Save the card state
         this.cardStates[todoId] = isExpanded;
-        
-        console.log(`Card ${todoId} toggled to ${isExpanded ? 'expanded' : 'collapsed'}`);
     }
     
     /**

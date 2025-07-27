@@ -267,80 +267,35 @@ class SidebarComponent {
      * Setup activity expand/collapse functionality
      */
     setupActivityToggling() {
-        // This will be called after DOM updates to setup activity toggles
-        this.refreshActivityToggles();
+        // Enhanced project toggle that shows activity count
+        this.enhanceProjectToggles();
     }
     
     /**
-     * Refresh activity toggle functionality
+     * Enhance project toggles with activity counts and better UX
      */
-    refreshActivityToggles() {
+    enhanceProjectToggles() {
         document.querySelectorAll('.project-group').forEach(projectGroup => {
             const activities = projectGroup.querySelectorAll('.activity-block');
-            if (activities.length > 3) { // Only add toggle if more than 3 activities
-                this.addActivityToggle(projectGroup, activities);
+            const projectToggle = projectGroup.querySelector('.project-toggle');
+            const projectHeader = projectGroup.querySelector('.project-header');
+            const activityList = projectGroup.querySelector('.activity-list');
+            
+            if (projectToggle) {
+                if (activities.length > 0) {
+                    // Project has activities - make it interactive and visible
+                    projectToggle.textContent = `▼`; // Down arrow for collapsed (can expand down)
+                    projectToggle.title = 'Click to expand/collapse activities';
+                    projectGroup.style.display = '';
+                    
+                    // Start all projects with activities collapsed
+                    this.toggleProject(projectGroup);
+                } else {
+                    // Project has no activities - hide it completely
+                    projectGroup.style.display = 'none';
+                }
             }
         });
-    }
-    
-    /**
-     * Add activity toggle to project group
-     */
-    addActivityToggle(projectGroup, activities) {
-        // Check if toggle already exists
-        if (projectGroup.querySelector('.activity-toggle')) return;
-        
-        const projectHeader = projectGroup.querySelector('.project-header');
-        if (!projectHeader) return;
-        
-        // Create activity toggle
-        const activityToggle = document.createElement('span');
-        activityToggle.className = 'activity-toggle';
-        activityToggle.textContent = `▼ ${activities.length} activities`;
-        activityToggle.title = 'Click to expand/collapse activities';
-        
-        // Insert after project name
-        const projectName = projectHeader.querySelector('.project-name');
-        if (projectName) {
-            projectName.appendChild(activityToggle);
-        }
-        
-        // Create activity group container
-        const activityGroup = document.createElement('div');
-        activityGroup.className = 'activity-group';
-        
-        // Move activities to activity group
-        activities.forEach(activity => {
-            activityGroup.appendChild(activity);
-        });
-        
-        projectGroup.appendChild(activityGroup);
-        
-        // Add click handler
-        activityToggle.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.toggleActivitys(projectGroup, activityToggle);
-        });
-        
-        // Initially collapse if more than 5 activities
-        if (activities.length > 5) {
-            this.toggleActivitys(projectGroup, activityToggle);
-        }
-    }
-    
-    /**
-     * Toggle activity visibility
-     */
-    toggleActivitys(projectGroup, activityToggle) {
-        const activityGroup = projectGroup.querySelector('.activity-group');
-        if (!activityGroup) return;
-        
-        activityGroup.classList.toggle('collapsed');
-        
-        const isCollapsed = activityGroup.classList.contains('collapsed');
-        const activityCount = activityGroup.querySelectorAll('.activity-block').length;
-        
-        activityToggle.textContent = `${isCollapsed ? '▶' : '▼'} ${activityCount} activities`;
     }
     
     /**
@@ -947,19 +902,9 @@ class SidebarComponent {
      * Setup project collapsing/expanding
      */
     setupProjectToggling() {
-        document.querySelectorAll('.project-header').forEach(header => {
-            header.addEventListener('click', (e) => {
-                // Don't toggle if clicking on buttons
-                if (e.target.closest('.activity-buttons') || e.target.closest('button')) {
-                    return;
-                }
-                
-                const projectGroup = header.closest('.project-group');
-                if (projectGroup) {
-                    this.toggleProject(projectGroup);
-                }
-            });
-        });
+        // Don't add event listeners here since HTML uses onclick="toggleProject()"
+        // The global toggleProject function will call toggleProjectByName which calls toggleProject
+        console.log('Project toggling setup - using global toggleProject function');
     }
     
     /**
@@ -980,9 +925,9 @@ class SidebarComponent {
         const toggle = projectGroup.querySelector('.project-toggle');
         if (toggle) {
             if (projectGroup.classList.contains('collapsed')) {
-                toggle.textContent = '▶';
+                toggle.textContent = `▼`; // Down arrow when collapsed (can expand down)
             } else {
-                toggle.textContent = '▼';
+                toggle.textContent = `▲`; // Up arrow when expanded (can collapse up)
             }
         }
         
@@ -1319,16 +1264,160 @@ class SidebarComponent {
      * Initialize sidebar after DOM is ready
      */
     initializeAfterLoad() {
-        // Load saved project states
-        this.loadProjectStates();
-        
         // Setup any additional functionality that requires full DOM
         this.setupProjectContextMenus();
         
-        // Setup new features
-        this.refreshActivityToggles();
+        // Setup new features - do this BEFORE loading saved states
+        this.enhanceProjectToggles();
         this.addPinButtons();
         this.reorganizeActivitys();
+        
+        // Load saved project states LAST (this will override the default collapsed state for previously expanded projects)
+        // Comment this out to always start collapsed
+        // this.loadProjectStates();
+    }
+    
+    /**
+     * Refresh projects from API data (for admin user switching)
+     */
+    refreshProjectsFromAPI() {
+        if (!this.app.state.projectsData) {
+            console.warn('No projects data available to refresh');
+            return;
+        }
+        
+        // Clear existing projects from sidebar
+        const sidebar = document.querySelector('.sidebar');
+        if (!sidebar) return;
+        
+        // Remove all existing project groups
+        sidebar.querySelectorAll('.project-group').forEach(group => group.remove());
+        
+        // Recreate projects from API data
+        Object.entries(this.app.state.projectsData).forEach(([projectId, projectData]) => {
+            this.createProjectGroup(projectId, projectData);
+        });
+        
+        // Re-initialize sidebar features
+        this.enhanceProjectToggles();
+        this.addPinButtons();
+        this.reorganizeActivitys();
+    }
+    
+    /**
+     * Create a project group element from API data
+     */
+    createProjectGroup(projectId, projectData) {
+        const sidebar = document.querySelector('.sidebar');
+        if (!sidebar) return;
+        
+        const projectGroup = document.createElement('div');
+        projectGroup.className = 'project-group';
+        projectGroup.dataset.project = projectId;
+        
+        // Create project header
+        const projectHeader = document.createElement('div');
+        projectHeader.className = 'project-header';
+        projectHeader.onclick = () => window.toggleProject(projectId);
+        
+        // Project color (use existing color or generate new one)
+        const projectColor = this.app.state.projectColors[projectId] || this.generateProjectColor();
+        const colorDiv = document.createElement('div');
+        colorDiv.className = 'project-color';
+        colorDiv.style.backgroundColor = projectColor;
+        
+        // Project name
+        const nameDiv = document.createElement('div');
+        nameDiv.className = 'project-name';
+        nameDiv.textContent = projectData.project_name;
+        
+        // Project toggle
+        const toggleDiv = document.createElement('div');
+        toggleDiv.className = 'project-toggle';
+        toggleDiv.textContent = '▼';
+        
+        projectHeader.appendChild(colorDiv);
+        projectHeader.appendChild(nameDiv);
+        projectHeader.appendChild(toggleDiv);
+        
+        // Create activity list
+        const activityList = document.createElement('div');
+        activityList.className = 'activity-list';
+        
+        // Add activities
+        if (projectData.activities && projectData.activities.length > 0) {
+            projectData.activities.forEach(activity => {
+                const activityBlock = this.createActivityBlock(projectId, projectData, activity, projectColor);
+                projectGroup.appendChild(activityBlock);
+            });
+        }
+        
+        projectGroup.appendChild(projectHeader);
+        projectGroup.appendChild(activityList);
+        
+        // Insert before search container or at the end
+        const searchContainer = sidebar.querySelector('.search-container');
+        if (searchContainer && searchContainer.nextSibling) {
+            sidebar.insertBefore(projectGroup, searchContainer.nextSibling);
+        } else {
+            sidebar.appendChild(projectGroup);
+        }
+    }
+    
+    /**
+     * Create an activity block element
+     */
+    createActivityBlock(projectId, projectData, activity, projectColor) {
+        const activityBlock = document.createElement('div');
+        activityBlock.className = 'activity-block';
+        activityBlock.draggable = true;
+        activityBlock.dataset.project = projectId;
+        activityBlock.dataset.activity = activity.name;
+        activityBlock.dataset.projectName = projectData.project_name;
+        activityBlock.dataset.activityName = activity.subject;
+        activityBlock.dataset.color = projectColor;
+        
+        // Activity icon
+        const iconDiv = document.createElement('div');
+        iconDiv.className = 'activity-icon';
+        iconDiv.style.backgroundColor = projectColor;
+        
+        // Activity name
+        const nameDiv = document.createElement('div');
+        nameDiv.className = 'activity-name';
+        nameDiv.textContent = activity.subject;
+        
+        activityBlock.appendChild(iconDiv);
+        activityBlock.appendChild(nameDiv);
+        
+        // Add drag event listeners
+        activityBlock.addEventListener('dragstart', (e) => {
+            activityBlock.classList.add('dragging');
+            const activityData = {
+                project: projectId,
+                activity: activity.name,
+                projectName: projectData.project_name,
+                activityName: activity.subject,
+                color: projectColor,
+                isExistingBlock: false
+            };
+            e.dataTransfer.setData('text/plain', JSON.stringify(activityData));
+            e.dataTransfer.effectAllowed = 'copy';
+        });
+        
+        activityBlock.addEventListener('dragend', () => {
+            activityBlock.classList.remove('dragging');
+        });
+        
+        return activityBlock;
+    }
+    
+    /**
+     * Generate a project color
+     */
+    generateProjectColor() {
+        const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#06B6D4', '#84CC16', '#F97316'];
+        return colors[Math.floor(Math.random() * colors.length)];
     }
     
     /**
