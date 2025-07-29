@@ -48,66 +48,67 @@
       <!-- Right side - Navigation and actions -->
       <div class="flex items-center space-x-4">
         <!-- Date Navigation -->
-        <div class="flex items-center space-x-2 bg-white rounded-lg border border-gray-300 px-3 py-2">
-          <Button 
-            icon="pi pi-angle-double-left" 
-            text 
-            size="small"
+        <div class="flex items-center space-x-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2">
+          <button 
+            class="p-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             :disabled="isLoading"
             @click="$emit('navigate-date', -30)"
             title="Previous month"
-          />
-          <Button 
-            icon="pi pi-angle-left" 
-            text 
-            size="small"
+          >
+            <Icon icon="lucide:chevrons-left" class="w-4 h-4" />
+          </button>
+          <button 
+            class="p-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             :disabled="isLoading"
             @click="$emit('navigate-date', -7)"
             title="Previous week"
-          />
+          >
+            <Icon icon="lucide:chevron-left" class="w-4 h-4" />
+          </button>
           
-          <div class="px-3 py-1 text-sm font-medium text-gray-700 min-w-[200px] text-center">
+          <div class="px-3 py-1 text-sm font-medium text-gray-700 dark:text-gray-300 min-w-[200px] text-center">
             {{ currentDateRange }}
           </div>
           
-          <Button 
-            icon="pi pi-angle-right" 
-            text 
-            size="small"
+          <button 
+            class="p-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             :disabled="isLoading"
             @click="$emit('navigate-date', 7)"
             title="Next week"
-          />
-          <Button 
-            icon="pi pi-angle-double-right" 
-            text 
-            size="small"
+          >
+            <Icon icon="lucide:chevron-right" class="w-4 h-4" />
+          </button>
+          <button 
+            class="p-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             :disabled="isLoading"
             @click="$emit('navigate-date', 30)"
             title="Next month"
-          />
+          >
+            <Icon icon="lucide:chevrons-right" class="w-4 h-4" />
+          </button>
         </div>
 
         <!-- Action Buttons -->
         <div class="flex items-center space-x-2">
-          <Button 
-            icon="pi pi-refresh" 
-            label="Refresh"
-            severity="secondary"
-            outlined
-            size="small"
-            :loading="isLoading"
+          <button 
+            class="flex items-center px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            :disabled="isLoading"
             @click="$emit('refresh')"
-          />
-          <Button 
-            icon="pi pi-download" 
-            label="Export"
-            severity="secondary"
-            outlined
-            size="small"
+          >
+            <Icon 
+              :icon="isLoading ? 'lucide:loader-2' : 'lucide:refresh-cw'" 
+              :class="['w-4 h-4 mr-2', { 'animate-spin': isLoading }]" 
+            />
+            Refresh
+          </button>
+          <button 
+            class="flex items-center px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             :disabled="isLoading"
             @click="$emit('export')"
-          />
+          >
+            <Icon icon="lucide:download" class="w-4 h-4 mr-2" />
+            Export
+          </button>
         </div>
       </div>
     </div>

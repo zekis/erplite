@@ -617,11 +617,11 @@ onUnmounted(() => {
 }
 
 .activity-row.row-disabled {
-  @apply bg-gray-50/30 dark:bg-gray-800/15;
+  @apply bg-gray-50/30 dark:bg-gray-700/40;
 }
 
 .activity-row.row-disabled .calendar-row {
-  @apply opacity-70 pointer-events-none;
+  @apply opacity-10 pointer-events-none;
 }
 
 .activity-column,

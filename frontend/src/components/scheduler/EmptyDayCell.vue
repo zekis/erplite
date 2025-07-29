@@ -60,7 +60,7 @@ const props = defineProps({
 })
 
 // Emits
-const emit = defineEmits(['create-entry', 'show-context-menu'])
+const emit = defineEmits(['create-entry', 'show-context-menu', 'move-shift'])
 
 // Local state
 const isDragOver = ref(false)
@@ -116,9 +116,17 @@ const handleDrop = (event) => {
   isDragOver.value = false
   
   try {
-    const data = JSON.parse(event.dataTransfer.getData('text/plain'))
+    // Try to get data from both possible formats
+    let data
+    try {
+      data = JSON.parse(event.dataTransfer.getData('application/json'))
+    } catch {
+      data = JSON.parse(event.dataTransfer.getData('text/plain'))
+    }
     
-    if (data.type === 'template') {
+    if (data.type === 'shift-bar') {
+      handleShiftBarDrop(data, event)
+    } else if (data.type === 'template') {
       handleTemplateDrop(data.template)
     } else if (data.type === 'time-block') {
       handleTimeBlockMove(data)
@@ -131,6 +139,16 @@ const handleDrop = (event) => {
 const handleDragOver = (event) => {
   event.preventDefault()
   isDragOver.value = true
+  
+  // Show multi-day drop zone if dragging a shift bar
+  try {
+    const data = JSON.parse(event.dataTransfer.getData('application/json'))
+    if (data.type === 'shift-bar') {
+      showMultiDayDropZone(data.dates.length)
+    }
+  } catch (error) {
+    // Ignore parsing errors
+  }
 }
 
 const handleDragEnter = (event) => {
@@ -142,6 +160,7 @@ const handleDragLeave = (event) => {
   // Only remove drag over if we're actually leaving the cell
   if (!event.currentTarget.contains(event.relatedTarget)) {
     isDragOver.value = false
+    hideMultiDayDropZone()
   }
 }
 
@@ -160,6 +179,25 @@ const handleTemplateDrop = (template) => {
   emit('create-entry', entryData)
 }
 
+const handleShiftBarDrop = (data, event) => {
+  // Calculate the new start date based on drop position
+  const rect = event.currentTarget.getBoundingClientRect()
+  const dropX = event.clientX - rect.left
+  
+  // Calculate which column this corresponds to (for multi-day shifts)
+  const columnIndex = Math.floor(dropX / 80) // 80px per column
+  const newStartDate = props.date
+  
+  // Emit shift move event
+  emit('move-shift', {
+    shift: data.shift,
+    originalDates: data.originalDates,
+    newStartDate: newStartDate,
+    targetRowId: props.row.id,
+    sourceRowId: data.sourceRowId
+  })
+}
+
 const handleTimeBlockMove = (data) => {
   // Handle moving existing time blocks
   emit('create-entry', {
@@ -171,6 +209,35 @@ const handleTimeBlockMove = (data) => {
     status: data.entry.status,
     moveFromDate: data.entry.date,
     moveEntryId: data.entryId
+  })
+}
+
+const showMultiDayDropZone = (dayCount) => {
+  // Find all cells in this row starting from current date
+  const currentCell = document.querySelector(`[data-date="${props.date}"][data-row-index="${props.rowIndex}"]`)
+  if (!currentCell) return
+  
+  const row = currentCell.closest('.activity-row')
+  if (!row) return
+  
+  // Find all day cells in this row
+  const dayCells = row.querySelectorAll('.empty-day-cell')
+  const currentIndex = Array.from(dayCells).indexOf(currentCell)
+  
+  // Highlight the cells that would be covered by the multi-day shift
+  for (let i = 0; i < dayCount && (currentIndex + i) < dayCells.length; i++) {
+    const cell = dayCells[currentIndex + i]
+    if (cell) {
+      cell.classList.add('multi-day-drop-zone')
+    }
+  }
+}
+
+const hideMultiDayDropZone = () => {
+  // Remove multi-day drop zone indicators from all cells
+  const allCells = document.querySelectorAll('.multi-day-drop-zone')
+  allCells.forEach(cell => {
+    cell.classList.remove('multi-day-drop-zone')
   })
 }
 
@@ -254,5 +321,35 @@ const getTemplateConfig = (template) => {
 
 .drop-zone-indicator {
   @apply absolute inset-0 flex items-center justify-center bg-blue-100 bg-opacity-75 border-2 border-dashed border-blue-300 rounded;
+}
+
+/* Multi-day drop zone styling */
+:global(.multi-day-drop-zone) {
+  @apply bg-green-100 dark:bg-green-800 border-green-300 dark:border-green-500 border-2 border-dashed;
+  animation: multiDayPulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes multiDayPulse {
+  from { 
+    background-color: rgb(220 252 231); /* green-100 */
+    border-color: rgb(134 239 172); /* green-300 */
+  }
+  to { 
+    background-color: rgb(187 247 208); /* green-200 */
+    border-color: rgb(74 222 128); /* green-400 */
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  @keyframes multiDayPulse {
+    from { 
+      background-color: rgb(22 101 52); /* green-800 */
+      border-color: rgb(34 197 94); /* green-500 */
+    }
+    to { 
+      background-color: rgb(21 128 61); /* green-700 */
+      border-color: rgb(74 222 128); /* green-400 */
+    }
+  }
 }
 </style>
