@@ -2,6 +2,9 @@
 @import 'tailwindcss/components';
 @import 'tailwindcss/utilities';
 
+/* No custom CSS variables needed - using pure Tailwind */
+
+
 /* Custom styles for ERPLite */
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
@@ -16,9 +19,9 @@ code {
     monospace;
 }
 
-/* Frappe UI overrides */
+/* Frappe UI overrides with dark mode support */
 .frappe-card {
-  @apply bg-white rounded-lg shadow-sm border border-gray-200;
+  @apply bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700;
 }
 
 .frappe-button {
@@ -26,9 +29,9 @@ code {
 }
 
 .frappe-button-primary {
-  @apply bg-blue-600 text-white hover:bg-blue-700;
+  @apply bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600;
 }
 
 .frappe-button-secondary {
-  @apply bg-gray-100 text-gray-700 hover:bg-gray-200;
+  @apply bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600;
 }

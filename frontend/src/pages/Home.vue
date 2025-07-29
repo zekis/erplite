@@ -1,6 +1,7 @@
 <template>
   <div class="min-h-screen bg-gray-50">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+
       <!-- Header -->
       <div class="text-center mb-12">
         <h1 class="text-4xl font-bold text-gray-900 mb-4">
@@ -294,7 +295,8 @@
       <div class="text-center">
         <h2 class="text-2xl font-bold text-gray-900 mb-6">Explore the App</h2>
         <div class="flex justify-center space-x-4">
-          <Button @click="$router.push('/scheduler')" label="View Scheduler (Vue.js)" size="large" />
+          <Button @click="$router.push('/vue-scheduler')" label="Vue Scheduler (New)" size="large" />
+          <Button @click="$router.push('/scheduler')" label="View Scheduler (Vue.js)" severity="secondary" size="large" />
           <Button @click="openLegacyScheduler" label="Legacy Scheduler (Pure JS)" severity="secondary" size="large" />
         </div>
       </div>
