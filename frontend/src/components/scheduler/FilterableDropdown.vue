@@ -5,41 +5,44 @@
       @click="toggleDropdown"
       :disabled="disabled"
       :class="[
-        'dropdown-trigger w-full p-2 rounded-lg border transition-all duration-200 flex items-center justify-between',
-        'border-gray-300 dark:border-gray-600',
+        'dropdown-trigger w-full h-full border-0 transition-all duration-200 flex items-center justify-between',
+        type === 'resource' ? 'p-1' : 'p-2',
         disabled ? [
-          'bg-gray-100 dark:bg-gray-800 cursor-not-allowed opacity-60',
-          'border-gray-200 dark:border-gray-700'
+          'bg-gray-100 dark:bg-gray-900 cursor-not-allowed opacity-60'
         ] : [
-          'bg-gray-50 dark:bg-gray-700',
-          isOpen ? 'border-blue-500' : 'hover:border-blue-400'
+          'bg-gray-50 dark:bg-gray-800',
+          isOpen ? 'bg-gray-100 dark:bg-gray-700' : 'hover:bg-gray-100 dark:hover:bg-gray-700'
         ],
         'text-gray-900 dark:text-white'
       ]"
+      style="min-height: 50px;"
     >
       <div class="flex items-center flex-1 min-w-0">
-        <!-- Avatar for resources (outside text div) -->
+        <!-- Avatar for resources (positioned like an icon) -->
         <Avatar
           v-if="selectedOption && type === 'resource' && selectedOption.resource_type"
           :name="selectedOption.label"
           :show-status="false"
           :is-online="false"
-          size="xs"
-          class="mr-2 flex-shrink-0"
-          style="width: 16px; height: 16px; min-width: 16px; min-height: 16px;"
+          size="md"
+          class="mr-2 flex-shrink-0 w-6 h-6"
+          style="min-width: 24px; min-height: 24px; max-width: 24px; max-height: 24px;"
         />
-        <!-- Icon for other types (outside text div) -->
+        <!-- Icon for other types -->
         <Icon
-          v-else-if="selectedOption && getIcon()"
+          v-else-if="selectedOption && getIcon() && type !== 'resource'"
           :icon="getIcon()"
           class="w-4 h-4 mr-2 flex-shrink-0"
           :class="getIconColor()"
         />
         
         <!-- Text content -->
-        <div class="flex-1 min-w-0">
-          <span v-if="selectedOption" class="text-xs font-medium truncate block">{{ selectedOption.label }}</span>
-          <span v-else class="text-xs block italic text-gray-600 dark:text-gray-300">{{ placeholder }}</span>
+        <div class="flex-1 min-w-0 text-left">
+          <div v-if="selectedOption" class="flex flex-col text-left">
+            <span class="text-xs font-medium truncate block text-left">{{ selectedOption.label }}</span>
+            <span v-if="getSelectedOptionDescription()" class="text-xs text-gray-600 dark:text-gray-300 truncate block text-left">{{ getSelectedOptionDescription() }}</span>
+          </div>
+          <span v-else class="text-xs block italic text-gray-600 dark:text-gray-300 text-left">{{ placeholder }}</span>
         </div>
       </div>
       
@@ -66,10 +69,11 @@
     <div
       v-if="isOpen"
       :class="[
-        'dropdown-panel absolute top-full mt-1 rounded-lg border shadow-lg z-50 max-h-80 overflow-hidden bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700',
+        'dropdown-panel absolute border shadow-lg max-h-80 overflow-hidden bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700',
         getDropdownPositionClass()
       ]"
       :style="getDropdownStyle()"
+      style="top: 100%; margin-top: 4px; z-index: 9999;"
     >
       <!-- Search Input -->
       <div class="search-section p-3 border-b border-gray-300 dark:border-gray-600">
@@ -164,19 +168,19 @@
             <!-- Icon for other types -->
             <div
               v-else
-              :class="['option-icon w-8 h-8 rounded-full flex items-center justify-center mr-3', getOptionBgColor(option)]"
+              :class="['option-icon w-9 h-9 rounded-full flex items-center justify-center mr-3', getOptionBgColor(option)]"
             >
               <Icon
                 :icon="getOptionIcon(option)"
-                :class="['w-4 h-4', getOptionIconColor(option)]"
+                :class="['w-4.5 h-4.5', getOptionIconColor(option)]"
               />
             </div>
 
-            <div class="option-content flex-1 min-w-0">
-              <div class="option-name text-sm font-medium truncate text-gray-900 dark:text-white">
+            <div class="option-content flex-1 min-w-0 text-left">
+              <div class="option-name text-sm font-medium text-left text-gray-900 dark:text-white">
                 {{ option.label }}
               </div>
-              <div v-if="getOptionDescription(option)" class="option-description text-xs truncate text-gray-600 dark:text-gray-300">
+              <div v-if="getOptionDescription(option)" class="option-description text-xs text-left text-gray-600 dark:text-gray-300">
                 {{ getOptionDescription(option) }}
               </div>
             </div>
@@ -367,6 +371,24 @@ const getOptionDescription = (option) => {
   return null
 }
 
+const getSelectedOptionDescription = () => {
+  if (!selectedOption.value) return null
+  
+  if (props.type === 'resource') {
+    return selectedOption.value.resource_type
+  } else if (props.type === 'role') {
+    return selectedOption.value.description
+  } else if (props.type === 'activity') {
+    // Could show project name or activity description
+    return selectedOption.value.description || selectedOption.value.project_name
+  } else if (props.type === 'project') {
+    // Could show project description or client info
+    return selectedOption.value.description || selectedOption.value.client
+  }
+  
+  return null
+}
+
 const getOptionIcon = (option) => {
   // For project filter, show different icons for projects vs activities
   if (props.type === 'project') {
@@ -447,19 +469,21 @@ watch(searchQuery, () => {
 }
 
 .dropdown-trigger {
-  @apply w-full p-2 rounded-lg border transition-all duration-200 flex items-center justify-between cursor-pointer;
+  @apply w-full p-2 border transition-all duration-200 flex items-center justify-between cursor-pointer;
+  @apply border-gray-300 dark:border-gray-600;
 }
 
 .dropdown-trigger:hover {
-  @apply border-blue-400;
+  @apply border-blue-400 dark:border-blue-500;
 }
 
 .dropdown-trigger:focus {
-  @apply outline-none border-blue-500;
+  @apply outline-none border-blue-500 dark:border-blue-400;
 }
 
 .dropdown-panel {
-  @apply absolute top-full mt-1 rounded-lg border shadow-xl overflow-hidden;
+  @apply absolute top-full mt-1 border shadow-xl overflow-hidden;
+  @apply border-gray-200 dark:border-gray-600;
   z-index: 9999; /* Ensure it appears above all other elements */
 }
 

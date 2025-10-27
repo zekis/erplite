@@ -188,13 +188,27 @@ const handleShiftBarDrop = (data, event) => {
   const columnIndex = Math.floor(dropX / 80) // 80px per column
   const newStartDate = props.date
   
-  // Emit shift move event
+  // Check if there are existing shifts on the target dates that need to be replaced
+  const shiftDuration = data.originalDates ? data.originalDates.length : 1
+  const targetDates = []
+  
+  // Calculate all target dates for the shift
+  const startDate = new Date(newStartDate)
+  for (let i = 0; i < shiftDuration; i++) {
+    const targetDate = new Date(startDate)
+    targetDate.setDate(targetDate.getDate() + i)
+    targetDates.push(targetDate.toISOString().split('T')[0])
+  }
+  
+  // Emit shift move event with replacement information
   emit('move-shift', {
     shift: data.shift,
     originalDates: data.originalDates,
     newStartDate: newStartDate,
+    targetDates: targetDates,
     targetRowId: props.row.id,
-    sourceRowId: data.sourceRowId
+    sourceRowId: data.sourceRowId,
+    replaceExisting: true // Flag to indicate existing shifts should be replaced
   })
 }
 

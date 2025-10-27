@@ -10,6 +10,11 @@ class TodoDragDropManager {
         this.draggedElement = null;
         this.dropZones = [];
         
+        // Touch drag properties
+        this.touchStartPos = null;
+        this.touchElement = null;
+        this.isDragging = false;
+        
         this.initializeDragDrop();
     }
     
@@ -522,49 +527,45 @@ class TodoDragDropManager {
     /**
      * Handle touch events for mobile drag and drop
      */
-    setupTouchEvents() {
-        let touchStartPos = null;
-        let touchElement = null;
-        let isDragging = false;
-        
+    setupTouchEvents() {        
         document.addEventListener('touchstart', (e) => {
             const card = e.target.closest('.todo-card');
             if (card) {
-                touchStartPos = {
+                this.touchStartPos = {
                     x: e.touches[0].clientX,
                     y: e.touches[0].clientY
                 };
-                touchElement = card;
+                this.touchElement = card;
             }
         });
         
         document.addEventListener('touchmove', (e) => {
-            if (!touchElement || !touchStartPos) return;
+            if (!this.touchElement || !this.touchStartPos) return;
             
             const touch = e.touches[0];
-            const deltaX = Math.abs(touch.clientX - touchStartPos.x);
-            const deltaY = Math.abs(touch.clientY - touchStartPos.y);
+            const deltaX = Math.abs(touch.clientX - this.touchStartPos.x);
+            const deltaY = Math.abs(touch.clientY - this.touchStartPos.y);
             
             // Start dragging if moved enough
-            if (!isDragging && (deltaX > 10 || deltaY > 10)) {
-                isDragging = true;
-                this.startTouchDrag(touchElement, touch);
+            if (!this.isDragging && (deltaX > 10 || deltaY > 10)) {
+                this.isDragging = true;
+                this.startTouchDrag(this.touchElement, touch);
             }
             
-            if (isDragging) {
+            if (this.isDragging) {
                 e.preventDefault();
                 this.updateTouchDrag(touch);
             }
         });
         
         document.addEventListener('touchend', (e) => {
-            if (isDragging) {
+            if (this.isDragging) {
                 this.endTouchDrag(e.changedTouches[0]);
             }
             
-            touchStartPos = null;
-            touchElement = null;
-            isDragging = false;
+            this.touchStartPos = null;
+            this.touchElement = null;
+            this.isDragging = false;
         });
     }
     
@@ -585,8 +586,8 @@ class TodoDragDropManager {
      */
     updateTouchDrag(touch) {
         // Visual feedback for touch drag
-        if (this.draggedElement) {
-            this.draggedElement.style.transform = `translate(${touch.clientX - touchStartPos.x}px, ${touch.clientY - touchStartPos.y}px)`;
+        if (this.draggedElement && this.touchStartPos) {
+            this.draggedElement.style.transform = `translate(${touch.clientX - this.touchStartPos.x}px, ${touch.clientY - this.touchStartPos.y}px)`;
         }
     }
     

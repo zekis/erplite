@@ -9,7 +9,7 @@
       <!-- Create Shift Option -->
       <button
         @click="handleCreateShift"
-        class="menu-item w-full flex items-center px-4 py-3 text-left transition-colors text-gray-900 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-700 first:rounded-t-lg last:rounded-b-lg"
+        class="menu-item w-full flex items-center px-4 py-3 text-left transition-colors text-gray-900 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-700 first:rounded-t-lg"
       >
         <Icon icon="lucide:clock" class="w-4 h-4 mr-3 flex-shrink-0 text-blue-500" />
         <div class="flex-1">

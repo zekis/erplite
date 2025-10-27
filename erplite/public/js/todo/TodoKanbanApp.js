@@ -19,6 +19,9 @@ class TodoKanbanApp {
         this.isInitialized = false;
         this.autoRefreshInterval = null;
         this.autoRefreshEnabled = true;
+        // UI toggles
+        // showActivities controls whether activity-referencing todos are shown. Default: false (hidden)
+        this.showActivities = (localStorage.getItem('todo_show_activities') === '1');
         
         // Initialize the application
         this.initialize();
@@ -64,7 +67,6 @@ class TodoKanbanApp {
         // Header buttons
         const addTodoBtn = document.getElementById('addTodoBtn');
         const refreshBtn = document.getElementById('refreshBtn');
-        const userFilter = document.getElementById('userFilter');
         
         if (addTodoBtn) {
             addTodoBtn.addEventListener('click', () => this.createBlankTodo());
@@ -74,9 +76,14 @@ class TodoKanbanApp {
             refreshBtn.addEventListener('click', () => this.refreshTodos());
         }
         
-        if (userFilter) {
-            userFilter.addEventListener('change', (e) => this.handleUserFilterChange(e.target.value));
-        }
+        // Setup user filter dropdown
+        this.setupUserFilterDropdown();
+        
+        // Setup search functionality
+        this.setupSearchInput();
+        
+        // Setup activity reference toggle (hide/show todos referencing activity doctypes)
+        this.setupActivityToggle();
         
         // Keyboard shortcuts (global)
         document.addEventListener('keydown', (e) => this.handleKeyboardShortcuts(e));
@@ -90,6 +97,206 @@ class TodoKanbanApp {
     }
     
     /**
+     * Setup search input functionality
+     */
+    setupSearchInput() {
+        const searchInput = document.getElementById('searchInput');
+        const clearSearchBtn = document.getElementById('clearSearchBtn');
+        
+        if (!searchInput) return;
+        
+        let searchTimeout;
+        
+        // Handle search input with debounce
+        searchInput.addEventListener('input', (e) => {
+            const query = e.target.value.trim();
+            
+            // Show/hide clear button
+            if (clearSearchBtn) {
+                clearSearchBtn.style.display = query ? 'flex' : 'none';
+            }
+            
+            // Debounce search to avoid too many updates
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                this.handleSearch(query);
+            }, 300);
+        });
+        
+        // Handle clear button
+        if (clearSearchBtn) {
+            clearSearchBtn.addEventListener('click', () => {
+                searchInput.value = '';
+                clearSearchBtn.style.display = 'none';
+                this.handleSearch('');
+                searchInput.focus();
+            });
+        }
+        
+        // Handle keyboard shortcuts in search
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                searchInput.value = '';
+                if (clearSearchBtn) {
+                    clearSearchBtn.style.display = 'none';
+                }
+                this.handleSearch('');
+                searchInput.blur();
+            }
+        });
+    }
+    
+    /**
+     * Setup user filter dropdown functionality
+     */
+    setupUserFilterDropdown() {
+        const userFilterButton = document.getElementById('userFilter');
+        const userFilterDropdown = document.getElementById('userFilterDropdown');
+        
+        if (!userFilterButton || !userFilterDropdown) return;
+        
+        // Toggle dropdown on button click
+        userFilterButton.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.toggleUserFilterDropdown();
+        });
+        
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!userFilterButton.contains(e.target) && !userFilterDropdown.contains(e.target)) {
+                this.hideUserFilterDropdown();
+            }
+        });
+        
+        // Handle filter option clicks
+        userFilterDropdown.addEventListener('click', (e) => {
+            const option = e.target.closest('.filter-option');
+            if (option) {
+                const userId = option.getAttribute('data-user-id');
+                this.selectUserFilter(userId);
+            }
+        });
+        
+        // Initialize dropdown content
+        this.updateUserFilterDropdown();
+    }
+    
+    /**
+     * Toggle user filter dropdown
+     */
+    toggleUserFilterDropdown() {
+        const dropdown = document.getElementById('userFilterDropdown');
+        const button = document.getElementById('userFilter');
+        
+        if (!dropdown || !button) return;
+        
+        if (dropdown.classList.contains('show')) {
+            this.hideUserFilterDropdown();
+        } else {
+            this.showUserFilterDropdown();
+        }
+    }
+    
+    /**
+     * Show user filter dropdown
+     */
+    showUserFilterDropdown() {
+        const dropdown = document.getElementById('userFilterDropdown');
+        const button = document.getElementById('userFilter');
+        
+        if (!dropdown || !button) return;
+        
+        // Update dropdown content before showing
+        this.updateUserFilterDropdown();
+        
+        dropdown.classList.add('show');
+        button.classList.add('active');
+    }
+    
+    /**
+     * Hide user filter dropdown
+     */
+    hideUserFilterDropdown() {
+        const dropdown = document.getElementById('userFilterDropdown');
+        const button = document.getElementById('userFilter');
+        
+        if (!dropdown || !button) return;
+        
+        dropdown.classList.remove('show');
+        button.classList.remove('active');
+    }
+    
+    /**
+     * Update user filter dropdown content
+     */
+    updateUserFilterDropdown() {
+        const activeUsersList = document.getElementById('activeUsersList');
+        const allUsersCount = document.getElementById('allUsersCount');
+        
+        if (!activeUsersList || !allUsersCount) return;
+        
+        // Update "All Users" count
+        allUsersCount.textContent = `${this.dataManager.todos.length} tasks`;
+        
+        // Get users with todos
+        const usersWithTodos = this.getUsersWithTodos();
+        
+        // Clear existing options
+        activeUsersList.innerHTML = '';
+        
+        if (usersWithTodos.length === 0) {
+            activeUsersList.innerHTML = '<div class="filter-option disabled">No assigned users</div>';
+            return;
+        }
+        
+        // Add user options
+        usersWithTodos.forEach(user => {
+            const userInitials = this.getUserInitials(user.full_name || user.name);
+            // Use assignedName (how todos are actually assigned) for filtering
+            const userFilterId = user.assignedName || user.name;
+            const isSelected = this.currentUserFilter === userFilterId;
+            
+            const option = document.createElement('div');
+            option.className = `filter-option ${isSelected ? 'active' : ''}`;
+            option.setAttribute('data-user-id', userFilterId);
+            
+            option.innerHTML = `
+                <div class="user-avatar">
+                    ${userInitials}
+                </div>
+                <div class="user-info">
+                    <div class="user-name">${user.full_name || user.name}</div>
+                    <div class="user-count">${user.todoCount} task${user.todoCount !== 1 ? 's' : ''}</div>
+                </div>
+            `;
+            
+            activeUsersList.appendChild(option);
+        });
+    }
+    
+    /**
+     * Select a user filter
+     */
+    selectUserFilter(userId) {
+        this.handleUserFilterChange(userId);
+        this.hideUserFilterDropdown();
+    }
+    
+    /**
+     * Get user initials for avatar
+     */
+    getUserInitials(fullName) {
+        if (!fullName) return '?';
+        
+        const parts = fullName.trim().split(' ');
+        if (parts.length >= 2) {
+            return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+        } else {
+            return parts[0].substring(0, 2).toUpperCase();
+        }
+    }
+    
+    /**
      * Load initial data
      */
     async loadInitialData() {
@@ -97,15 +304,11 @@ class TodoKanbanApp {
             // Show loading state
             this.showLoading();
             
-            // Load todos from data manager (uses initial window data)
-            const todosByColumn = this.dataManager.getTodosByColumn();
-            
-            // Render all columns
-            this.columnManager.renderAllColumns(todosByColumn);
+            // Initial render with current filters (respects "Show Activities" default/persisted state)
+            this.applyCurrentFilters();
             
             console.log('Initial data loaded:', {
-                totalTodos: this.dataManager.todos.length,
-                todosByColumn: todosByColumn
+                totalTodos: this.dataManager.todos.length
             });
             
         } catch (error) {
@@ -155,6 +358,14 @@ class TodoKanbanApp {
             filteredTodos = this.dataManager.searchTodos(this.currentSearchQuery);
         }
         
+        // Apply activity toggle: if showActivities is false, exclude todos referencing activity doctypes
+        if (!this.showActivities) {
+            filteredTodos = filteredTodos.filter(todo => {
+                const refType = todo.reference && todo.reference.type;
+                return !this.isActivityReference(refType);
+            });
+        }
+        
         // Group by columns
         const todosByColumn = {
             backlog: [],
@@ -180,8 +391,115 @@ class TodoKanbanApp {
         this.currentUserFilter = userId || null;
         this.applyCurrentFilters();
         
-        // Update URL or state if needed
+        // Update the user filter display
+        this.updateUserFilterDisplay();
+        
         console.log('User filter changed:', userId);
+    }
+    
+    /**
+     * Update user filter display with current selection
+     */
+    updateUserFilterDisplay() {
+        const userFilter = document.getElementById('userFilter');
+        if (!userFilter) return;
+        
+        if (this.currentUserFilter) {
+            const user = this.dataManager.getUserById(this.currentUserFilter);
+            if (user) {
+                userFilter.textContent = user.full_name || user.name;
+                userFilter.classList.add('active');
+            }
+        } else {
+            userFilter.textContent = 'All Users';
+            userFilter.classList.remove('active');
+        }
+    }
+    
+    /**
+     * Get users who have todos assigned with counts
+     */
+    getUsersWithTodos() {
+        const userCounts = {};
+        
+        // Count active todos per user - exclude closed/cancelled todos
+        this.dataManager.todos.forEach(todo => {
+            // Skip closed or cancelled todos
+            if (todo.status === 'Closed' || todo.status === 'Cancelled') {
+                return;
+            }
+            
+            let userId = null;
+            
+            // Check different possible user field formats
+            if (todo.allocated_to) {
+                userId = todo.allocated_to;
+            } else if (todo.user && todo.user.name) {
+                userId = todo.user.name;
+            } else if (todo.user && typeof todo.user === 'string') {
+                userId = todo.user;
+            }
+            
+            if (userId) {
+                userCounts[userId] = (userCounts[userId] || 0) + 1;
+            }
+        });
+        
+        // Try to match assigned names to system users
+        const usersWithTodos = [];
+        Object.keys(userCounts).forEach(assignedName => {
+            // Try multiple matching strategies
+            let matchedUser = null;
+            
+            // Strategy 1: Direct match by name (email)
+            matchedUser = this.dataManager.users.find(user => user.name === assignedName);
+            
+            // Strategy 2: Match by full_name
+            if (!matchedUser) {
+                matchedUser = this.dataManager.users.find(user => 
+                    (user.full_name || '').toLowerCase() === assignedName.toLowerCase()
+                );
+            }
+            
+            // Strategy 3: Match by first name
+            if (!matchedUser) {
+                matchedUser = this.dataManager.users.find(user => {
+                    const firstName = (user.full_name || user.name || '').split(' ')[0].toLowerCase();
+                    return firstName === assignedName.toLowerCase();
+                });
+            }
+            
+            // Strategy 4: Partial match in full name
+            if (!matchedUser) {
+                matchedUser = this.dataManager.users.find(user => 
+                    (user.full_name || '').toLowerCase().includes(assignedName.toLowerCase())
+                );
+            }
+            
+            if (matchedUser) {
+                usersWithTodos.push({
+                    ...matchedUser,
+                    assignedName: assignedName, // Keep track of how todos are assigned
+                    todoCount: userCounts[assignedName]
+                });
+            } else {
+                // If we can't find user details, create a basic user object
+                usersWithTodos.push({
+                    name: assignedName,
+                    full_name: assignedName,
+                    assignedName: assignedName,
+                    todoCount: userCounts[assignedName]
+                });
+            }
+        });
+        
+        // Sort by todo count (descending) then by name
+        return usersWithTodos.sort((a, b) => {
+            if (b.todoCount !== a.todoCount) {
+                return b.todoCount - a.todoCount;
+            }
+            return (a.full_name || a.name).localeCompare(b.full_name || b.name);
+        });
     }
     
     /**
@@ -192,6 +510,38 @@ class TodoKanbanApp {
         this.applyCurrentFilters();
         
         console.log('Search query changed:', query);
+    }
+    
+    /**
+     * Setup activity toggle UI ("Show Activities" switch)
+     */
+    setupActivityToggle() {
+        const toggle = document.getElementById('activityToggle');
+        if (!toggle) return;
+        
+        // Initialize from state: checked = showActivities
+        toggle.checked = !!this.showActivities;
+        
+        toggle.addEventListener('change', (e) => {
+            this.showActivities = !!e.target.checked;
+            // Persist user preference: '1' = show activities, '0' = hide activities
+            try {
+                localStorage.setItem('todo_show_activities', this.showActivities ? '1' : '0');
+            } catch (err) {
+                // Ignore storage errors (e.g., private mode)
+            }
+            console.log('Show activities set to', this.showActivities);
+            this.applyCurrentFilters();
+        });
+    }
+    
+    /**
+     * Determine if a doctype is considered an "activity" reference.
+     * Only 'Activity' is considered for this filter.
+     */
+    isActivityReference(doctype) {
+        if (!doctype) return false;
+        return String(doctype).toLowerCase() === 'activity';
     }
     
     /**
@@ -349,7 +699,7 @@ class TodoKanbanApp {
         
         // F: Focus search (if search field exists)
         if (e.key === 'f' && !e.ctrlKey && !e.metaKey) {
-            const searchField = document.querySelector('input[type="search"]');
+            const searchField = document.getElementById('searchInput');
             if (searchField) {
                 e.preventDefault();
                 searchField.focus();
@@ -779,16 +1129,47 @@ class TodoKanbanApp {
                 return;
             }
             
+            // Store current data for comparison (only UI-relevant fields)
+            const currentTodosHash = this.getUIRelevantDataHash(this.dataManager.todos);
+            
             // Fetch fresh data from server without showing loading
             await this.dataManager.getTodos();
             
-            // Apply current filters and re-render
-            this.applyCurrentFilters();
+            // Compare with new data (only UI-relevant fields)
+            const newTodosHash = this.getUIRelevantDataHash(this.dataManager.todos);
+            
+            // Only update UI if data has actually changed
+            if (currentTodosHash !== newTodosHash) {
+                console.log('Meaningful data changed, updating UI...');
+                // Apply current filters and re-render
+                this.applyCurrentFilters();
+            } else {
+                console.log('No meaningful changes detected, skipping UI update');
+            }
             
         } catch (error) {
             console.error('Quiet refresh failed:', error);
             // Don't show error messages to keep it quiet
         }
+    }
+    
+    /**
+     * Get hash of UI-relevant data only (excluding timestamps and other metadata)
+     */
+    getUIRelevantDataHash(todos) {
+        // Extract only the fields that affect UI display
+        const relevantData = todos.map(todo => ({
+            name: todo.name,
+            description: todo.description,
+            status: todo.status,
+            priority: todo.priority,
+            allocated_to: todo.allocated_to,
+            color: todo.color,
+            date: todo.date, // due date is UI relevant
+            column: todo.column
+        }));
+        
+        return JSON.stringify(relevantData);
     }
     
     /**

@@ -38,6 +38,27 @@ class TodoModalManager {
         this.cancelBtn = document.getElementById('cancelBtn');
         this.saveBtn = document.getElementById('saveBtn');
         
+        // Ensure modal footer buttons exist (fallback if template was modified)
+        const modalFooter = this.todoModal ? this.todoModal.querySelector('.modal-footer') : null;
+        if (modalFooter) {
+            if (!this.cancelBtn) {
+                this.cancelBtn = document.createElement('button');
+                this.cancelBtn.type = 'button';
+                this.cancelBtn.id = 'cancelBtn';
+                this.cancelBtn.className = 'btn btn-secondary';
+                this.cancelBtn.textContent = 'Cancel';
+                modalFooter.insertBefore(this.cancelBtn, modalFooter.firstChild);
+            }
+            if (!this.saveBtn) {
+                this.saveBtn = document.createElement('button');
+                this.saveBtn.type = 'button';
+                this.saveBtn.id = 'saveBtn';
+                this.saveBtn.className = 'btn btn-primary';
+                this.saveBtn.textContent = 'Save Todo';
+                modalFooter.appendChild(this.saveBtn);
+            }
+        }
+        
         // Form elements
         this.todoId = document.getElementById('todoId');
         this.todoDescription = document.getElementById('todoDescription');

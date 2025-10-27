@@ -141,34 +141,12 @@ class TodoCardRenderer {
     }
     
     /**
-     * Render card body (description)
-     */
-    renderCardBody(card, todo) {
-        const description = card.querySelector('.card-description');
-        
-        if (description && todo.description) {
-            // Strip HTML tags
-            const plainText = this.stripHtml(todo.description);
-            
-            // Store full text in data attribute for editing
-            description.setAttribute('data-full-text', plainText);
-            description.setAttribute('data-original-text', plainText);
-            
-            // Show full text in expanded cards (no truncation)
-            description.textContent = plainText;
-            description.title = plainText; // Full text on hover
-            
-            // Make description editable
-            description.contentEditable = true;
-        }
-    }
-    
-    /**
      * Render card footer (user info and actions)
      */
     renderCardFooter(card, todo) {
         const userAvatar = card.querySelector('.user-avatar');
         const userName = card.querySelector('.user-name');
+        const openFrappeBtn = card.querySelector('.open-frappe-btn');
         const editBtn = card.querySelector('.edit-btn');
         const deleteBtn = card.querySelector('.delete-btn');
         
@@ -326,6 +304,33 @@ class TodoCardRenderer {
             });
         }
         
+        // Open in Frappe button
+        const openFrappeBtn = card.querySelector('.open-frappe-btn');
+        if (openFrappeBtn) {
+            openFrappeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.handleOpenFrappeClick(todo);
+            });
+        }
+        
+        // Complete button
+        const completeBtn = card.querySelector('.complete-btn');
+        if (completeBtn) {
+            completeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.handleCompleteClick(todo);
+            });
+        }
+        
+        // Cancel button
+        const cancelBtn = card.querySelector('.cancel-btn');
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.handleCancelClick(todo);
+            });
+        }
+        
         // Delete button
         const deleteBtn = card.querySelector('.delete-btn');
         if (deleteBtn) {
@@ -417,6 +422,144 @@ class TodoCardRenderer {
     handleEditClick(todo) {
         if (window.todoKanban && window.todoKanban.showEditTodoModal) {
             window.todoKanban.showEditTodoModal(todo);
+        }
+    }
+    
+    /**
+     * Handle open in Frappe button click
+     */
+    handleOpenFrappeClick(todo) {
+        const baseUrl = window.location.origin;
+        const todoUrl = `${baseUrl}/app/todo/${encodeURIComponent(todo.name)}`;
+        
+        // Open in new tab
+        window.open(todoUrl, '_blank');
+        
+        // Show feedback toast
+        if (window.showToast) {
+            window.showToast('Opening todo in Frappe...', 'info');
+        }
+    }
+    
+    /**
+     * Handle complete button click
+     */
+    async handleCompleteClick(todo) {
+        try {
+            const dataManager = window.todoKanban?.dataManager;
+            if (!dataManager) {
+                throw new Error('Data manager not available');
+            }
+            
+            // Check permissions
+            if (!dataManager.canEditTodo(todo)) {
+                throw new Error('You do not have permission to complete this todo');
+            }
+            
+            // Show loading state on button
+            const cardElement = this.getCardElement(todo.name);
+            const completeBtn = cardElement?.querySelector('.complete-btn');
+            if (completeBtn) {
+                completeBtn.disabled = true;
+                completeBtn.innerHTML = '<i class="mdi mdi-loading mdi-spin"></i>';
+            }
+            
+            // Update status to Closed in backend
+            await dataManager.updateTodoStatus(todo.name, 'Closed');
+            
+            // Remove card from UI with animation
+            this.animateCardOut(cardElement, () => {
+                if (cardElement && cardElement.parentNode) {
+                    cardElement.parentNode.removeChild(cardElement);
+                }
+            });
+            
+            // Show success message
+            if (window.showToast) {
+                window.showToast('Task marked as complete!', 'success');
+            }
+            
+            // Refresh the kanban to update counts
+            if (window.todoKanban && window.todoKanban.refreshTodos) {
+                setTimeout(() => {
+                    window.todoKanban.refreshTodos();
+                }, 500);
+            }
+            
+        } catch (error) {
+            console.error('Failed to complete todo:', error);
+            if (window.showToast) {
+                window.showToast('Failed to complete task: ' + error.message, 'error');
+            }
+            
+            // Restore button state
+            const cardElement = this.getCardElement(todo.name);
+            const completeBtn = cardElement?.querySelector('.complete-btn');
+            if (completeBtn) {
+                completeBtn.disabled = false;
+                completeBtn.innerHTML = '<i class="mdi mdi-check-circle"></i>';
+            }
+        }
+    }
+    
+    /**
+     * Handle cancel button click
+     */
+    async handleCancelClick(todo) {
+        try {
+            const dataManager = window.todoKanban?.dataManager;
+            if (!dataManager) {
+                throw new Error('Data manager not available');
+            }
+            
+            // Check permissions
+            if (!dataManager.canEditTodo(todo)) {
+                throw new Error('You do not have permission to cancel this todo');
+            }
+            
+            // Show loading state on button
+            const cardElement = this.getCardElement(todo.name);
+            const cancelBtn = cardElement?.querySelector('.cancel-btn');
+            if (cancelBtn) {
+                cancelBtn.disabled = true;
+                cancelBtn.innerHTML = '<i class="mdi mdi-loading mdi-spin"></i>';
+            }
+            
+            // Update status to Cancelled in backend
+            await dataManager.updateTodoStatus(todo.name, 'Cancelled');
+            
+            // Remove card from UI with animation
+            this.animateCardOut(cardElement, () => {
+                if (cardElement && cardElement.parentNode) {
+                    cardElement.parentNode.removeChild(cardElement);
+                }
+            });
+            
+            // Show success message
+            if (window.showToast) {
+                window.showToast('Task cancelled', 'info');
+            }
+            
+            // Refresh the kanban to update counts
+            if (window.todoKanban && window.todoKanban.refreshTodos) {
+                setTimeout(() => {
+                    window.todoKanban.refreshTodos();
+                }, 500);
+            }
+            
+        } catch (error) {
+            console.error('Failed to cancel todo:', error);
+            if (window.showToast) {
+                window.showToast('Failed to cancel task: ' + error.message, 'error');
+            }
+            
+            // Restore button state
+            const cardElement = this.getCardElement(todo.name);
+            const cancelBtn = cardElement?.querySelector('.cancel-btn');
+            if (cancelBtn) {
+                cancelBtn.disabled = false;
+                cancelBtn.innerHTML = '<i class="mdi mdi-close-circle"></i>';
+            }
         }
     }
     
@@ -702,43 +845,77 @@ class TodoCardRenderer {
     }
     
     /**
-     * Handle drag end
+     * Render card body (description)
      */
-    handleDragEnd(e, todo) {
-        const card = e.target;
-        card.classList.remove('dragging');
+    renderCardBody(card, todo) {
+        const description = card.querySelector('.card-description');
         
-        // Clean up any drag-related styling
-        document.querySelectorAll('.drag-over').forEach(el => {
-            el.classList.remove('drag-over');
-        });
+        if (description && todo.description) {
+            // Strip HTML tags
+            const plainText = this.stripHtml(todo.description);
+            
+            // Store full text in data attribute for editing
+            description.setAttribute('data-full-text', plainText);
+            description.setAttribute('data-original-text', plainText);
+            
+            // Show full text in expanded cards (no truncation)
+            description.textContent = plainText;
+            description.title = plainText; // Full text on hover
+            
+            // Make description editable
+            description.contentEditable = true;
+        }
     }
     
     /**
-     * Create custom drag image
+     * Render card footer (user info and actions)
      */
-    createDragImage(e, card) {
-        // Create a clone of the card for dragging
-        const dragImage = card.cloneNode(true);
-        dragImage.style.transform = 'rotate(5deg)';
-        dragImage.style.opacity = '0.8';
-        dragImage.style.position = 'absolute';
-        dragImage.style.top = '-1000px';
-        dragImage.style.left = '-1000px';
-        dragImage.style.width = card.offsetWidth + 'px';
-        dragImage.style.pointerEvents = 'none';
+    renderCardFooter(card, todo) {
+        const userAvatar = card.querySelector('.user-avatar');
+        const userName = card.querySelector('.user-name');
+        const openFrappeBtn = card.querySelector('.open-frappe-btn');
+        const editBtn = card.querySelector('.edit-btn');
+        const deleteBtn = card.querySelector('.delete-btn');
         
-        document.body.appendChild(dragImage);
-        
-        // Set as drag image
-        e.dataTransfer.setDragImage(dragImage, card.offsetWidth / 2, card.offsetHeight / 2);
-        
-        // Clean up after drag
-        setTimeout(() => {
-            if (dragImage.parentNode) {
-                dragImage.parentNode.removeChild(dragImage);
+        // User info
+        if (todo.user) {
+            if (userAvatar) {
+                userAvatar.textContent = todo.user.initials || TodoUtils.getUserInitials(todo.user.full_name);
+                userAvatar.style.backgroundColor = TodoUtils.generateUserColor(todo.user.name);
+                userAvatar.title = todo.user.full_name || todo.user.name;
             }
-        }, 0);
+            
+            if (userName) {
+                userName.textContent = todo.user.full_name || todo.user.name;
+            }
+        } else {
+            // Unassigned
+            if (userAvatar) {
+                userAvatar.textContent = '?';
+                userAvatar.style.backgroundColor = '#9ca3af';
+                userAvatar.title = 'Unassigned';
+            }
+            
+            if (userName) {
+                userName.textContent = 'Unassigned';
+                userName.style.color = '#9ca3af';
+            }
+        }
+        
+        // Action buttons visibility based on permissions
+        const dataManager = window.todoKanban?.dataManager;
+        if (dataManager) {
+            const canEdit = dataManager.canEditTodo(todo);
+            const canDelete = dataManager.canDeleteTodo(todo);
+            
+            if (editBtn) {
+                editBtn.style.display = canEdit ? 'flex' : 'none';
+            }
+            
+            if (deleteBtn) {
+                deleteBtn.style.display = canDelete ? 'flex' : 'none';
+            }
+        }
     }
     
     /**

@@ -247,12 +247,12 @@ def get_everything_settings():
     if not settings:
         # Default settings with hardcoded authentication
         settings = {
-            'server_url': 'http://119.42.53.73',
-            'server_port': 8080,
+            'server_url': 'http://127.0.0.1',
+            'server_port': 80,
             'results_per_page': 50,
             'auto_search': True,
-            'username': 'eDvki23PEXTWHxxgtYoZUWAdi9J',  # Add your Everything HTTP username here
-            'password': 'A43KP497rq9HoFZtE5Vz2vvUVuT'   # Add your Everything HTTP password here
+            'username': '123',  # Add your Everything HTTP username here
+            'password': '456'   # Add your Everything HTTP password here
         }
     
     return settings

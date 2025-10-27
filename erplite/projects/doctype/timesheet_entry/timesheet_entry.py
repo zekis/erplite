@@ -68,9 +68,8 @@ class TimesheetEntry(Document):
     
     def before_save(self):
         """Actions before save"""
-        # Set date from check_in_time if not set
-        if self.check_in_time and not self.date:
-            self.date = get_datetime(self.check_in_time).date()
+        # Date field has been removed - no longer needed
+        pass
 
 @frappe.whitelist()
 def check_in(project, activity, location=None):
@@ -99,7 +98,6 @@ def check_in(project, activity, location=None):
             "activity": activity,
             "location": location,
             "check_in_time": now_datetime(),
-            "date": frappe.utils.today(),
             "status": "Draft"
         })
         timesheet.insert()

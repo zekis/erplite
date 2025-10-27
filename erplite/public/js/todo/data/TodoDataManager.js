@@ -208,7 +208,18 @@ class TodoDataManager {
      */
     filterTodosByUser(userId) {
         if (!userId) return this.todos;
-        return this.todos.filter(todo => todo.allocated_to === userId);
+        
+        return this.todos.filter(todo => {
+            // Check multiple possible user assignment fields
+            if (todo.allocated_to && todo.allocated_to !== 'undefined') {
+                return todo.allocated_to === userId;
+            } else if (todo.user && todo.user.name) {
+                return todo.user.name === userId;
+            } else if (todo.user && typeof todo.user === 'string') {
+                return todo.user === userId;
+            }
+            return false;
+        });
     }
     
     /**

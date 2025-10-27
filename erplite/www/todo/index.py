@@ -27,7 +27,13 @@ def get_context(context):
             order_by="full_name"
         )
     else:
-        users = [frappe.get_doc("User", current_user)]
+        # Get current user data as dictionary, not document object
+        current_user_doc = frappe.get_doc("User", current_user)
+        users = [{
+            "name": current_user_doc.name,
+            "full_name": current_user_doc.full_name,
+            "user_image": current_user_doc.user_image
+        }]
     
     # Get todos based on user permissions
     if is_manager:
@@ -466,3 +472,79 @@ def delete_todo(todo_name):
     except Exception as e:
         frappe.log_error(f"Error deleting todo: {str(e)}")
         return {"success": False, "message": str(e)}
+
+@frappe.whitelist()
+def get_daily_metrics():
+    """Get daily metrics for the todo dashboard"""
+    try:
+        # Get current user and permissions
+        current_user = frappe.session.user
+        is_manager = frappe.db.exists("Has Role", {
+            "parent": current_user,
+            "role": ["in", ["System Manager", "Administrator"]]
+        })
+        
+        # Get today's date in server timezone
+        today = frappe.utils.getdate(frappe.utils.today())
+        
+        # Base filters based on user permissions
+        base_filters = {}
+        if not is_manager:
+            base_filters["allocated_to"] = current_user
+        
+        # Calculate metrics
+        metrics = {
+            "created": 0,
+            "completed": 0, 
+            "cancelled": 0,
+            "active": 0
+        }
+        
+        # Created today - todos created today
+        created_filters = base_filters.copy()
+        created_filters["creation"] = [">=", today]
+        metrics["created"] = frappe.db.count("ToDo", filters=created_filters)
+        
+        # Completed - todos with Closed status that were modified today (assuming they were closed today)
+        completed_filters = base_filters.copy()
+        completed_filters["status"] = "Closed"
+        completed_filters["modified"] = [">=", today]
+        metrics["completed"] = frappe.db.count("ToDo", filters=completed_filters)
+        
+        # Cancelled - todos with Cancelled status that were modified today (assuming they were cancelled today)
+        cancelled_filters = base_filters.copy()
+        cancelled_filters["status"] = "Cancelled"
+        cancelled_filters["modified"] = [">=", today]
+        metrics["cancelled"] = frappe.db.count("ToDo", filters=cancelled_filters)
+        
+        # Active - todos with Open, Planned, or Backlog status
+        active_filters = base_filters.copy()
+        active_filters["status"] = ["in", ["Open", "Planned", "Backlog"]]
+        metrics["active"] = frappe.db.count("ToDo", filters=active_filters)
+        
+        # Additional debug info
+        debug_info = {
+            "today": str(today),
+            "user": current_user,
+            "is_manager": is_manager,
+            "timezone": frappe.utils.get_system_timezone()
+        }
+        
+        return {
+            "success": True,
+            "metrics": metrics,
+            "debug": debug_info
+        }
+        
+    except Exception as e:
+        frappe.log_error(f"Error getting daily metrics: {str(e)}")
+        return {
+            "success": False, 
+            "message": str(e),
+            "metrics": {
+                "created": 0,
+                "completed": 0,
+                "cancelled": 0, 
+                "active": 0
+            }
+        }

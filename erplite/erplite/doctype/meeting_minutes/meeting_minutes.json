@@ -1,0 +1,47 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-09-05 19:18:48.097545",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "attendees",
+  "minutes"
+ ],
+ "fields": [
+  {
+   "fieldname": "attendees",
+   "fieldtype": "Text",
+   "label": "Attendees"
+  },
+  {
+   "fieldname": "minutes",
+   "fieldtype": "Text Editor",
+   "label": "Minutes"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-09-05 19:19:54.920676",
+ "modified_by": "Administrator",
+ "module": "Erplite",
+ "name": "Meeting Minutes",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

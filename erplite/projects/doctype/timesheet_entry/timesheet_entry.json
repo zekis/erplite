@@ -1,5 +1,6 @@
 {
  "actions": [],
+ "allow_events_in_timeline": 1,
  "allow_rename": 1,
  "autoname": "naming_series:",
  "creation": "2025-06-25 18:30:00",
@@ -9,7 +10,6 @@
  "field_order": [
   "naming_series",
   "employee",
-  "date",
   "column_break_3",
   "status",
   "is_active",
@@ -50,14 +50,6 @@
    "reqd": 1
   },
   {
-   "default": "Today",
-   "fieldname": "date",
-   "fieldtype": "Date",
-   "in_list_view": 1,
-   "label": "Date",
-   "reqd": 1
-  },
-  {
    "fieldname": "column_break_3",
    "fieldtype": "Column Break"
   },
@@ -67,7 +59,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Draft\nSubmitted\nApproved\nRejected\nScheduled\nPaid",
+   "options": "Draft\nSubmitted\nApproved\nRejected\nScheduled\nProcessed",
    "reqd": 1
   },
   {
@@ -180,7 +172,7 @@
   }
  ],
  "links": [],
- "modified": "2025-07-16 10:51:30.372776",
+ "modified": "2025-08-10 13:34:21.046784",
  "modified_by": "Administrator",
  "module": "Projects",
  "name": "Timesheet Entry",

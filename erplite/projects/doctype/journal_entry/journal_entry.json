@@ -93,7 +93,7 @@
  "index_web_pages_for_search": 1,
  "is_calendar_and_gantt": 1,
  "links": [],
- "modified": "2025-06-13 11:36:12.497026",
+ "modified": "2025-09-05 16:56:10.610062",
  "modified_by": "Administrator",
  "module": "Projects",
  "name": "Journal Entry",
@@ -127,9 +127,11 @@
  ],
  "quick_entry": 1,
  "show_name_in_global_search": 1,
+ "show_title_field_in_link": 1,
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],
+ "title_field": "subject",
  "track_changes": 1,
  "track_seen": 1
 }

@@ -1,27 +1,32 @@
 {
  "actions": [],
+ "allow_import": 1,
  "allow_rename": 1,
- "autoname": "field:subject",
+ "autoname": "hash",
  "creation": "2025-07-15 21:01:00",
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
   "naming_series",
-  "subject",
-  "project",
   "column_break_3",
+  "activity_details_section",
+  "activity_name",
   "status",
-  "priority",
+  "column_break_kyxt",
+  "work_type",
+  "column_break_rdtl",
+  "override_totals",
   "section_break_6",
-  "location",
   "description",
   "section_break_9",
-  "assigned_to",
-  "due_date",
+  "project",
   "column_break_12",
-  "estimated_hours",
-  "progress_percent"
+  "estimate",
+  "column_break_vigi",
+  "section_id",
+  "section_index",
+  "section_name"
  ],
  "fields": [
   {
@@ -33,17 +38,10 @@
    "reqd": 1
   },
   {
-   "fieldname": "subject",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "label": "Activity Name",
-   "reqd": 1,
-   "unique": 1
-  },
-  {
    "fieldname": "project",
    "fieldtype": "Link",
    "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Project",
    "options": "Project",
    "reqd": 1
@@ -56,28 +54,16 @@
    "default": "Open",
    "fieldname": "status",
    "fieldtype": "Select",
+   "hidden": 1,
    "in_list_view": 1,
    "label": "Status",
-   "options": "Open\nIn Progress\nReview\nCompleted\nCancelled",
+   "options": "Estimate\nOpen\nComplete\nClosed\nCancelled",
    "reqd": 1
-  },
-  {
-   "default": "Medium",
-   "fieldname": "priority",
-   "fieldtype": "Select",
-   "label": "Priority",
-   "options": "Low\nMedium\nHigh\nUrgent"
   },
   {
    "fieldname": "section_break_6",
    "fieldtype": "Section Break",
-   "label": "Activity Details"
-  },
-  {
-   "description": "Location or area where this activity is performed",
-   "fieldname": "location",
-   "fieldtype": "Data",
-   "label": "Location/Area"
+   "label": "Details"
   },
   {
    "fieldname": "description",
@@ -87,42 +73,82 @@
   {
    "fieldname": "section_break_9",
    "fieldtype": "Section Break",
-   "label": "Assignment & Timeline"
-  },
-  {
-   "fieldname": "assigned_to",
-   "fieldtype": "Link",
-   "label": "Assigned To",
-   "options": "User"
-  },
-  {
-   "fieldname": "due_date",
-   "fieldtype": "Date",
-   "label": "Due Date"
+   "label": "Project Details"
   },
   {
    "fieldname": "column_break_12",
    "fieldtype": "Column Break"
   },
   {
-   "fieldname": "estimated_hours",
-   "fieldtype": "Float",
-   "label": "Estimated Hours",
-   "precision": "2"
+   "fieldname": "work_type",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Work Type"
   },
   {
-   "default": "0",
-   "fieldname": "progress_percent",
-   "fieldtype": "Percent",
-   "label": "Progress %"
+   "fieldname": "activity_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Activity Name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "activity_details_section",
+   "fieldtype": "Section Break",
+   "label": "Activity Details"
+  },
+  {
+   "fieldname": "column_break_kyxt",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_rdtl",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "override_totals",
+   "fieldtype": "Select",
+   "label": "Override Totals",
+   "options": "No\nYes"
+  },
+  {
+   "fieldname": "estimate",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Estimate"
+  },
+  {
+   "fieldname": "column_break_vigi",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_id",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Section ID"
+  },
+  {
+   "fieldname": "section_index",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Section Index"
+  },
+  {
+   "fieldname": "section_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Section",
+   "read_only": 1
   }
  ],
  "links": [],
- "modified": "2025-07-23 11:59:06.304560",
+ "modified": "2025-08-16 11:06:22.504577",
  "modified_by": "Administrator",
  "module": "Projects",
  "name": "Activity",
- "naming_rule": "By fieldname",
+ "naming_rule": "Random",
  "owner": "Administrator",
  "permissions": [
   {
@@ -161,11 +187,33 @@
    "write": 1
   }
  ],
+ "search_fields": "estimate",
  "show_title_field_in_link": 1,
- "sort_field": "modified",
+ "sort_field": "creation",
  "sort_order": "DESC",
- "states": [],
- "title_field": "subject",
+ "states": [
+  {
+   "color": "Yellow",
+   "title": "Estimate"
+  },
+  {
+   "color": "Green",
+   "title": "Open"
+  },
+  {
+   "color": "Blue",
+   "title": "Complete"
+  },
+  {
+   "color": "Orange",
+   "title": "Closed"
+  },
+  {
+   "color": "Red",
+   "title": "Cancelled"
+  }
+ ],
+ "title_field": "activity_name",
  "track_changes": 1,
  "translated_doctype": 1
 }

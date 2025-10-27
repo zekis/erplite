@@ -40,6 +40,7 @@
         @create-entry="$emit('create-entry', $event)"
         @update-entry="$emit('update-entry', $event)"
         @delete-entry="$emit('delete-entry', $event)"
+        @navigate-to-start="$emit('navigate-to-start', $event)"
       />
       
       <!-- Add Activity Row Button (when expanded) -->

@@ -1,9 +1,9 @@
 <template>
   <div class="project-header-row flex items-center w-full border-b bg-gradient-to-r from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 text-gray-900 dark:text-white border-gray-200 dark:border-gray-700"
   :style="getDivisionColorStyle()">
-    <!-- Project Info Section (spans where Project/Activity, Role, Resource columns would be) -->
+    <!-- Project Info Section (spans where Tools, Project/Activity, Role, Resource columns would be) -->
     <div class="project-info-section flex items-center justify-between p-3 font-semibold" 
-         :style="{ width: fixedColumnsWidth + 'px', minWidth: fixedColumnsWidth + 'px' }">
+         :style="{ width: (fixedColumnsWidth + 40) + 'px', minWidth: (fixedColumnsWidth + 40) + 'px' }">
       <!-- Left side: Project info -->
       <div class="project-info flex items-center">
         <button 

@@ -1,123 +1,144 @@
 <template>
-  <Dialog 
-    v-model:visible="isVisible" 
-    modal 
-    header="Edit Shift Notes" 
-    :style="{ width: '50rem' }"
-    :breakpoints="{ '1199px': '75vw', '575px': '90vw' }"
-    @hide="handleClose"
+  <!-- Modal Overlay -->
+  <div 
+    v-if="isVisible"
+    class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50"
+    @click.self="handleClose"
   >
-    <div class="space-y-4">
-      <!-- Shift Info -->
-      <div v-if="shift" class="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-        <div class="flex items-center justify-between mb-2">
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
-            {{ formatTimeRange(shift.start_time, shift.end_time) }}
-          </h3>
-          <span :class="[
-            'px-2 py-1 text-xs font-medium rounded-full',
-            shift.is_night_shift 
-              ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200'
-              : 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
-          ]">
-            {{ shift.is_night_shift ? 'Night Shift' : 'Day Shift' }}
-          </span>
-        </div>
-        <div class="text-sm text-gray-600 dark:text-gray-400">
-          {{ formatDuration(shift.hours) }} • {{ formatDates(dates) }}
-        </div>
+    <!-- Modal Dialog -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+      <!-- Header -->
+      <div class="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
+        <h2 class="text-xl font-semibold text-gray-900 dark:text-white">Edit Shift Notes</h2>
+        <button
+          @click="handleClose"
+          class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+        >
+          <Icon icon="lucide:x" class="w-6 h-6" />
+        </button>
       </div>
 
-      <!-- Notes Editor -->
-      <div class="space-y-2">
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-          Notes
-        </label>
-        <Textarea 
-          v-model="localNotes"
-          placeholder="Add notes about this shift..."
-          :rows="6"
-          class="w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-        />
-        <div class="text-xs text-gray-500 dark:text-gray-400">
-          {{ localNotes.length }}/500 characters
+      <!-- Content -->
+      <div class="p-6 space-y-4">
+        <!-- Shift Info -->
+        <div v-if="shift" class="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ formatTimeRange(shift.start_time, shift.end_time) }}
+            </h3>
+            <span :class="[
+              'px-2 py-1 text-xs font-medium rounded-full',
+              shift.is_night_shift 
+                ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200'
+                : 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
+            ]">
+              {{ shift.is_night_shift ? 'Night Shift' : 'Day Shift' }}
+            </span>
+          </div>
+          <div class="text-sm text-gray-600 dark:text-gray-400">
+            {{ formatDuration(shift.hours) }} • {{ formatDates(dates) }}
+          </div>
         </div>
-      </div>
 
-      <!-- Quick Notes Templates -->
-      <div class="space-y-2">
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-          Quick Templates
-        </label>
-        <div class="grid grid-cols-2 gap-2">
-          <Button
-            v-for="template in noteTemplates"
-            :key="template.id"
-            :label="template.label"
-            severity="secondary"
-            size="small"
-            @click="addTemplate(template.text)"
-            class="text-left justify-start"
-          />
+        <!-- Notes Editor -->
+        <div class="space-y-2">
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            Notes
+          </label>
+          <textarea 
+            v-model="localNotes"
+            placeholder="Add notes about this shift..."
+            rows="6"
+            class="w-full p-3 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:focus:ring-blue-400 dark:focus:border-blue-400 resize-none"
+          ></textarea>
+          <div class="text-xs text-gray-500 dark:text-gray-400">
+            {{ localNotes.length }}/500 characters
+          </div>
         </div>
-      </div>
 
-      <!-- Tags -->
-      <div class="space-y-2">
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-          Tags
-        </label>
-        <div class="flex flex-wrap gap-2">
-          <span
-            v-for="tag in selectedTags"
-            :key="tag"
-            class="inline-flex items-center px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full dark:bg-blue-900 dark:text-blue-200"
-          >
-            {{ tag }}
+        <!-- Quick Notes Templates -->
+        <div class="space-y-2">
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            Quick Templates
+          </label>
+          <div class="grid grid-cols-2 gap-2">
             <button
-              @click="removeTag(tag)"
-              class="ml-1 text-blue-600 hover:text-blue-800 dark:text-blue-300 dark:hover:text-blue-100"
+              v-for="template in noteTemplates"
+              :key="template.id"
+              @click="addTemplate(template.text)"
+              class="p-2 text-left text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors border border-gray-200 dark:border-gray-600"
             >
-              <Icon icon="lucide:x" class="w-3 h-3" />
+              {{ template.label }}
             </button>
-          </span>
+          </div>
         </div>
-        <div class="flex flex-wrap gap-1">
-          <button
-            v-for="tag in availableTags"
-            :key="tag"
-            @click="addTag(tag)"
-            class="px-2 py-1 text-xs text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-full transition-colors dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+
+        <!-- Tags -->
+        <div class="space-y-2">
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            Tags
+          </label>
+          <div class="flex flex-wrap gap-2 mb-2">
+            <span
+              v-for="tag in selectedTags"
+              :key="tag"
+              class="inline-flex items-center px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full dark:bg-blue-900 dark:text-blue-200"
+            >
+              {{ tag }}
+              <button
+                @click="removeTag(tag)"
+                class="ml-1 text-blue-600 hover:text-blue-800 dark:text-blue-300 dark:hover:text-blue-100"
+              >
+                <Icon icon="lucide:x" class="w-3 h-3" />
+              </button>
+            </span>
+          </div>
+          <div class="flex flex-wrap gap-1">
+            <button
+              v-for="tag in filteredAvailableTags"
+              :key="tag"
+              @click="addTag(tag)"
+              class="px-2 py-1 text-xs text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-full transition-colors border border-gray-200 dark:border-gray-600"
+            >
+              + {{ tag }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="flex justify-between items-center p-6 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700 rounded-b-lg">
+        <div class="flex space-x-2">
+          <button 
+            @click="clearNotes"
+            :disabled="!localNotes && selectedTags.length === 0"
+            class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-600 border border-gray-300 dark:border-gray-500 rounded-md hover:bg-gray-50 dark:hover:bg-gray-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            + {{ tag }}
+            Clear
+          </button>
+        </div>
+        <div class="flex space-x-2">
+          <button 
+            @click="handleClose"
+            class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-600 border border-gray-300 dark:border-gray-500 rounded-md hover:bg-gray-50 dark:hover:bg-gray-500 transition-colors"
+          >
+            Cancel
+          </button>
+          <button 
+            @click="handleSave"
+            class="px-4 py-2 text-sm font-medium text-white bg-blue-600 dark:bg-blue-500 border border-blue-600 dark:border-blue-500 rounded-md hover:bg-blue-700 dark:hover:bg-blue-600 transition-colors"
+          >
+            Save Notes
           </button>
         </div>
       </div>
     </div>
-
-    <template #footer>
-      <div class="flex justify-between items-center w-full">
-        <div class="flex space-x-2">
-          <Button 
-            label="Clear" 
-            severity="secondary" 
-            @click="clearNotes"
-            :disabled="!localNotes && selectedTags.length === 0"
-          />
-        </div>
-        <div class="flex space-x-2">
-          <Button label="Cancel" severity="secondary" @click="handleClose" />
-          <Button label="Save Notes" @click="handleSave" />
-        </div>
-      </div>
-    </template>
-  </Dialog>
+  </div>
 </template>
 
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { Icon } from '@iconify/vue'
-// Composables removed - using direct Tailwind classes
 
 // Props
 const props = defineProps({

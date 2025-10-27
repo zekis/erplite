@@ -2,7 +2,8 @@
  "actions": [],
  "allow_rename": 1,
  "autoname": "naming_series:",
- "creation": "2023-05-04 16:51:00.000000",
+ "creation": "2023-05-04 16:51:00",
+ "default_email_template": "Sales Invoice Email Template",
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
@@ -16,6 +17,7 @@
   "company",
   "currency",
   "status",
+  "reference",
   "section_break_9",
   "items",
   "section_break_11",
@@ -197,13 +199,19 @@
    "fieldtype": "Datetime",
    "label": "Xero Sync Date",
    "read_only": 1
+  },
+  {
+   "fieldname": "reference",
+   "fieldtype": "Data",
+   "label": "Reference"
   }
  ],
  "links": [],
- "modified": "2023-05-04 16:51:00.000000",
+ "modified": "2025-10-27 16:17:19.325957",
  "modified_by": "Administrator",
  "module": "Accounts",
  "name": "Sales Invoice",
+ "naming_rule": "By \"Naming Series\" field",
  "owner": "Administrator",
  "permissions": [
   {
@@ -244,5 +252,6 @@
  ],
  "sort_field": "modified",
  "sort_order": "DESC",
+ "states": [],
  "track_changes": 1
 }

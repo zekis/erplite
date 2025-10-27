@@ -17,6 +17,7 @@ declare module 'vue' {
     DragTooltip: typeof import('./src/components/scheduler/DragTooltip.vue')['default']
     EmptyDayCell: typeof import('./src/components/scheduler/EmptyDayCell.vue')['default']
     FilterableDropdown: typeof import('./src/components/scheduler/FilterableDropdown.vue')['default']
+    FilterDropdown: typeof import('./src/components/scheduler/FilterDropdown.vue')['default']
     MultiDayShiftGroup: typeof import('./src/components/scheduler/MultiDayShiftGroup.vue')['default']
     NotesEditDialog: typeof import('./src/components/scheduler/NotesEditDialog.vue')['default']
     ProjectGroup: typeof import('./src/components/scheduler/ProjectGroup.vue')['default']

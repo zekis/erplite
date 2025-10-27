@@ -5,45 +5,48 @@
       <!-- Fixed Columns Header -->
       <div 
         class="fixed-columns-header flex" 
-        :style="{ width: fixedColumnsWidth + 'px', minWidth: fixedColumnsWidth + 'px' }"
+        :style="{ width: (fixedColumnsWidth + 40) + 'px', minWidth: (fixedColumnsWidth + 40) + 'px' }"
       >
-        <div class="header-cell border-r flex flex-col bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700" 
+        <!-- Tools Column Header -->
+        <div class="header-cell border-r flex flex-col items-center justify-center bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700" 
+             style="width: 40px; min-width: 40px;">
+          <div class="font-semibold p-2 text-xs"></div>
+        </div>
+        
+        <div class="header-cell border-r flex items-center bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700" 
              :style="{ width: projectColumnWidth + 'px', minWidth: projectColumnWidth + 'px' }">
-          <div class="font-semibold p-2 pb-1">Project / Activity</div>
-          <div class="px-2 pb-2">
-            <FilterableDropdown
+          <div class="px-2 w-full">
+            <FilterDropdown
               v-model="filters.project"
               :options="projectFilterOptions"
               type="project"
-              placeholder="Filter proj/activities..."
+              placeholder="Projects/activities..."
               :allow-clear="true"
               @change="handleProjectFilter"
             />
           </div>
         </div>
-        <div class="header-cell border-r flex flex-col bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700" 
+        <div class="header-cell border-r flex items-center bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700" 
              :style="{ width: roleColumnWidth + 'px', minWidth: roleColumnWidth + 'px' }">
-          <div class="font-semibold p-2 pb-1">Role</div>
-          <div class="px-2 pb-2">
-            <FilterableDropdown
+          <div class="px-2 w-full">
+            <FilterDropdown
               v-model="filters.role"
               :options="roleFilterOptions"
               type="role"
-              placeholder="Filter roles..."
+              placeholder="Roles..."
               :allow-clear="true"
               @change="handleRoleFilter"
             />
           </div>
         </div>
-        <div class="header-cell flex flex-col bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700" 
+        <div class="header-cell flex items-center bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700" 
              :style="{ width: resourceColumnWidth + 'px', minWidth: resourceColumnWidth + 'px' }">
-          <div class="font-semibold p-2 pb-1">Resource</div>
-          <div class="px-2 pb-2">
-            <FilterableDropdown
+          <div class="px-2 w-full">
+            <FilterDropdown
               v-model="filters.resource"
               :options="resourceFilterOptions"
               type="resource"
-              placeholder="Filter resources..."
+              placeholder="Resources..."
               :allow-clear="true"
               @change="handleResourceFilter"
             />
@@ -143,6 +146,7 @@ import { format, addDays } from 'date-fns'
 import ProjectGroup from './ProjectGroup.vue'
 import ActivityRow from './ActivityRow.vue'
 import FilterableDropdown from './FilterableDropdown.vue'
+import FilterDropdown from './FilterDropdown.vue'
 // Composables removed - using direct Tailwind classes
 
 // Refs

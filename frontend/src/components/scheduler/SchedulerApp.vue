@@ -76,8 +76,8 @@
       </div>
     </div>
 
-    <!-- Toast Notifications -->
-    <Toast />
+    <!-- Toast Notifications - positioned at bottom -->
+    <Toast position="bottom-right" />
   </div>
 </template>
 

@@ -7,7 +7,7 @@
       isDragging ? 'opacity-50 scale-95 z-50' : 'z-20',
       isSelected ? 'ring-2 ring-blue-400 ring-offset-1' : '',
       'hover:shadow-md hover:scale-[1.02] hover:z-20',
-      props.shift.startsOffScreen ? 'off-screen-indicator' : ''
+      props.shift.isPartial ? 'partial-shift' : ''
     ]"
     :style="barStyle"
     :draggable="true"
@@ -17,15 +17,27 @@
     @contextmenu="handleRightClick"
     :title="tooltipText"
   >
-    <!-- Off-screen continuation indicator -->
+    <!-- Left continuation indicator -->
     <div 
       v-if="props.shift.startsOffScreen"
-      class="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-yellow-400 to-orange-500 rounded-l-lg"
-      title="This shift continues from before the visible date range"
-    />
-    <!-- Left resize handle -->
+      class="absolute left-0 top-0 bottom-0 w-3 bg-gradient-to-r from-orange-400 to-transparent rounded-l-lg flex items-center justify-start pl-0.5 cursor-pointer hover:from-orange-500 transition-colors duration-200"
+      title="Click to navigate to start of shift"
+      @click.stop="handleNavigateToStart"
+    >
+      <Icon icon="lucide:chevron-left" class="w-3 h-3 text-white opacity-90" />
+    </div>
+    
+    <!-- Right continuation indicator -->
     <div 
-      v-if="dates.length > 1 || canExtend"
+      v-if="props.shift.endsOffScreen"
+      class="absolute right-0 top-0 bottom-0 w-3 bg-gradient-to-l from-orange-400 to-transparent rounded-r-lg flex items-center justify-end pr-0.5"
+      title="Continues to later dates"
+    >
+      <Icon icon="lucide:chevron-right" class="w-3 h-3 text-white opacity-90" />
+    </div>
+    <!-- Left resize handle - only show if shift doesn't start off-screen -->
+    <div 
+      v-if="(dates.length > 1 || canExtend) && !props.shift.startsOffScreen"
       class="absolute left-0 top-0 bottom-0 w-4 bg-black bg-opacity-0 hover:bg-opacity-20 cursor-w-resize transition-all duration-200 rounded-l-lg flex items-center justify-center"
       @mousedown="handleResizeStart($event, 'left')"
       @click.stop
@@ -34,9 +46,9 @@
       <div class="w-1 h-6 bg-white bg-opacity-60 rounded-sm opacity-0 hover:opacity-100 transition-opacity"></div>
     </div>
 
-    <!-- Right resize handle -->
+    <!-- Right resize handle - only show if shift doesn't end off-screen -->
     <div 
-      v-if="dates.length > 1 || canExtend"
+      v-if="(dates.length > 1 || canExtend) && !props.shift.endsOffScreen"
       class="absolute right-0 top-0 bottom-0 w-4 bg-black bg-opacity-0 hover:bg-opacity-20 cursor-e-resize transition-all duration-200 rounded-r-lg flex items-center justify-center"
       @mousedown="handleResizeStart($event, 'right')"
       @click.stop
@@ -45,70 +57,51 @@
       <div class="w-1 h-6 bg-white bg-opacity-60 rounded-sm opacity-0 hover:opacity-100 transition-opacity"></div>
     </div>
 
-    <!-- Shift content -->
-    <div class="flex-1 flex items-center justify-between px-3 py-1 min-w-0">
-      <!-- Left: Total hours and night shift indicator -->
-      <div class="flex items-center space-x-2 min-w-0">
-        <!-- Night shift indicator -->
-        <div 
-          v-if="isNightShift"
-          :class="[
-            'w-2 h-2 rounded-full',
-            isNightShift ? 'bg-purple-400' : 'bg-blue-400'
-          ]"
-          title="Night shift"
-        />
-        
-        <!-- Total hours -->
-        <div :class="[
-          'text-sm font-semibold',
-          isNightShift ? 'text-purple-100' : 'text-gray-800'
-        ]">
-          {{ totalHours }}h
-        </div>
-        
-        <!-- Multi-day indicator -->
-        <div 
-          v-if="dates.length > 1"
-          :class="[
-            'text-xs px-1.5 py-0.5 rounded-full font-medium',
-            isNightShift 
-              ? 'bg-purple-700/50 text-purple-100' 
-              : 'bg-gray-200 text-gray-700'
-          ]"
-        >
-          {{ dates.length }}d
-        </div>
+    <!-- Individual column durations and day/night indicators -->
+    <div 
+      v-for="(date, index) in props.dates" 
+      :key="date"
+      class="absolute flex items-center justify-between px-2 pointer-events-none"
+      :style="{
+        left: `${index * props.columnWidth}px`,
+        width: `${props.columnWidth}px`,
+        height: '100%',
+        top: '0'
+      }"
+    >
+      <!-- Duration text for this specific column -->
+      <div 
+        :class="[
+          'text-xs font-semibold',
+          isNightShift ? 'text-purple-100' : 'text-gray-700 dark:text-gray-300'
+        ]"
+        :title="`${date}: ${getDailyHours(date)}h`"
+      >
+        {{ getDailyHours(date) }}h
       </div>
-
-      <!-- Right: Notes icon and resource -->
-      <div class="flex items-center space-x-1 ml-2">
-        <!-- Notes icon -->
-        <button
-          v-if="hasNotes"
-          @click.stop="handleShowNotes"
-          :class="[
-            'p-1 rounded-full transition-all duration-200 hover:scale-110',
-            isNightShift 
-              ? 'text-purple-200 hover:bg-purple-700/30' 
-              : 'text-gray-600 hover:bg-gray-200'
-          ]"
-          title="View notes"
-        >
-          <Icon icon="lucide:sticky-note" class="w-3 h-3" />
-        </button>
-        
-        <!-- Resource avatar -->
-        <div 
-          v-if="shift.resource_name"
-          class="w-5 h-5 rounded-full flex items-center justify-center text-xs font-medium text-white"
-          :style="resourceColor ? { backgroundColor: resourceColor } : { backgroundColor: isNightShift ? '#8b5cf6' : '#3b82f6' }"
-          :title="shift.resource_name"
-        >
-          {{ getResourceInitials(shift.resource_name) }}
-        </div>
+      
+      <!-- Day/Night indicator icon -->
+      <div 
+        :class="[
+          'flex items-center justify-center',
+          isNightShift ? 'text-purple-200' : 'text-yellow-500'
+        ]"
+        :title="isNightShift ? 'Night shift' : 'Day shift'"
+      >
+        <Icon 
+          :icon="isNightShift ? 'lucide:moon' : 'lucide:sun'" 
+          class="w-3 h-3" 
+        />
       </div>
     </div>
+
+    <!-- Notes corner triangle indicator -->
+    <div 
+      v-if="hasNotes"
+      class="absolute top-0 right-0 w-0 h-0 pointer-events-none"
+      style="border-left: 8px solid transparent; border-top: 8px solid #f59e0b;"
+      title="This shift has notes"
+    />
 
 
     <!-- Right-click context menu (teleported to body) -->
@@ -195,7 +188,7 @@ const props = defineProps({
 })
 
 // Emits
-const emit = defineEmits(['edit', 'delete', 'show-notes', 'click', 'resize', 'drag-move', 'drag-end', 'drag-start', 'move-shift'])
+const emit = defineEmits(['edit', 'delete', 'show-notes', 'click', 'resize', 'drag-move', 'drag-end', 'drag-start', 'move-shift', 'navigate-to-start'])
 
 // State
 const isDragging = ref(false)
@@ -322,22 +315,10 @@ const barStyle = computed(() => {
     const color = resourceColor.value
     
     if (isNightShift.value) {
-      // Night shift: resource color with cross-hatch pattern
-      const crossHatchSvg = `data:image/svg+xml,${encodeURIComponent(`
-        <svg width="8" height="8" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <pattern id="crosshatch" patternUnits="userSpaceOnUse" width="8" height="8">
-              <path d="M0,8 L8,0" stroke="rgba(255,255,255,0.4)" stroke-width="1"/>
-              <path d="M0,0 L8,8" stroke="rgba(255,255,255,0.4)" stroke-width="1"/>
-            </pattern>
-          </defs>
-          <rect width="8" height="8" fill="${color}"/>
-          <rect width="8" height="8" fill="url(#crosshatch)"/>
-        </svg>
-      `)}`
-      
-      baseStyle.background = `url("${crossHatchSvg}")`
-      baseStyle.backgroundSize = '8px 8px'
+      // Night shift: darker, more subdued resource color
+      baseStyle.background = `linear-gradient(135deg, ${color}50 0%, ${color}40 50%, ${color}50 100%)`
+      // Add a darker overlay to tone down the brightness
+      baseStyle.boxShadow = 'inset 0 0 0 1000px rgba(0,0,0,0.2)'
     } else {
       // Day shift: full resource color tinting
       baseStyle.background = `linear-gradient(135deg, ${color}80 0%, ${color}60 50%, ${color}80 100%)`
@@ -351,13 +332,26 @@ const tooltipText = computed(() => {
   const parts = [
     `ID: ${props.shift.id || 'No ID'}`, // Add shift ID for debugging
     `${totalHours.value} hours total`,
-    isNightShift.value ? 'Night Shift' : 'Day Shift',
-    `${props.dates.length} day${props.dates.length > 1 ? 's' : ''}`
+    isNightShift.value ? 'Night Shift' : 'Day Shift'
   ]
   
-  // Add off-screen indicator
-  if (props.shift.startsOffScreen) {
-    parts.push(`⬅ Continues from ${props.shift.totalDays} total days`)
+  // Add partial shift information
+  if (props.shift.isPartial) {
+    if (props.shift.totalDays > props.shift.visibleDays) {
+      parts.push(`Showing ${props.shift.visibleDays} of ${props.shift.totalDays} days`)
+    }
+    
+    if (props.shift.startsOffScreen) {
+      const startDate = props.shift.allDates[0]
+      parts.push(`⬅ Starts ${startDate}`)
+    }
+    
+    if (props.shift.endsOffScreen) {
+      const endDate = props.shift.allDates[props.shift.allDates.length - 1]
+      parts.push(`Ends ${endDate} ➡`)
+    }
+  } else {
+    parts.push(`${props.dates.length} day${props.dates.length > 1 ? 's' : ''}`)
   }
   
   if (hasNotes.value) {
@@ -368,8 +362,8 @@ const tooltipText = computed(() => {
     parts.push(`Resource: ${props.shift.resource_name}`)
   }
   
-  // Add dates for debugging
-  parts.push(`Dates: ${props.dates.join(', ')}`)
+  // Add visible dates for debugging
+  parts.push(`Visible: ${props.dates.join(', ')}`)
   
   return parts.join(' • ')
 })
@@ -390,6 +384,33 @@ const getResourceInitials = (resourceName) => {
     .map(word => word.charAt(0).toUpperCase())
     .slice(0, 2)
     .join('')
+}
+
+const getDailyHours = (date) => {
+  // Return the hours for this specific date
+  // If the shift has a specific hours property, use that
+  // Otherwise, calculate from start_time and end_time or default to 8
+  if (props.shift.hours) {
+    return props.shift.hours
+  }
+  
+  // Try to calculate from start_time and end_time
+  if (props.shift.start_time && props.shift.end_time) {
+    const startTime = new Date(`2000-01-01T${props.shift.start_time}:00`)
+    const endTime = new Date(`2000-01-01T${props.shift.end_time}:00`)
+    
+    // Handle overnight shifts
+    if (endTime < startTime) {
+      endTime.setDate(endTime.getDate() + 1)
+    }
+    
+    const diffMs = endTime - startTime
+    const diffHours = diffMs / (1000 * 60 * 60)
+    return Math.round(diffHours * 10) / 10 // Round to 1 decimal place
+  }
+  
+  // Default to 8 hours
+  return 8
 }
 
 const handleDragStart = (event) => {
@@ -576,6 +597,17 @@ const handleDelete = () => {
 const handleShowNotes = () => {
   closeContextMenu()
   emit('show-notes', props.shift)
+}
+
+const handleNavigateToStart = () => {
+  // Emit navigation event with the start date of the shift
+  if (props.shift.allDates && props.shift.allDates.length > 0) {
+    const startDate = props.shift.allDates[0]
+    emit('navigate-to-start', {
+      shift: props.shift,
+      startDate: startDate
+    })
+  }
 }
 </script>
 

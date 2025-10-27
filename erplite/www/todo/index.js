@@ -304,6 +304,96 @@ window.addEventListener('click', function(event) {
         if (card) {
             collapseCard(card);
         }
+    } else if (event.target.closest('#toggleAllCardsBtn')) {
+        event.stopPropagation();
+        toggleAllCards();
+    } else if (event.target.closest('.column-collapse-btn')) {
+        event.stopPropagation();
+        const columnId = event.target.closest('.column-collapse-btn').getAttribute('data-column');
+        toggleColumn(columnId);
+    }
+});
+
+// Global toggle state for all cards
+let allCardsExpanded = false;
+
+// Toggle all cards expanded/collapsed
+function toggleAllCards() {
+    const toggleBtn = document.getElementById('toggleAllCardsBtn');
+    const allCards = document.querySelectorAll('.todo-card');
+    
+    if (!allCards.length) {
+        showToast('No cards to toggle', 'info');
+        return;
+    }
+    
+    // Determine if we should expand all or collapse all
+    // If any cards are collapsed, expand all. If all are expanded, collapse all.
+    const collapsedCards = document.querySelectorAll('.todo-card.collapsed');
+    const shouldExpandAll = collapsedCards.length > 0;
+    
+    allCards.forEach(card => {
+        if (shouldExpandAll) {
+            expandCard(card);
+        } else {
+            collapseCard(card);
+        }
+    });
+    
+    // Update button text and icon
+    allCardsExpanded = shouldExpandAll;
+    if (allCardsExpanded) {
+        toggleBtn.innerHTML = '<i class="mdi mdi-unfold-less-horizontal"></i> Collapse All';
+        toggleBtn.title = 'Collapse all cards';
+        showToast('All cards expanded', 'success');
+    } else {
+        toggleBtn.innerHTML = '<i class="mdi mdi-unfold-more-horizontal"></i> Expand All';
+        toggleBtn.title = 'Expand all cards';
+        showToast('All cards collapsed', 'success');
+    }
+}
+
+// Column collapse/expand functionality
+function toggleColumn(columnId) {
+    const column = document.querySelector(`.kanban-column[data-column="${columnId}"]`);
+    const collapseBtn = column.querySelector('.column-collapse-btn');
+    
+    if (!column) return;
+    
+    const isCollapsed = column.classList.contains('collapsed');
+    
+    if (isCollapsed) {
+        // Expand column
+        column.classList.remove('collapsed');
+        collapseBtn.innerHTML = '<i class="mdi mdi-chevron-left"></i>';
+        collapseBtn.title = 'Collapse column';
+        showToast(`${getColumnDisplayName(columnId)} column expanded`, 'success');
+    } else {
+        // Collapse column
+        column.classList.add('collapsed');
+        collapseBtn.innerHTML = '<i class="mdi mdi-chevron-right"></i>';
+        collapseBtn.title = 'Expand column';
+        showToast(`${getColumnDisplayName(columnId)} column collapsed`, 'success');
+    }
+}
+
+// Add keyboard shortcut for column toggling
+document.addEventListener('keydown', function(event) {
+    // Only handle shortcuts if todo kanban is initialized
+    if (!window.todoKanban) return;
+    
+    // Ctrl/Cmd + 1-3: Toggle specific columns
+    if ((event.ctrlKey || event.metaKey)) {
+        const columnMap = {
+            '1': 'backlog',
+            '2': 'todo', 
+            '3': 'progress'
+        };
+        
+        if (columnMap[event.key]) {
+            event.preventDefault();
+            toggleColumn(columnMap[event.key]);
+        }
     }
 });
 
@@ -434,6 +524,138 @@ function getColumnDisplayName(columnId) {
         progress: 'In Progress'
     };
     return names[columnId] || columnId;
+}
+
+// Helper function to parse date from "Aug 07, 2025" to "2025-08-07" format (local time)
+function parseToStandardDate(dateString) {
+    if (!dateString) return null;
+    
+    try {
+        const date = new Date(dateString);
+        if (isNaN(date.getTime())) return null;
+        
+        // Use local date to avoid timezone issues
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        
+        return `${year}-${month}-${day}`; // Returns YYYY-MM-DD in local time
+    } catch (e) {
+        return null;
+    }
+}
+
+// Daily metrics functionality - now using server-side API
+async function updateDailyMetrics() {
+    try {
+        console.log('Fetching daily metrics from server...');
+        
+        // Get CSRF token from multiple possible sources
+        let csrfToken = '';
+        if (typeof frappe !== 'undefined' && frappe.csrf_token) {
+            csrfToken = frappe.csrf_token;
+        } else if (window.csrf_token) {
+            csrfToken = window.csrf_token;
+        } else {
+            // Try to get from meta tag
+            const metaToken = document.querySelector('meta[name="csrf-token"]');
+            if (metaToken) {
+                csrfToken = metaToken.getAttribute('content');
+            }
+        }
+        
+        console.log('Using CSRF token:', csrfToken ? 'Found' : 'Not found');
+        
+        // Call the server-side API
+        const response = await fetch('/api/method/erplite.www.todo.index.get_daily_metrics', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Frappe-CSRF-Token': csrfToken
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (data.message && data.message.success) {
+            const metrics = data.message.metrics;
+            console.log('Server metrics received:', metrics);
+            console.log('Server debug info:', data.message.debug);
+            
+            // Update the DOM
+            const metricElements = {
+                created: document.getElementById('metric-created'),
+                completed: document.getElementById('metric-completed'),
+                cancelled: document.getElementById('metric-cancelled'),
+                active: document.getElementById('metric-active')
+            };
+            
+            Object.keys(metrics).forEach(key => {
+                if (metricElements[key]) {
+                    metricElements[key].textContent = metrics[key];
+                }
+            });
+            
+            return metrics;
+        } else {
+            console.error('Server returned error:', data.message?.message || 'Unknown error');
+            throw new Error(data.message?.message || 'Failed to get metrics from server');
+        }
+        
+    } catch (error) {
+        console.error('Error fetching daily metrics:', error);
+        
+        // Fallback to DOM counting if API fails
+        const todoCards = document.querySelectorAll('.todo-card');
+        const fallbackMetrics = {
+            created: 0,
+            completed: 0, 
+            cancelled: 0,
+            active: todoCards.length
+        };
+        
+        // Update DOM with fallback values
+        const metricElements = {
+            created: document.getElementById('metric-created'),
+            completed: document.getElementById('metric-completed'),
+            cancelled: document.getElementById('metric-cancelled'),
+            active: document.getElementById('metric-active')
+        };
+        
+        Object.keys(fallbackMetrics).forEach(key => {
+            if (metricElements[key]) {
+                metricElements[key].textContent = fallbackMetrics[key];
+            }
+        });
+        
+        showToast('Failed to load metrics from server, using fallback', 'warning');
+        return fallbackMetrics;
+    }
+}
+
+// Initialize metrics when page loads
+function initializeDailyMetrics() {
+    // Wait for DOM to be ready and data to be available
+    setTimeout(() => {
+        updateDailyMetrics();
+    }, 1000);
+}
+
+// Hook into todo operations to update metrics
+window.addEventListener('todoCreated', updateDailyMetrics);
+window.addEventListener('todoCompleted', updateDailyMetrics);
+window.addEventListener('todoCancelled', updateDailyMetrics);
+window.addEventListener('todoDeleted', updateDailyMetrics);
+
+// Also update metrics when todos are refreshed
+window.addEventListener('todosRefreshed', updateDailyMetrics);
+
+// Initialize metrics after page load
+document.addEventListener('DOMContentLoaded', initializeDailyMetrics);
+
+// Also initialize if DOM is already ready
+if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    initializeDailyMetrics();
 }
 
 console.log('Todo Kanban initialization script loaded');

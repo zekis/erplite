@@ -15,16 +15,17 @@ class Project(Document):
     
     def set_default_company(self):
         """Set default company if not specified"""
-        if not self.company:
-            # Get the first company that is set as default
-            default_company = frappe.db.get_value("Company", {"is_default": 1}, "name")
-            if default_company:
-                self.company = default_company
-            else:
-                # If no default company, get the first company
-                companies = frappe.get_all("Company", limit=1)
-                if companies:
-                    self.company = companies[0].name
+        pass
+        # if not self.company:
+        #     # Get the first company that is set as default
+        #     default_company = frappe.db.get_value("Company", {"is_default": 1}, "name")
+        #     if default_company:
+        #         self.company = default_company
+        #     else:
+        #         # If no default company, get the first company
+        #         companies = frappe.get_all("Company", limit=1)
+        #         if companies:
+        #             self.company = companies[0].name
     
     def validate_dates(self):
         """Validate start and end dates"""

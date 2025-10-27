@@ -63,7 +63,7 @@ export function useDragDrop() {
   const handleDragSelection = (event) => {
     if (!dragSelection.value || !dragSelection.value.active) return
 
-    // Find the day cell under the mouse (could be EmptyDayCell or TimeEntryCell)
+    // Find the day cell under the mouse (could be EmptyDayCell or any cell with data attributes)
     const elementUnderMouse = document.elementFromPoint(event.clientX, event.clientY)
     const cell = elementUnderMouse ? elementUnderMouse.closest('[data-date][data-row-index]') : null
 
@@ -78,8 +78,8 @@ export function useDragDrop() {
     // Update current date
     dragSelection.value.currentDate = date
 
-    // Clear previous selection styling - only for this specific row
-    const previousSelected = document.querySelectorAll(`.empty-day-cell.drag-selected[data-row-index="${dragSelection.value.rowIndex}"]`)
+    // Clear previous selection styling - for both empty cells and existing shift cells
+    const previousSelected = document.querySelectorAll(`[data-row-index="${dragSelection.value.rowIndex}"].drag-selected`)
     previousSelected.forEach(cell => {
       cell.classList.remove('drag-selected')
     })
@@ -100,11 +100,18 @@ export function useDragDrop() {
       iterDate.setDate(iterDate.getDate() + 1)
     }
 
-    // Mark all empty cells in range as selected (only empty cells can be selected for creation)
+    // Mark all cells in range as selected (both empty cells and cells with existing shifts)
     dragSelection.value.selectedDates.forEach(dateStr => {
-      const emptyCell = document.querySelector(`.empty-day-cell[data-date="${dateStr}"][data-row-index="${rowIndex}"]`)
-      if (emptyCell) {
-        emptyCell.classList.add('drag-selected')
+      // Try to find empty cell first
+      let targetCell = document.querySelector(`.empty-day-cell[data-date="${dateStr}"][data-row-index="${rowIndex}"]`)
+      
+      // If no empty cell, look for any cell with this date and row (including shift bars)
+      if (!targetCell) {
+        targetCell = document.querySelector(`[data-date="${dateStr}"][data-row-index="${rowIndex}"]`)
+      }
+      
+      if (targetCell) {
+        targetCell.classList.add('drag-selected')
       }
     })
 

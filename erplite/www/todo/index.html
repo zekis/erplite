@@ -20,19 +20,46 @@
             <div class="kanban-subtitle">Drag cards between columns or to action zones</div>
         </div>
         <div class="header-right">
-            <div class="user-filter-container">
-                <select id="userFilter" class="user-filter">
-                    <option value="">All Users</option>
-                    {% for user in users %}
-                    <option value="{{ user.name }}">{{ user.full_name or user.name }}</option>
-                    {% endfor %}
-                </select>
+            <div class="search-container">
+                <div class="search-input-wrapper">
+                    <i class="mdi mdi-magnify search-icon"></i>
+                    <input type="text" id="searchInput" class="search-input" placeholder="Search todos..." autocomplete="off">
+                    <button id="clearSearchBtn" class="clear-search-btn" title="Clear search" style="display: none;">
+                        <i class="mdi mdi-close"></i>
+                    </button>
+                </div>
             </div>
-            <button class="btn btn-primary" id="addTodoBtn">
-                <i class="mdi mdi-plus"></i> Add Todo
-            </button>
-            <button class="btn btn-secondary" id="refreshBtn">
-                <i class="mdi mdi-refresh"></i> Refresh
+
+            <div class="activity-toggle" title="Show Activities">
+                <label class="activity-toggle-label">
+                    <input type="checkbox" id="activityToggle" class="activity-toggle-input">
+                    <span class="activity-toggle-text">Show Activities</span>
+                </label>
+            </div>
+            <div class="user-filter-container">
+                <button id="userFilter" class="user-filter-button" title="Filter by user">
+                    <i class="mdi mdi-account-circle"></i>
+                    <span class="filter-text">All Users</span>
+                    <i class="mdi mdi-chevron-down"></i>
+                </button>
+                <div id="userFilterDropdown" class="user-filter-dropdown">
+                    <div class="filter-option" data-user-id="">
+                        <div class="user-avatar all-users">
+                            <i class="mdi mdi-account-multiple"></i>
+                        </div>
+                        <div class="user-info">
+                            <div class="user-name">All Users</div>
+                            <div class="user-count" id="allUsersCount">0 tasks</div>
+                        </div>
+                    </div>
+                    <div class="filter-divider"></div>
+                    <div id="activeUsersList">
+                        <!-- Active users will be populated by JavaScript -->
+                    </div>
+                </div>
+            </div>
+            <button class="btn btn-secondary" id="toggleAllCardsBtn" title="Toggle all cards expanded/collapsed">
+                <i class="mdi mdi-unfold-more-horizontal"></i> Expand All
             </button>
         </div>
     </div>
@@ -40,13 +67,18 @@
     <!-- Kanban Board -->
     <div class="kanban-board">
         <!-- Backlog Column -->
-        <div class="kanban-column" data-column="backlog">
+        <div class="kanban-column collapsed" data-column="backlog">
             <div class="column-header">
                 <div class="column-title">
                     <i class="mdi mdi-inbox-outline"></i>
                     Backlog
                 </div>
-                <div class="column-count" id="backlog-count">0</div>
+                <div class="column-header-actions">
+                    <div class="column-count" id="backlog-count">0</div>
+                    <button class="column-collapse-btn" data-column="backlog" title="Expand column">
+                        <i class="mdi mdi-chevron-right"></i>
+                    </button>
+                </div>
             </div>
             <div class="quick-add-container">
                 <input type="text" class="quick-add-input" placeholder="Add to backlog..." data-column="backlog">
@@ -67,7 +99,12 @@
                     <i class="mdi mdi-format-list-checks"></i>
                     To Do
                 </div>
-                <div class="column-count" id="todo-count">0</div>
+                <div class="column-header-actions">
+                    <div class="column-count" id="todo-count">0</div>
+                    <button class="column-collapse-btn" data-column="todo" title="Collapse column">
+                        <i class="mdi mdi-chevron-left"></i>
+                    </button>
+                </div>
             </div>
             <div class="quick-add-container">
                 <input type="text" class="quick-add-input" placeholder="Add to do..." data-column="todo">
@@ -88,7 +125,12 @@
                     <i class="mdi mdi-clock-outline"></i>
                     In Progress
                 </div>
-                <div class="column-count" id="progress-count">0</div>
+                <div class="column-header-actions">
+                    <div class="column-count" id="progress-count">0</div>
+                    <button class="column-collapse-btn" data-column="progress" title="Collapse column">
+                        <i class="mdi mdi-chevron-left"></i>
+                    </button>
+                </div>
             </div>
             <div class="quick-add-container">
                 <input type="text" class="quick-add-input" placeholder="Add in progress..." data-column="progress">
@@ -127,6 +169,32 @@
                     </div>
                     <div class="drop-zone-title">Cancel</div>
                     <div class="drop-zone-subtitle">Remove task</div>
+                </div>
+
+                <!-- Daily Metrics Section -->
+                <div class="daily-metrics">
+                    <div class="metrics-header">
+                        <i class="mdi mdi-chart-line"></i>
+                        <span>Today's Activity</span>
+                    </div>
+                    <div class="metrics-grid">
+                        <div class="metric-item">
+                            <div class="metric-value" id="metric-created">0</div>
+                            <div class="metric-label">Created</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-value" id="metric-completed">0</div>
+                            <div class="metric-label">Completed</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-value" id="metric-cancelled">0</div>
+                            <div class="metric-label">Cancelled</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-value" id="metric-active">0</div>
+                            <div class="metric-label">Active</div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -187,6 +255,15 @@
                     <div class="user-name"></div>
                 </div>
                 <div class="card-actions">
+                    <button class="card-action-btn complete-btn" title="Mark Complete">
+                        <i class="mdi mdi-check-circle"></i>
+                    </button>
+                    <button class="card-action-btn cancel-btn" title="Cancel Task">
+                        <i class="mdi mdi-close-circle"></i>
+                    </button>
+                    <button class="card-action-btn open-frappe-btn" title="Open in Frappe">
+                        <i class="mdi mdi-open-in-new"></i>
+                    </button>
                     <button class="card-action-btn edit-btn" title="Edit">
                         <i class="mdi mdi-pencil"></i>
                     </button>

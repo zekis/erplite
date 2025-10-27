@@ -19,6 +19,7 @@
       @drag-start="handleDragStart"
       @drag-end="handleDragEnd"
       @move-shift="handleMoveShift"
+      @navigate-to-start="$emit('navigate-to-start', $event)"
     />
   </div>
 </template>
@@ -52,7 +53,8 @@ const emit = defineEmits([
   'edit-shift', 
   'delete-shift',
   'show-notes',
-  'click-shift'
+  'click-shift',
+  'navigate-to-start'
 ])
 
 // Get all shifts sorted by date
@@ -113,38 +115,32 @@ const shiftGroups = computed(() => {
     // Create shift bar for any shift (1+ days)
     if (consecutiveShifts.length >= 1) {
       const allDates = consecutiveShifts.map(s => s.date)
-      const startColumn = getColumnIndex(allDates[0])
+      const visibleDates = allDates.filter(date => getColumnIndex(date) !== -1)
       
-      // Handle shifts that start before the visible calendar range
-      if (startColumn === -1) {
-        // Find the first visible date in this shift group
-        const visibleDates = allDates.filter(date => getColumnIndex(date) !== -1)
+      // Only show shifts that have at least one visible day
+      if (visibleDates.length > 0) {
+        const startColumn = getColumnIndex(visibleDates[0])
+        const startsOffScreen = allDates[0] !== visibleDates[0]
+        const endsOffScreen = allDates[allDates.length - 1] !== visibleDates[visibleDates.length - 1]
         
-        if (visibleDates.length > 0) {
-          // This shift extends into the visible range - show the tail end
-          const firstVisibleColumn = getColumnIndex(visibleDates[0])
-          
-          groups.push({
-            id: `group-${shift.id || shift.date}-${allDates.length}-${shift.start_time}`,
-            shift: {
-              ...shift,
-              startsOffScreen: true, // Flag to indicate this starts before visible range
-              totalDays: allDates.length, // Total days including off-screen portion
-              visibleDays: visibleDates.length // Only the visible portion
-            },
-            dates: visibleDates, // Only show visible dates
-            startColumn: firstVisibleColumn,
-            startsOffScreen: true
-          })
+        // Create enhanced shift data with partial display information
+        const enhancedShift = {
+          ...shift,
+          isPartial: startsOffScreen || endsOffScreen,
+          startsOffScreen: startsOffScreen,
+          endsOffScreen: endsOffScreen,
+          totalDays: allDates.length,
+          visibleDays: visibleDates.length,
+          allDates: allDates,
+          hiddenStartDays: startsOffScreen ? allDates.indexOf(visibleDates[0]) : 0,
+          hiddenEndDays: endsOffScreen ? allDates.length - allDates.indexOf(visibleDates[visibleDates.length - 1]) - 1 : 0
         }
-      } else {
-        // Normal shift that starts within visible range
+        
         groups.push({
           id: `group-${shift.id || shift.date}-${allDates.length}-${shift.start_time}`,
-          shift: shift,
-          dates: allDates,
-          startColumn: startColumn,
-          startsOffScreen: false
+          shift: enhancedShift,
+          dates: visibleDates, // Only visible dates for rendering
+          startColumn: startColumn
         })
       }
     }
@@ -201,11 +197,19 @@ const handleResize = (resizeData) => {
   }
   
   if (direction === 'left') {
-    // Shrinking from the left (removing days from start)
-    const daysToRemove = Math.max(0, Math.min(Math.abs(columnsDelta), originalDates.length - 1))
-    if (daysToRemove > 0) {
-      const datesToRemove = originalDates.slice(0, daysToRemove)
-      removeShiftsFromDates(datesToRemove, shift)
+    if (columnsDelta < 0) {
+      // Expanding to the left (adding days to the start)
+      const daysToAdd = Math.abs(columnsDelta)
+      const firstDate = originalDates[0]
+      const newDates = generateConsecutiveDatesBackward(firstDate, daysToAdd)
+      addShiftsToNewDates(newDates, shift)
+    } else if (columnsDelta > 0) {
+      // Shrinking from the left (removing days from start)
+      const daysToRemove = Math.max(0, Math.min(columnsDelta, originalDates.length - 1))
+      if (daysToRemove > 0) {
+        const datesToRemove = originalDates.slice(0, daysToRemove)
+        removeShiftsFromDates(datesToRemove, shift)
+      }
     }
   } else {
     // Extending/shrinking from the right
@@ -246,15 +250,25 @@ const handleMoveShift = (moveData) => {
   
   console.log('Moving shift:', { shift, dates, newStartColumn, columnDelta })
   
-  // Calculate new dates based on the column delta
-  const newDates = dates.map(date => {
+  // For partial shifts, use the complete date range (allDates) instead of just visible dates
+  const originalDates = shift.isPartial ? shift.allDates : dates
+  
+  // Calculate new dates based on the column delta - move the ENTIRE shift
+  const newDates = originalDates.map(date => {
     const originalDate = new Date(date)
     originalDate.setDate(originalDate.getDate() + columnDelta)
     return originalDate.toISOString().split('T')[0]
   })
   
-  // Remove shift from original dates - match by shift properties, not just ID
-  dates.forEach(date => {
+  console.log('Moving entire shift:', {
+    isPartial: shift.isPartial,
+    originalDates: originalDates,
+    newDates: newDates,
+    columnDelta: columnDelta
+  })
+  
+  // Remove shift from ALL original dates (including off-screen ones)
+  originalDates.forEach(date => {
     if (props.row.dailyEntries[date]) {
       const entries = Array.isArray(props.row.dailyEntries[date]) 
         ? props.row.dailyEntries[date] 
@@ -281,7 +295,7 @@ const handleMoveShift = (moveData) => {
     }
   })
   
-  // Add shift to new dates
+  // Add shift to ALL new dates (including those that may be off-screen)
   newDates.forEach(date => {
     const newShift = {
       ...shift,
@@ -302,7 +316,12 @@ const handleMoveShift = (moveData) => {
     }
   })
   
-  console.log('✅ Shift moved successfully from', dates, 'to', newDates)
+  console.log('✅ Complete shift moved successfully from', originalDates, 'to', newDates)
+  
+  // Show user feedback about the move
+  if (shift.isPartial) {
+    console.log(`📍 Moved ${originalDates.length}-day shift (${originalDates.length - dates.length} days were off-screen)`)
+  }
 }
 
 const generateConsecutiveDates = (startDate, count) => {
@@ -312,6 +331,18 @@ const generateConsecutiveDates = (startDate, count) => {
   for (let i = 1; i <= count; i++) {
     date.setDate(date.getDate() + 1)
     dates.push(date.toISOString().split('T')[0])
+  }
+  
+  return dates
+}
+
+const generateConsecutiveDatesBackward = (startDate, count) => {
+  const dates = []
+  const date = new Date(startDate)
+  
+  for (let i = 1; i <= count; i++) {
+    date.setDate(date.getDate() - 1)
+    dates.unshift(date.toISOString().split('T')[0]) // Add to beginning of array
   }
   
   return dates

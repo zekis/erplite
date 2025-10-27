@@ -1,36 +1,46 @@
 {
  "actions": [],
+ "allow_events_in_timeline": 1,
+ "allow_import": 1,
  "allow_rename": 1,
- "autoname": "naming_series:",
+ "autoname": "hash",
  "creation": "2025-06-25 18:21:00",
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
-  "field_order": [
-   "naming_series",
-   "project_name",
-   "customer",
-   "column_break_3",
-   "status",
-   "project_manager",
-   "section_break_division",
-   "division",
-   "work_type",
-   "section_break_6",
-   "start_date",
-   "end_date",
-   "column_break_9",
-   "company",
-   "section_break_11",
-   "description",
-   "notes",
-   "contacts_tab",
-   "table_uzot",
-   "communications_tab",
-   "emails",
-   "knowledge_tab",
-   "articles"
-  ],
+ "field_order": [
+  "project_details_section",
+  "naming_series",
+  "project_name",
+  "project_code",
+  "project",
+  "column_break_3",
+  "project_lead",
+  "status",
+  "timesheet_approver",
+  "section_break_11",
+  "project_scope",
+  "section_break_division",
+  "division",
+  "column_break_rwop",
+  "project_type",
+  "column_break_ccho",
+  "industry_sector",
+  "section_break_6",
+  "award_date",
+  "column_break_9",
+  "start_date",
+  "column_break_xrgm",
+  "end_date",
+  "contacts_tab",
+  "customer",
+  "head_client",
+  "contacts",
+  "communications_tab",
+  "emails",
+  "knowledge_tab",
+  "articles"
+ ],
  "fields": [
   {
    "default": "PROJ-.YYYY.-",
@@ -59,38 +69,26 @@
    "fieldtype": "Column Break"
   },
   {
-   "default": "Active",
+   "default": "Opportunity",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Active\nOn Hold\nCompleted\nCancelled",
+   "options": "Opportunity\nEstimate\nOpen\nArchived",
    "reqd": 1
-  },
-  {
-   "fieldname": "project_manager",
-   "fieldtype": "Link",
-   "in_list_view": 1,
-   "label": "Project Manager",
-   "options": "User"
   },
   {
    "fieldname": "section_break_division",
    "fieldtype": "Section Break",
-   "label": "Division & Work Type"
+   "label": "Project Classification"
   },
   {
    "fieldname": "division",
    "fieldtype": "Link",
    "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Division",
    "options": "Division"
-  },
-  {
-   "fieldname": "work_type",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "label": "Work Type"
   },
   {
    "fieldname": "section_break_6",
@@ -112,25 +110,9 @@
    "fieldtype": "Column Break"
   },
   {
-   "fieldname": "company",
-   "fieldtype": "Link",
-   "label": "Company",
-   "options": "Company"
-  },
-  {
    "fieldname": "section_break_11",
    "fieldtype": "Section Break",
    "label": "Additional Information"
-  },
-  {
-   "fieldname": "description",
-   "fieldtype": "Text",
-   "label": "Description"
-  },
-  {
-   "fieldname": "notes",
-   "fieldtype": "Text Editor",
-   "label": "Notes"
   },
   {
    "fieldname": "communications_tab",
@@ -154,23 +136,90 @@
    "label": "Contacts"
   },
   {
-   "fieldname": "table_uzot",
-   "fieldtype": "Table",
-   "options": "Project Contacts"
-  },
-  {
    "fieldname": "articles",
    "fieldtype": "Table",
    "label": "Articles",
    "options": "Project Knowledge"
+  },
+  {
+   "fieldname": "timesheet_approver",
+   "fieldtype": "Link",
+   "label": "Timesheet Approver",
+   "options": "User"
+  },
+  {
+   "fieldname": "project_lead",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Project Lead",
+   "options": "User"
+  },
+  {
+   "fieldname": "project_type",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Project Type"
+  },
+  {
+   "fieldname": "project_code",
+   "fieldtype": "Data",
+   "label": "Project Code"
+  },
+  {
+   "fieldname": "project",
+   "fieldtype": "Data",
+   "label": "Project"
+  },
+  {
+   "fieldname": "project_details_section",
+   "fieldtype": "Section Break",
+   "label": "Project Details"
+  },
+  {
+   "fieldname": "column_break_rwop",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_ccho",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "industry_sector",
+   "fieldtype": "Data",
+   "label": "Industry Sector"
+  },
+  {
+   "fieldname": "head_client",
+   "fieldtype": "Data",
+   "label": "Head Client"
+  },
+  {
+   "fieldname": "contacts",
+   "fieldtype": "Table",
+   "options": "Project Contacts"
+  },
+  {
+   "fieldname": "project_scope",
+   "fieldtype": "Text",
+   "label": "Project Scope"
+  },
+  {
+   "fieldname": "award_date",
+   "fieldtype": "Date",
+   "label": "Award Date"
+  },
+  {
+   "fieldname": "column_break_xrgm",
+   "fieldtype": "Column Break"
   }
  ],
+ "is_calendar_and_gantt": 1,
  "links": [],
- "modified": "2025-07-16 14:23:00.000000",
+ "modified": "2025-08-16 11:07:37.163005",
  "modified_by": "Administrator",
  "module": "Projects",
  "name": "Project",
- "naming_rule": "By \"Naming Series\" field",
+ "naming_rule": "Random",
  "owner": "Administrator",
  "permissions": [
   {
@@ -209,9 +258,11 @@
    "write": 1
   }
  ],
+ "show_title_field_in_link": 1,
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],
  "title_field": "project_name",
- "track_changes": 1
+ "track_changes": 1,
+ "translated_doctype": 1
 }

@@ -77,11 +77,173 @@
     gap: 1rem;
 }
 
+/* Search Container */
+.search-container {
+    position: relative;
+}
+
+.search-input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    background: white;
+    border: 1px solid var(--gray-300);
+    border-radius: 0.5rem;
+    padding: 0.5rem;
+    transition: all 0.2s;
+    min-width: 250px;
+}
+
+.search-input-wrapper:focus-within {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.search-icon {
+    color: var(--gray-400);
+    font-size: 1rem;
+    margin-right: 0.5rem;
+    flex-shrink: 0;
+}
+
+.search-input {
+    flex: 1;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 0.875rem;
+    color: var(--gray-700);
+    padding: 0;
+}
+
+.search-input::placeholder {
+    color: var(--gray-400);
+}
+
+.clear-search-btn {
+    background: none;
+    border: none;
+    color: var(--gray-400);
+    cursor: pointer;
+    padding: 0.25rem;
+    border-radius: 0.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    margin-left: 0.25rem;
+    flex-shrink: 0;
+}
+
+.clear-search-btn:hover {
+    color: var(--gray-600);
+    background: var(--gray-100);
+}
+
+.clear-search-btn i {
+    font-size: 0.875rem;
+}
+
+/* Activity toggle switch (styled) */
+.activity-toggle {
+    display: flex;
+    align-items: center;
+    margin-left: 0.5rem;
+}
+
+.activity-toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--gray-600);
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+}
+
+/* Hide native checkbox UI but keep it accessible */
+.activity-toggle-input {
+    position: absolute;
+    opacity: 0;
+    width: 1px;
+    height: 1px;
+    left: -9999px;
+}
+
+/* Visual switch rendered inside the label's text span */
+.activity-toggle-text {
+    position: relative;
+    padding-left: 48px; /* reserve space for switch */
+    display: inline-block;
+    line-height: 1;
+}
+
+/* Switch track */
+.activity-toggle-text::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 40px;
+    height: 22px;
+    background: var(--gray-200);
+    border-radius: 999px;
+    transition: background 0.18s ease, box-shadow 0.18s ease;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.04);
+}
+
+/* Switch knob */
+.activity-toggle-text::after {
+    content: "";
+    position: absolute;
+    left: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 14px;
+    height: 14px;
+    background: white;
+    border-radius: 50%;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+    transition: left 0.18s ease, transform 0.18s ease;
+}
+
+/* Checked state */
+.activity-toggle-input:checked + .activity-toggle-text::before {
+    background: linear-gradient(90deg, var(--primary-color), #2563eb);
+}
+
+.activity-toggle-input:checked + .activity-toggle-text::after {
+    left: 22px;
+}
+
+/* Focus ring when keyboard-focused */
+.activity-toggle-input:focus + .activity-toggle-text::before {
+    box-shadow: 0 0 0 4px rgba(59,130,246,0.12);
+}
+
+/* Text styling */
+.activity-toggle-text {
+    color: var(--gray-600);
+    font-weight: 500;
+}
+
+/* Smaller label on mobile */
+@media (max-width: 768px) {
+    .activity-toggle-text {
+        padding-left: 40px;
+    }
+    .activity-toggle-text span.activity-toggle-label-text {
+        display: none;
+    }
+}
+
 .user-filter-container {
     position: relative;
 }
 
-.user-filter {
+.user-filter-button {
     padding: 0.5rem 1rem;
     border: 1px solid var(--gray-300);
     border-radius: 0.5rem;
@@ -90,17 +252,128 @@
     color: var(--gray-700);
     cursor: pointer;
     transition: all 0.2s;
-    min-width: 150px;
+    min-width: 180px;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
 }
 
-.user-filter:hover {
+.user-filter-button:hover {
     border-color: var(--gray-400);
 }
 
-.user-filter:focus {
+.user-filter-button:focus {
     outline: none;
     border-color: var(--primary-color);
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.user-filter-button.active {
+    border-color: var(--primary-color);
+    background: rgba(59, 130, 246, 0.1);
+}
+
+.filter-text {
+    flex: 1;
+    text-align: left;
+}
+
+.user-filter-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background: white;
+    border: 1px solid var(--gray-200);
+    border-radius: 0.5rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    max-height: 300px;
+    overflow-y: auto;
+    display: none;
+    margin-top: 0.25rem;
+    min-width: 280px;
+    width: max-content;
+    max-width: 400px;
+}
+
+.user-filter-dropdown.show {
+    display: block;
+    animation: dropdownSlideIn 0.2s ease;
+}
+
+@keyframes dropdownSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.filter-option {
+    padding: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    border-bottom: 1px solid var(--gray-100);
+}
+
+.filter-option:hover {
+    background: var(--gray-50);
+}
+
+.filter-option.active {
+    background: rgba(59, 130, 246, 0.1);
+    border-left: 3px solid var(--primary-color);
+}
+
+.filter-option:last-child {
+    border-bottom: none;
+}
+
+.user-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--primary-color);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.875rem;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+
+.user-avatar.all-users {
+    background: var(--gray-400);
+}
+
+.user-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.user-name {
+    font-weight: 500;
+    color: var(--gray-900);
+    font-size: 0.875rem;
+}
+
+.user-count {
+    font-size: 0.75rem;
+    color: var(--gray-500);
+    margin-top: 0.125rem;
+}
+
+.filter-divider {
+    height: 1px;
+    background: var(--gray-200);
+    margin: 0.5rem 0;
 }
 
 .btn {
@@ -145,11 +418,13 @@
     padding: 1.5rem;
     overflow-x: auto;
     overflow-y: hidden;
+    min-height: 0; /* Allow flex children to shrink below content size */
 }
 
 .kanban-column {
     flex: 1;
     min-width: 280px;
+    max-height: 100%; /* Constrain column height to parent */
     display: flex;
     flex-direction: column;
     background: white;
@@ -221,6 +496,12 @@
     color: var(--gray-500);
 }
 
+.column-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
 .column-count {
     background: var(--gray-200);
     color: var(--gray-600);
@@ -232,13 +513,90 @@
     text-align: center;
 }
 
+.column-collapse-btn {
+    width: 24px;
+    height: 24px;
+    border: none;
+    border-radius: 0.25rem;
+    background: transparent;
+    color: var(--gray-400);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    font-size: 1rem;
+}
+
+.column-collapse-btn:hover {
+    background: var(--gray-100);
+    color: var(--gray-600);
+}
+
+/* Collapsed Column States */
+.kanban-column.collapsed {
+    flex: 0 0 60px;
+    min-width: 60px;
+    max-width: 60px;
+}
+
+.kanban-column.collapsed .quick-add-container,
+.kanban-column.collapsed .column-body {
+    display: none;
+}
+
+.kanban-column.collapsed .column-header {
+    padding: 1rem 0.5rem;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.kanban-column.collapsed .column-title {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    white-space: nowrap;
+    transform: rotate(180deg);
+    font-size: 0.75rem;
+}
+
+.kanban-column.collapsed .column-title i {
+    font-size: 0.875rem;
+    margin: 0;
+}
+
+.kanban-column.collapsed .column-header-actions {
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.kanban-column.collapsed .column-count {
+    font-size: 0.625rem;
+    padding: 0.125rem 0.25rem;
+    min-width: auto;
+}
+
+.kanban-column.collapsed .column-collapse-btn {
+    width: 20px;
+    height: 20px;
+    font-size: 0.875rem;
+    transform: rotate(180deg);
+}
+
+.kanban-column.collapsed .column-collapse-btn i {
+    transform: rotate(180deg);
+}
+
 .column-body {
     flex: 1;
+    min-height: 0; /* Allow flex item to shrink below content size */
     padding: 1rem;
     overflow-y: auto;
+    overflow-x: visible !important;
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+    max-height: none !important;
+    height: auto !important;
 }
 
 /* Quick Add Input */
@@ -273,6 +631,84 @@
     gap: 1rem;
 }
 
+/* Daily Metrics Section */
+.daily-metrics {
+    background: white;
+    border: 1px solid var(--gray-200);
+    border-radius: 0.75rem;
+    padding: 1rem;
+    margin-top: 0.5rem;
+}
+
+.metrics-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: var(--gray-700);
+}
+
+.metrics-header i {
+    color: var(--primary-color);
+    font-size: 1rem;
+}
+
+.metrics-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.metric-item {
+    text-align: center;
+    padding: 0.75rem 0.5rem;
+    background: var(--gray-50);
+    border-radius: 0.5rem;
+    border: 1px solid var(--gray-200);
+    transition: all 0.2s;
+}
+
+.metric-item:hover {
+    background: var(--gray-100);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.metric-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--gray-900);
+    margin-bottom: 0.25rem;
+    line-height: 1;
+}
+
+.metric-label {
+    font-size: 0.75rem;
+    color: var(--gray-500);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+}
+
+/* Metric-specific colors */
+.metric-item:nth-child(1) .metric-value {
+    color: var(--primary-color);
+}
+
+.metric-item:nth-child(2) .metric-value {
+    color: var(--success-color);
+}
+
+.metric-item:nth-child(3) .metric-value {
+    color: var(--danger-color);
+}
+
+.metric-item:nth-child(4) .metric-value {
+    color: var(--warning-color);
+}
+
 /* Todo Cards */
 .todo-card {
     background: white;
@@ -282,7 +718,11 @@
     transition: all 0.3s ease;
     position: relative;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    overflow: hidden;
+    overflow: visible !important;
+    flex-shrink: 0; /* Prevent cards from shrinking */
+    min-height: auto !important;
+    max-height: none !important;
+    height: auto !important;
 }
 
 /* Collapsed Card State */
@@ -665,15 +1105,36 @@
 }
 
 .card-footer {
-    display: flex;
+    display: flex !important;
     align-items: center;
     justify-content: space-between;
+    position: relative !important;
+    z-index: 100 !important;
+    background: #ffffff !important;
+    padding: 0.5rem !important;
+    border-top: 1px solid #e5e7eb !important;
+    margin-top: 0.5rem !important;
+    visibility: visible !important;
+}
+
+/* Force footer visibility in expanded cards */
+.todo-card.expanded .card-footer {
+    display: flex !important;
+}
+
+.todo-card.expanded .card-expanded-view .card-footer {
+    display: flex !important;
 }
 
 .card-user {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+}
+
+/* Hide user name text on expanded todo cards; avatar tooltip is sufficient */
+.card-user .user-name {
+    display: none !important;
 }
 
 .user-avatar {
@@ -698,32 +1159,50 @@
 .card-actions {
     display: flex;
     gap: 0.25rem;
-    opacity: 0;
-    transition: opacity 0.2s;
+    opacity: 1 !important;
+    background: #f3f4f6;
+    padding: 0.25rem;
+    border-radius: 0.375rem;
+    border: 1px solid #e5e7eb;
 }
 
 .todo-card:hover .card-actions {
     opacity: 1;
+    background: #e5e7eb;
+}
+
+.todo-card .card-actions .open-frappe-btn {
+    opacity: 1;
+}
+
+.todo-card:hover .card-actions .open-frappe-btn {
+    opacity: 1;
 }
 
 .card-action-btn {
-    width: 24px;
-    height: 24px;
-    border: none;
-    border-radius: 0.25rem;
-    background: var(--gray-100);
-    color: var(--gray-500);
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--gray-300);
+    border-radius: 0.375rem;
+    background: white;
+    color: var(--gray-600);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: all 0.2s;
-    font-size: 0.75rem;
+    font-size: 0.875rem;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
 .card-action-btn:hover {
     background: var(--gray-200);
     color: var(--gray-700);
+}
+
+.card-action-btn.open-frappe-btn:hover {
+    background: #f0fdf4;
+    color: var(--success-color);
 }
 
 .card-action-btn.edit-btn:hover {
@@ -736,13 +1215,35 @@
     color: var(--danger-color);
 }
 
+.card-action-btn.complete-btn:hover {
+    background: #dcfce7;
+    color: var(--success-color);
+}
+
+.card-action-btn.cancel-btn:hover {
+    background: #fef2f2;
+    color: var(--danger-color);
+}
+
 .card-reference {
     margin-top: 0.5rem;
+    margin-bottom: 0.75rem;
     font-size: 0.75rem;
     color: var(--gray-400);
     display: flex;
     align-items: center;
     gap: 0.25rem;
+    order: 1;
+}
+
+.card-footer {
+    order: 2;
+}
+
+.card-expanded-view {
+    display: none;
+    overflow: visible !important;
+    min-height: auto !important;
 }
 
 .reference-link {
@@ -863,6 +1364,19 @@
     max-width: 500px;
     box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
     animation: modalSlideIn 0.3s ease;
+}
+
+/* Ensure modal footer is visible and sticks to bottom of modal content */
+.modal .modal-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(255,255,255,0.98));
+    padding: 1rem 1.25rem;
+    border-top: 1px solid var(--gray-200);
+    justify-content: space-between;
+    display: flex;
+    gap: 0.75rem;
 }
 
 @keyframes modalSlideIn {
@@ -1213,4 +1727,26 @@
 /* Dark mode support (if needed in future) */
 @media (prefers-color-scheme: dark) {
     /* Dark mode styles would go here */
+}
+
+/* Hide Frappe footer for clean todo app experience */
+.web-footer,
+footer,
+.footer,
+#footer,
+.page-footer,
+.website-footer {
+    display: none !important;
+}
+
+/* Also hide any powered by text (keep specific frappe/footer branding hidden, but avoid matching modal-footer) */
+.powered-by,
+.frappe-footer {
+    display: none !important;
+}
+
+/* Make sure todo app takes full height without footer space */
+.todo-kanban-app {
+    min-height: 100vh;
+    padding-bottom: 0;
 }
