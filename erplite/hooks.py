@@ -14,17 +14,10 @@ app_license = "mit"
 add_to_apps_screen = [
 	{
 		"name": "erplite",
-		"logo": "/assets/erplite/images/erplite-logo.png",
-		"title": "Todo Kanban",
-		"route": "/todo",
-		"has_permission": "erplite.projects.api.has_timesheet_permission"
-	},
-    {
-		"name": "scheduler",
-		"logo": "/assets/erplite/images/scheduler.png",
-		"title": "Scheduler",
-		"route": "/erplite/vue-scheduler",
-		"has_permission": "erplite.projects.api.has_timesheet_permission"
+		"logo": "/assets/erplite/images/toolbox.png",
+		"title": "Desk",
+		"route": "/app",
+		"has_permission": "erplite.check_app_permission"
 	}
 ]
 
