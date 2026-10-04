@@ -105,6 +105,7 @@ class FakeFrappe(object):
             "Activity": doctype_fields("projects", "activity"),
             "Project": doctype_fields("projects", "project"),
             "ToDo": TODO_FIELDS,
+            "Division": doctype_fields("scheduler", "division"),
         }
         self.errors = []
         self.messages = []
@@ -123,6 +124,10 @@ class FakeFrappe(object):
         if args and callable(args[0]):
             return args[0]
         return decorator
+
+    def _(self, message, *args, **kwargs):
+        """frappe._ is gettext; the stand-in passes the string through."""
+        return message
 
     def get_roles(self, user=None):
         return list(self._roles)
@@ -197,10 +202,15 @@ class _FakeDb(object):
         return any(r.get("name") == name for r in self._frappe.tables.get(doctype, []))
 
     def get_value(self, doctype, name, fieldname, **kwargs):
-        self._frappe._check_fields(doctype, [fieldname], "get_value")
+        many = isinstance(fieldname, (list, tuple))
+        names = list(fieldname) if many else [fieldname]
+        self._frappe._check_fields(doctype, names, "get_value")
         for row in self._frappe.tables.get(doctype, []):
             if row.get("name") == name:
-                return row.get(fieldname)
+                if not many:
+                    return row.get(fieldname)
+                values = [row.get(f) for f in names]
+                return _dict(zip(names, values)) if kwargs.get("as_dict") else values
         return None
 
     def set_value(self, doctype, name, fieldname, value, **kwargs):

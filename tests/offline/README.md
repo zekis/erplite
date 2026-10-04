@@ -28,3 +28,8 @@ class of bug into a red test.
 `fake_frappe.doctype_fields()` reads the field list out of the DocType's own
 JSON in this repo rather than hard-coding it, so these tests follow the
 DocType as it changes.
+
+There is deliberately no `frappe.db.sql`. Raw SQL goes straight to the table,
+so it reads orphaned columns without complaint and cannot be checked against
+the DocType at all - which is how the scheduler ended up selecting six of
+them. Code that needs to be covered here queries through `get_all`.
