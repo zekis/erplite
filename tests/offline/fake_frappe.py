@@ -320,10 +320,42 @@ class FakeAssignTo(object):
 class FakeDocumentBase(object):
     """The base erplite's DocType controllers inherit from.
 
-    Deliberately empty: Frappe's Document does the work in __init__, and
-    make_doc below stands in for that, so a controller under test behaves the
-    way Frappe would drive it.
+    Almost empty: Frappe's Document does the work in __init__, and make_doc
+    below stands in for that, so a controller under test behaves the way Frappe
+    would drive it.
+
+    The two methods here are the ones a pre-save hook can legitimately call to
+    see the document as it was before this save. They are ported from
+    frappe-version-15/frappe/model/document.py rather than invented, because
+    their edge cases are the whole point:
+
+      * `_doc_before_save` is loaded by `check_if_latest()` (document.py:408),
+        which `_save()` calls BEFORE `run_before_save_methods()` (:414). So a
+        `before_save` hook can read it.
+      * `load_doc_before_save` returns early when `is_new()` (:1161-1164), so on
+        an insert it stays None.
+      * `has_value_changed` returns **True** when there is no previous document
+        (:508-509). On an insert that means "everything changed", which is the
+        opposite of what a hook guarding against an explicit edit wants.
+
+    A test drives the ordering itself; see test_trip_status.py.
     """
+
+    _doc_before_save = None
+
+    def get_doc_before_save(self):
+        """frappe Document.get_doc_before_save (document.py:503-504)."""
+        return getattr(self, "_doc_before_save", None)
+
+    def has_value_changed(self, fieldname):
+        """frappe Document.has_value_changed (document.py:506-524).
+
+        Note the first branch: no previous document means True.
+        """
+        previous = self.get_doc_before_save()
+        if not previous:
+            return True
+        return getattr(previous, fieldname, None) != getattr(self, fieldname, None)
 
 
 def make_doc(controller_class, doctype, module, doctype_dir, data=None):
