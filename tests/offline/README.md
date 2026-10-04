@@ -286,3 +286,63 @@ body, so the inner function's assignment was attributed to the outer one. The
 same shape as the `ast.walk`-descends-into-classes flaw in
 `test_string_references.py`'s first draft. **A walker that decides what counts
 as "this scope" needs a test for the scope boundary itself.**
+
+## `test_raw_sql.py` - the query handed to `db.sql` must be a literal
+
+The seventh surface guarded here, and the first where the fault is a security
+bug rather than a broken feature. One blunt rule: **the first argument to
+`frappe.db.sql` (and `sql_list` / `sql_value` / `multisql`) must be a plain
+string literal** - never an f-string, a `.format()` call, a `%` expression, a
+concatenation or a variable. Everything that varies belongs in the second
+argument, `values`, which is the only thing Frappe escapes.
+
+That is not a style preference. `db.sql`'s own docstring describes `values` as
+"to be escaped and substituted in the query", and the query text reaches
+`self._cursor.execute(query, values)` (frappe `database/database.py:230`) after
+nothing but a `.strip()` and an `ifnull` -> `coalesce` regex. With no values
+given, `values = None` and the driver executes the string verbatim. **Anything
+spliced into the query string is SQL syntax, not data.**
+
+It found one site, reachable from the browser:
+`erplite/projects/doctype/activity/activity.py:30`, in the `@frappe.whitelist()`
+function `get_activity_summary(project=None)`, interpolated the caller's
+`project` straight into a quoted SQL string. Captured by running the real
+function against a stub `frappe` that records the query - no database needed:
+
+    project = "5gofgdoomv"           -> WHERE docstatus < 2 AND project = '5gofgdoomv'
+    project = "O'Brien Engineering"  -> WHERE docstatus < 2 AND project = 'O'Brien ...'
+    project = "x' OR '1'='1"         -> WHERE docstatus < 2 AND project = 'x' OR '1'='1'
+
+Note the middle line before the dramatic one: **an ordinary business name with
+an apostrophe breaks the query.** That is a correctness bug with no attacker in
+the picture, and it is the cheaper half of the argument for fixing it.
+
+Fixed by routing the query through `frappe.get_all`, which parameterises - the
+same move commit 2eb630e made on this app's other raw queries.
+`fields=["status", "count(*) as count"]` with `group_by="status"` is Frappe
+core's own idiom for this shape (`frappe/desk/listview.py:72` and six more) and
+`count` is in `ALLOWED_SQL_FUNCTIONS`. The `filters` dict the original author
+had started building and then left unused is what the fix fills in, so it
+honours the intent rather than replacing it.
+
+**Why literal-or-not rather than "don't interpolate caller input":** deciding
+whether a spliced value is caller-reachable needs dataflow, and a guard that
+attempts it will be wrong in both directions. Literal-or-not is exact from the
+AST alone, and the exception list is currently empty - the other 11 `db.sql`
+sites in the app are already plain literals. If a query ever needs a dynamic
+*identifier* (a table or column name, which cannot be parameterised), add an
+explicit documented exception rather than loosening the rule, because at that
+point someone has to think about escaping, which is the point.
+
+Blind spots: only receivers that look like a database handle are swept
+(`<x>.db.sql(...)` or a bare `db.sql(...)`), and a handle reached through an
+alias the walker cannot see is listed as *skipped* rather than silently
+dropped. This says nothing about `order_by` / `group_by` / `having` passed to
+`get_all`, which Frappe sanitises - checked by hand on 6 Oct 2026, no
+whitelisted endpoint in this app passes caller input to any of them. And a
+literal query is not necessarily a correct one: whether its columns exist is
+`test_undeclared_attributes.py` and `test_doctype_metadata.py`.
+
+`TheWalkerItself` holds 17 self-tests - every accepted shape and every rejected
+one, plus the two scope cases. Third guard in a row to ship with its own
+boundary tests, after the two walker bugs those caught.
