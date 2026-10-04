@@ -41,6 +41,10 @@ class UnknownField(Exception):
     """Raised when a query names a field the DocType does not have."""
 
 
+class ValidationError(Exception):
+    """What frappe.throw raises."""
+
+
 class _dict(dict):
     """dict with attribute access, like frappe._dict."""
 
@@ -124,6 +128,8 @@ class FakeFrappe(object):
             "ToDo": TODO_FIELDS,
             "Division": doctype_fields("scheduler", "division"),
             "Timesheet Entry": doctype_fields("projects", "timesheet_entry"),
+            "Schedule Entry": doctype_fields("scheduler", "schedule_entry"),
+            "Resource": doctype_fields("scheduler", "resource"),
         }
         self.errors = []
         self.messages = []
@@ -155,6 +161,10 @@ class FakeFrappe(object):
 
     def msgprint(self, *args, **kwargs):
         self.messages.append((args, kwargs))
+
+    def throw(self, message, exc=None, **kwargs):
+        """frappe.throw aborts the save; nothing after it runs."""
+        raise (exc or ValidationError)(message)
 
     def parse_json(self, value):
         if isinstance(value, str):
@@ -241,6 +251,11 @@ class _FakeDb(object):
         return None
 
     def set_value(self, doctype, name, fieldname, value, **kwargs):
+        # Reads were checked and writes were not, so a set_value naming a
+        # removed field or a removed DocType went through without a murmur.
+        # Real Frappe puts the name straight into the UPDATE, so the write
+        # either lands in an orphaned column or the statement fails.
+        self._frappe._check_fields(doctype, [fieldname], "set_value")
         self._frappe.values_set.append((doctype, name, fieldname, value))
         for row in self._frappe.tables.get(doctype, []):
             if row.get("name") == name:
@@ -274,3 +289,52 @@ class FakeAssignTo(object):
                     and row.get("allocated_to") == assign_to):
                 row["status"] = "Cancelled"
         return []
+
+
+class FakeDocumentBase(object):
+    """The base erplite's DocType controllers inherit from.
+
+    Deliberately empty: Frappe's Document does the work in __init__, and
+    make_doc below stands in for that, so a controller under test behaves the
+    way Frappe would drive it.
+    """
+
+
+def make_doc(controller_class, doctype, module, doctype_dir, data=None):
+    """Build a controller instance the way Frappe builds a new document.
+
+    Which attributes a Document has is the whole point of this helper, so it
+    is worth being precise about what Frappe actually does:
+
+      * BaseDocument.__init__ sets only the keys in the dict it is handed.
+      * Document.__init__ then calls init_valid_columns(), which fills in
+        default_fields plus whatever get_valid_columns() returns.
+      * get_valid_columns() returns self.meta.get_valid_columns() - the
+        DocType's own field list. It only reads the real table columns for
+        DOCTYPES_FOR_DOCTYPE (DocType, DocField and friends), which no app
+        DocType is.
+      * Neither BaseDocument nor Document defines __getattr__.
+
+    So a field that was removed from the DocType JSON has no attribute on a
+    document built in memory, and self.<that field> raises AttributeError,
+    even though bench migrate left the column in the table. A document loaded
+    from the database is the other case: load_from_db does SELECT *, so it
+    picks the orphaned column's stale value up as an attribute.
+
+    Every new record goes through the in-memory case, which is why a leftover
+    reference breaks creation outright rather than merely reading nonsense.
+    """
+    valid = doctype_fields(module, doctype_dir)
+    doc = controller_class.__new__(controller_class)
+    doc.doctype = doctype
+    for field in valid:
+        object.__setattr__(doc, field, None)
+    # init_valid_columns gives these two a value rather than leaving them None.
+    doc.docstatus = 0
+    doc.idx = 0
+    for key, value in (data or {}).items():
+        if key not in valid:
+            raise AttributeError(
+                "%s has no field %r, so Frappe would not set it either" % (doctype, key))
+        setattr(doc, key, value)
+    return doc

@@ -12,18 +12,53 @@ against a real site, where the stand-in would be wrong.
 
 ## Why the stand-in is stricter than Frappe
 
-`frappe.get_all` in Frappe 15 does not validate field names:
+`frappe.get_all` in Frappe 15 does not check field names against the DocType
+at all. `DatabaseQuery.sanitize_fields` only screens for SQL injection and
+`Engine._apply_filter` only rejects special characters in a filter name;
+neither compares the name to the DocType's fields. The name goes into the SQL,
+so what happens next is the database's decision, not Frappe's:
 
 | query | real Frappe | this stand-in |
 |---|---|---|
-| unknown field in `fields` | returns the key with value `None` | raises `UnknownField` |
+| unknown field in `fields` | stale value if the column is still there, otherwise `Unknown column` | raises `UnknownField` |
 | unknown field in `filters` | valid SQL, matches nothing | raises `UnknownField` |
-| unknown `order_by` | accepted, ignored | raises `UnknownField` |
+| unknown `order_by` | accepted, orders by an unmaintained column | raises `UnknownField` |
+| unknown field in `db.set_value` | writes into the orphaned column, or fails | raises `UnknownField` |
 
-Nothing raises and nothing reaches the Error Log, which is how the Activity
-`subject` / `assigned_to` bug stayed invisible: the columns are still in
-`tabActivity` but are no longer fields on the DocType. Raising here turns that
-class of bug into a red test.
+An earlier version of this file said an unknown field "returns the key with
+value `None`". That was the comfortable version and it was wrong: `None` is
+just what an empty orphaned column happens to hold. Which of the two outcomes
+you get depends on the site's migration history rather than on the code, and
+neither reaches the Error Log. That is how the Activity `subject` /
+`assigned_to` bug stayed invisible: the columns are still in `tabActivity` but
+are no longer fields on the DocType. Raising here turns that class of bug into
+a red test.
+
+Writes were unchecked here for the same reason reads were unchecked in Frappe,
+until the Schedule Entry work needed them: a `set_value` naming a removed
+field is worse than a dead read, because it puts a value into a column nothing
+maintains.
+
+## Documents, not just queries
+
+`make_doc()` builds a DocType controller the way Frappe builds a new document,
+because *which attributes a document has* is its own source of bugs. Frappe
+gives a document an attribute only for a field the DocType actually declares:
+`BaseDocument.__init__` sets what is in the dict it is handed,
+`init_valid_columns()` fills in the rest from `meta.get_valid_columns()` (the
+DocType's field list, not the table's columns), and neither `BaseDocument` nor
+`Document` defines `__getattr__`.
+
+So the two cases differ, and the difference decides the symptom:
+
+- a document **built in memory** has no attribute for a removed field, and
+  `self.<field>` raises `AttributeError` - so creating a record fails outright;
+- a document **loaded from the database** picks the orphaned column up through
+  `load_from_db`'s `SELECT *`, so `self.<field>` quietly returns a stale value.
+
+Every new record goes through the first case. That is why the leftover
+`self.task` in the Schedule Entry controller broke creation rather than merely
+reading nonsense.
 
 `fake_frappe.doctype_fields()` reads the field list out of the DocType's own
 JSON in this repo rather than hard-coding it, so these tests follow the
