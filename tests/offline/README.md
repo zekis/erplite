@@ -346,3 +346,39 @@ literal query is not necessarily a correct one: whether its columns exist is
 `TheWalkerItself` holds 17 self-tests - every accepted shape and every rejected
 one, plus the two scope cases. Third guard in a row to ship with its own
 boundary tests, after the two walker bugs those caught.
+
+## `test_post_save_field_writes.py` — a field write in a post-save hook is lost
+
+Frappe writes the parent row in the *middle* of a save, not at the end.
+`Document._save()` runs `run_before_save_methods()`, then `db_update()`, then
+`run_post_save_methods()`; `insert()` runs `db_insert()`, then `after_insert()`.
+Nothing after the write touches the parent row again. So `self.field = value` in
+`on_update`, `on_submit`, `on_cancel`, `on_change`, `on_update_after_submit` or
+`after_insert` changes only the in-memory document and is then discarded.
+
+Nothing errors and nothing reaches the Error Log, and the attribute reads back
+correctly for the rest of the request — so it looks like it worked. The next load
+shows the old value.
+
+The case it was written for: `Timesheet Entry.on_update` set `status = "Submitted"`
+once check-out completed, and `approve_timesheet()` opens with `if timesheet.status
+!= "Submitted": frappe.throw("Only submitted timesheets can be approved")`. The
+approval path could never be entered. The giveaway is in the same file: `validate()`
+sets `is_active` and `duration_hours` and both persist; `on_update` set `status` and
+it did not.
+
+A post-save hook that also calls `self.db_update()`, `self.db_set()`, `self.save()`
+or `frappe.db.set_value()` is not reported — `Payment Entry` does this correctly.
+That check is per hook rather than per field, so a hook that persists one field and
+loses another is a false negative. That is the right way round: the first version of
+this walker reported `Payment Entry`'s two correct lines as bugs, and reading the
+file is what caught it. A missed case costs nothing; a confidently wrong finding
+sends someone to rewrite working code.
+
+`PENDING_DECISION` pins the four Sales Invoice / Purchase Invoice entries that are
+awaiting an owner decision (review tray **rev_7b11901cfb**): making their status
+persist changes whether an invoice reaches Xero as DRAFT or AUTHORISED, which is a
+question about real accounts rather than about code. Pinning the exact set keeps the
+guard green today while still turning red on a *new* lost write, and
+`test_pending_decision_entries_still_exist` fails if the list outlives what it
+documents.

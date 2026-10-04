@@ -29,8 +29,18 @@ class Trip(Document):
             if arrival <= departure:
                 frappe.throw("Arrival date and time must be after departure date and time")
 
-    def on_update(self):
-        """Update status based on dates"""
+    def before_save(self):
+        """Update status based on dates.
+
+        A pre-save hook, not on_update(): frappe's Document._save() writes the row
+        in db_update() before it runs the post-save hooks, so a status assigned in
+        on_update() never reached the database. Supplier Quote already derives its
+        status in before_save() for the same reason.
+
+        This still only re-evaluates when the document is saved, so a trip's status
+        goes stale between saves. Keeping it current without a save would need a
+        scheduled job, which is a separate change.
+        """
         if self.departure_datetime and self.arrival_datetime:
             now = datetime.now()
             departure = get_datetime(self.departure_datetime)

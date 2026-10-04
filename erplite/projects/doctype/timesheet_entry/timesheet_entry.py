@@ -60,16 +60,19 @@ class TimesheetEntry(Document):
                 self.employee, entry.name, entry.project, entry.activity
             ))
     
-    def on_update(self):
-        """Actions on update"""
-        # Auto-submit when check-out is completed
-        if self.check_in_time and self.check_out_time and self.status == "Draft":
-            self.status = "Submitted"
-    
     def before_save(self):
         """Actions before save"""
-        # Date field has been removed - no longer needed
-        pass
+        # Auto-submit when check-out is completed.
+        #
+        # This must run before the row is written, not in on_update(). Frappe's
+        # Document._save() runs run_before_save_methods(), then db_update(), then
+        # run_post_save_methods() -- so an assignment made in on_update() lands on
+        # the in-memory document after its row has already been written, and is
+        # discarded. That is why a checked-out timesheet stayed "Draft" and
+        # approve_timesheet() then refused it with "Only submitted timesheets can
+        # be approved".
+        if self.check_in_time and self.check_out_time and self.status == "Draft":
+            self.status = "Submitted"
 
 @frappe.whitelist()
 def check_in(project, activity, location=None):
