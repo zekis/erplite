@@ -410,6 +410,21 @@ def get_project_colors():
     return colors
 
 @frappe.whitelist()
+def create_bulk_schedule_entries(entries=None, entries_data=None):
+    """Alias for `bulk_create_entries`, kept because the built Vue scheduler calls this name.
+
+    `erplite/public/frontend/assets/VueScheduler-*.js` -- the bundle that is actually deployed --
+    calls `erplite.scheduler.api.create_bulk_schedule_entries` and passes its payload as
+    `entries`. Neither the name nor the argument existed: the function is `bulk_create_entries`
+    and its parameter is `entries_data`, so the call failed in `frappe.handler.execute_cmd` with
+    "Failed to get method for command ...". Renaming the call in the Vue source alone would not
+    have fixed the deployed bundle, and correcting only the method name would have moved the
+    failure to a missing-argument TypeError, so this accepts either argument name and delegates.
+    """
+    return bulk_create_entries(entries_data if entries_data is not None else entries)
+
+
+@frappe.whitelist()
 def get_resource_capacity_report(resource, start_date, end_date):
     """Get detailed capacity report for a resource"""
     

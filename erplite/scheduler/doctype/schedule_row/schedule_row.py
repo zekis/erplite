@@ -395,6 +395,41 @@ def update_daily_entries(schedule_row: str, entries: str) -> Dict[str, Any]:
 
 
 @frappe.whitelist()
+def extend_entries(schedule_row: str, additional_days: int, hours_per_day: float = 0) -> Dict[str, Any]:
+    """Extend a schedule row's daily entries by a number of days.
+
+    The "Extend" dialog in schedule_row.js has always called
+    `erplite...schedule_row.extend_entries` as a dotted module path, but the only
+    `extend_entries` was the ScheduleRow method, which `frappe.get_attr` cannot reach
+    (`getattr(module, name)`), so the dialog could never have worked -- it raised "Failed to get
+    method for command ...". This is the missing module-level wrapper, in the same shape as
+    `update_daily_entries` above: load, mutate through the controller, save.
+
+    The method only calls `set_daily_entries_dict`, which mutates in memory, so the `save()`
+    here is what actually persists the new days.
+    """
+    try:
+        doc = frappe.get_doc("Schedule Row", schedule_row)
+        doc.extend_entries(int(additional_days), float(hours_per_day or 0))
+        doc.save()
+
+        return {
+            "success": True,
+            "message": "Entries extended successfully",
+            "total_hours": doc.total_hours,
+            "start_date": doc.start_date,
+            "end_date": doc.end_date,
+        }
+
+    except Exception as e:
+        frappe.log_error(f"Error extending entries: {str(e)}")
+        return {
+            "success": False,
+            "message": f"Error extending entries: {str(e)}",
+        }
+
+
+@frappe.whitelist()
 def copy_schedule_row(
     source_row: str,
     target_project: str = None,

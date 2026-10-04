@@ -184,8 +184,11 @@ export function useSchedulerAPI() {
   // Bulk create multiple schedule entries
   const createBulkScheduleEntries = async (entriesData) => {
     try {
-      const response = await call('erplite.scheduler.api.create_bulk_schedule_entries', {
-        entries: entriesData
+      // The deployed bundle still calls create_bulk_schedule_entries with `entries`; that
+      // name is kept as a whitelisted alias in scheduler/api.py so this can be corrected here
+      // without having to rebuild the bundle to fix the live site.
+      const response = await call('erplite.scheduler.api.bulk_create_entries', {
+        entries_data: entriesData
       })
       
       console.log('Bulk entries created:', response)

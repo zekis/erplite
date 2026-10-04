@@ -143,16 +143,15 @@ frappe.ui.form.on('Schedule Entry', {
     },
     
     status: function(frm) {
-        // Auto-update activity progress when status changes
-        if (frm.doc.activity && !frm.is_new()) {
-            // Trigger activity progress update on server
-            frappe.call({
-                method: 'erplite.scheduler.doctype.schedule_entry.schedule_entry.update_activity_progress',
-                args: {
-                    activity: frm.doc.activity
-                }
-            });
-        }
+        // Nothing to do here. This used to call
+        // erplite.scheduler.doctype.schedule_entry.schedule_entry.update_activity_progress,
+        // which has never existed in any commit, so changing the status of a saved entry that
+        // had an activity always raised "Failed to get method for command ..." in the user's
+        // face. There is nothing to point it at either: Activity's progress_percent field was
+        // removed in 8126278 and has no successor, so whether the scheduler should roll
+        // progress up to the Activity at all is an open product question (review tray
+        // rev_e3d5be99e3), not a rename. Restoring this means adding both the field and the
+        // server method.
     }
 });
 
@@ -312,10 +311,16 @@ function duplicate_schedule_entry(frm) {
         ],
         primary_action_label: __('Duplicate'),
         primary_action: function(values) {
-            frappe.call({
-                method: 'erplite.scheduler.doctype.schedule_entry.schedule_entry.duplicate_entry',
+            frm.call({
+                // duplicate_entry is an @frappe.whitelist() method on the ScheduleEntry
+                // controller, so it has to be called as a document method: frappe.get_attr
+                // resolves a dotted path with getattr(module, name) and cannot see inside the
+                // class. Passing the doc routes this through run_doc_method instead, which
+                // identifies the record itself -- hence no `name` argument, which
+                // duplicate_entry does not accept.
+                method: 'duplicate_entry',
+                doc: frm.doc,
                 args: {
-                    name: frm.doc.name,
                     new_date: values.new_date,
                     new_resource: values.new_resource
                 },
@@ -353,10 +358,13 @@ function move_to_resource(frm) {
         ],
         primary_action_label: __('Move'),
         primary_action: function(values) {
-            frappe.call({
-                method: 'erplite.scheduler.doctype.schedule_entry.schedule_entry.move_to_resource',
+            frm.call({
+                // Same as duplicate_entry above: a whitelisted controller method, so it goes
+                // through run_doc_method with the doc rather than a dotted module path, and
+                // move_to_resource takes no `name` argument.
+                method: 'move_to_resource',
+                doc: frm.doc,
                 args: {
-                    name: frm.doc.name,
                     new_resource: values.new_resource,
                     new_date: values.new_date
                 },

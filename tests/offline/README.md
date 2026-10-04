@@ -156,3 +156,77 @@ The `ast.Store` twin found the second of them on its first run.
 A loaded document is deliberately still out of scope: `frappe.get_doc(...)`
 genuinely does carry orphan columns through `SELECT *`, so reading one there is
 a stale value rather than a bug the DocType JSON can prove.
+
+## String references: does the name point at anything at all?
+
+`test_string_references.py` asks a different question from every sweep above
+it. Those all ask "does this code name a field its DocType declares?". This one
+asks "does this string name anything that exists?", because Frappe resolves a
+lot of wiring by string at request time. A wrong name is not a syntax error and
+not a failed import; it is a working app with a dead button.
+
+Three passes, each verified against frappe/frappe version-15 rather than
+reasoned about:
+
+1. **Asset URLs.** Every `/assets/erplite/...` in live code must be a file the
+   app ships. `sites/assets/<app>` is a *symlink* to `<app>/<app>/public`
+   (`frappe/build.py`), so a file missing from the repo is missing on the live
+   site - this is not a build-staleness question. `app_include_css` had been
+   naming `css/timesheet-calendar.css`, deleted along with the rest of that
+   feature in 8126278. `frappe/www/app.py:48` collects it, `app.html:25`
+   renders it through `jinja_globals.include_style`, and `bundled_asset` passes
+   a path starting with `/assets` and containing no `.bundle.` straight through
+   to `abs_url`. Because `include_style` defaults to `preload=True` the path is
+   also added to `frappe.local.preload_assets["style"]`, which
+   `frappe/website/utils.py:586` turns into an HTTP `rel=preload` header, so it
+   was **two 404s on every desk page load for every user** - and no exception,
+   nothing in the Error Log. The mildest symptom of any surface swept so far,
+   and by far the widest blast radius. Severity and blast radius are
+   independent; it is worth not ranking one by the other.
+
+2. **Dotted method paths resolve, at module level.**
+   `frappe.handler.execute_cmd` does `method = get_attr(cmd)` and on any
+   exception calls `frappe.throw(_("Failed to get method for command {0} with
+   {1}"))`. `frappe.get_attr` is `getattr(get_module(modulename), methodname)`,
+   so **the name must exist at module level**. A perfectly good, even
+   `@frappe.whitelist()`-decorated, *class* method is unreachable this way.
+   That trap accounted for four of the six findings, and it is the kind that
+   survives review because the code looks right.
+
+3. **Argument names.** Once pass 2 is green, the caller's argument names must
+   be ones the function declares, or `frappe.call` raises `TypeError` when it
+   maps `form_dict` onto the parameters. This pass exists because the Vue
+   scheduler's bulk create was wrong *twice*: the method name was transposed
+   (`create_bulk_schedule_entries` for `bulk_create_entries`) and the argument
+   was `entries` where the function takes `entries_data`. Fixing only the name
+   would have moved the failure rather than removing it.
+
+The findings, all of them live and user-facing:
+`create_bulk_schedule_entries` (called by the *deployed* Vue bundle, so pass 2
+deliberately covers the minified bundles as well as the source);
+`update_activity_progress` on every Schedule Entry status change, which has
+never existed in any commit; and `extend_entries`, `duplicate_entry` and
+`move_to_resource`, all class methods reached by dotted path. The last two were
+already `@frappe.whitelist()`, so the server side was right and only the call
+form was wrong - they now go through `run_doc_method` via `frm.call` with the
+doc, which also meant dropping a `name` argument neither method accepts.
+
+**Comments are stripped before anything is matched**, using `tokenize` for
+Python and a string-aware scanner for JavaScript. This is not a detail: the
+first draft reported 26 missing methods and 24 were Frappe's own commented-out
+boilerplate in `hooks.py`. A naive `//` strip would also have eaten every line
+containing `https://`. A sweep that cannot tell code from a comment gets
+ignored, and one that is mostly false positives deserves to be.
+
+Blind spots, stated so they are places to look rather than places to stop: a
+method path assembled at runtime from a variable is invisible to all three
+passes; pass 3 skips the minified bundles and any call form it cannot read
+exactly, rather than guessing; and pass 1 only resolves this app's own
+`/assets/erplite/...` prefix.
+
+A note on checking JavaScript syntax after editing it: `esprima` (used to
+confirm nothing was broken) is too old for ES2020, so it rejects optional
+chaining (`?.`) and `static` class fields. Eight files in this app use them and
+fail to parse under it *at HEAD, unmodified*. That is the tool's limit, not
+breakage - but it means esprima cannot be used as a blanket "everything still
+parses" check without that control run to compare against.
