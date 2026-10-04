@@ -162,3 +162,26 @@ right response is to fix the read rather than to add an exception for it.
 Neither guard can see a DocType this app does not define, because the field
 list of a Frappe core DocType is not in this repo. The second one skips those
 rather than guessing at them.
+
+`test_client_scripts.py` is the same idea on the browser side, and the failure
+there is louder. Frappe's `frm.set_value` ends its inner `_set` with
+
+    frappe.msgprint(__("Field {0} not found.", [f]));
+    throw "frm.set_value";
+
+for a fieldname the form does not know, so setting a field the DocType no
+longer declares is a modal error dialog plus an aborted handler - not the
+silent stale read that a query gives you. Note that only the string form is
+dangerous: `frm.set_value({x: 1})` is guarded by `me.get_field(f)` and skips
+quietly, while `frm.set_value('x', 1)` goes straight through.
+
+A client script's DocType is taken from where it lives -
+`erplite/<module>/doctype/<x>/<x>.js` belongs to the DocType defined by
+`<x>.json` beside it - which is what makes the check exact rather than a grep.
+
+Its own blind spots are listed in the module docstring and are worth reading
+before concluding this class is gone: `frm.doc.<field>` reads (inert, and a
+product question on Activity), `frappe.model.set_value(cdt, cdn, ...)` on
+child tables (the DocType is a runtime variable), and JS outside the doctype
+folders - `public/js`, `www`, and the Vue app - which uses the REST API
+instead and is not covered here at all.

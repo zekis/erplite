@@ -70,14 +70,11 @@ frappe.ui.form.on('Activity', {
 		}
 	},
 	
-	status: function(frm) {
-		// Auto-update progress based on status
-		if (frm.doc.status == 'Completed' && frm.doc.progress_percent != 100) {
-			frm.set_value('progress_percent', 100);
-		} else if (frm.doc.status == 'Open' && frm.doc.progress_percent > 0) {
-			// Don't auto-reset progress when status changes to Open
-		}
-	},
+	// The status handler used to drive progress_percent, which the Activity DocType no
+	// longer declares. frm.set_value on it raised "Field progress_percent not found."
+	// whenever status was set to Completed, so the handler is removed. Whether an
+	// Activity should track progress at all is a product question; the rest of this
+	// file's progress logic is left in place as a record of what was intended.
 	
 	due_date: function(frm) {
 		// Warn if due date is in the past
@@ -94,13 +91,9 @@ frappe.ui.form.on('Activity', {
 		}
 	},
 	
-	estimated_hours: function(frm) {
-		// Validate estimated hours
-		if (frm.doc.estimated_hours && frm.doc.estimated_hours < 0) {
-			frappe.msgprint(__('Estimated hours cannot be negative'));
-			frm.set_value('estimated_hours', 0);
-		}
-	},
+	// The estimated_hours handler never fired: the Activity DocType no longer declares
+	// the field, so there is no field for the form to watch, and its frm.set_value
+	// would have raised "Field estimated_hours not found." if it had. Removed.
 	
 	validate: function(frm) {
 		// Validate progress percentage
