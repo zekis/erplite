@@ -295,7 +295,7 @@ def download_file(file_path=None):
         
         # Get file info for proper headers
         filename = file_path.split('\\')[-1] if '\\' in file_path else file_path.split('/')[-1]
-        mime_type, _ = mimetypes.guess_type(filename)
+        mime_type, _encoding = mimetypes.guess_type(filename)
         if not mime_type:
             mime_type = 'application/octet-stream'
         
@@ -360,7 +360,7 @@ def get_file_info(file_path):
             }
         
         stat = os.stat(file_path)
-        mime_type, _ = mimetypes.guess_type(file_path)
+        mime_type, _encoding = mimetypes.guess_type(file_path)
         
         return {
             'success': True,

@@ -230,3 +230,59 @@ chaining (`?.`) and `static` class fields. Eight files in this app use them and
 fail to parse under it *at HEAD, unmodified*. That is the tool's limit, not
 breakage - but it means esprima cannot be used as a blanket "everything still
 parses" check without that control run to compare against.
+
+## Shadowing an import: Python's own scoping, not Frappe's
+
+`test_shadowed_imports.py` is the sixth surface and the first that is about
+**Python's rules rather than Frappe's**. A name assigned anywhere in a function
+body is local for the *whole* body, so a function that imports a name at module
+level, uses it, and only later assigns it raises `UnboundLocalError: cannot
+access local variable 'x' where it is not associated with a value`. Nothing is
+undefined: the name exists at module level and locally, and only the order is
+wrong.
+
+In a Frappe app the name this happens to is `_`. Every module does
+`from frappe import _`, and `mime_type, _ = mimetypes.guess_type(x)` is ordinary
+Python for throwing a value away.
+
+    @frappe.whitelist()
+    def download_file(file_path=None):
+        try:
+            ...
+            if not file_path:
+                frappe.throw(_("File path is required"))   # line 274: UnboundLocalError
+            ...
+            mime_type, _ = mimetypes.guess_type(filename)  # line 298: makes _ local
+        except Exception as e:
+            return {"success": False, "error": f"Download failed: {str(e)}"}
+
+The blanket `except Exception` then reports it, so a download requested with no
+path answered `Download failed: cannot access local variable '_' where it is
+not associated with a value` instead of the message that was written and
+translated for exactly that case. **The symptom misdirects: it reads like a
+bug in the error handling rather than in the line that throws.**
+
+Two passes. Pass A fails on a module-level import *used before* being assigned
+locally, app-wide. Pass B is stricter and fails on **any** shadowing of `_`,
+reachable or not, because the gap between latent and live is one added line
+that nobody would think to check - the app had one of each, in neighbouring
+functions of the same file.
+
+Both are fixed by naming the discarded value (`_encoding`), which reads better
+anyway.
+
+Blind spots, as always stated as places to look: pass A compares line numbers,
+not control flow, so a use reached first at runtime but written after the
+assignment (a loop re-entry) is not flagged; only module-level *imports* are
+considered, not module-level constants; and a nested `def _()` binds the name
+without being flagged, since the nested scope is skipped.
+
+`TestTheSweepItselfWorks` carries the two real shapes reduced to their smallest
+source, plus the cases that must *not* be findings. That class earned its keep
+immediately: `test_a_nested_function_is_its_own_scope` failed on the first run
+and the bug was in the walker, not the app - it skipped nested functions when
+expanding children but not when a nested `def` was a direct statement of the
+body, so the inner function's assignment was attributed to the outer one. The
+same shape as the `ast.walk`-descends-into-classes flaw in
+`test_string_references.py`'s first draft. **A walker that decides what counts
+as "this scope" needs a test for the scope boundary itself.**
