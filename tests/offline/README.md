@@ -431,3 +431,44 @@ boundary: a `def validate` nested in another method, and one at module level, ar
 not hooks), 6 regression tests that drive the real `Supplier Quote` controller so a
 revert fails rather than just going unnoticed, and 3 premises tests reading the
 DocType JSON.
+
+## test_timesheet_ownership.py
+
+Two different fields answer "whose timesheet is this", and nothing keeps them
+in agreement.
+
+Frappe decides permission from `owner`, the standard column it sets to the
+*creating* user (`base_document.py`: `if not self.creation:` ->
+`self.owner = self.modified_by = frappe.session.user`). The Projects User row
+on Timesheet Entry carries `"if_owner": 1`, so for that role read and write
+are granted only on rows that user created.
+
+The app decides whose hours they are from `employee`, a required Link to User
+that is not read-only and has no permlevel. `get_week_timesheets`,
+`export_timesheet_data` and the dashboard widgets all filter on `employee`,
+through `frappe.get_all`, which "will **not** check for permissions".
+
+So a row can count as one person's hours while being editable only by
+another, in both directions: anyone with create may insert a row naming a
+colleague (frappe: "if_owner does not come with create rights") and keep
+editing it; and a row an admin books for you has `owner` = the admin, so you
+cannot correct your own hours.
+
+Which rule was wanted is a product decision and is with the owner as
+**rev_84dce415b5**. Nothing in this file asserts that today's behaviour is
+correct. The tests pin the premises the decision rests on, so that if one of
+them changes the decision goes stale loudly, and they lock in the parts that
+are already right so that whichever way it is decided does not break them:
+`check_out`'s ownership check, the `target_user` admin gate on all three
+endpoints that take it, and that the app bypasses frappe's permissions in
+exactly one place (an audit-log insert at `scheduler/api.py:920` -- the test
+fails if a second one appears).
+
+`role_permissions` is frappe's own `get_role_permissions` ported from the
+version-15 source, with the role rows loaded from the real
+`timesheet_entry.json` rather than written by hand. It carries 8 self-tests
+against rows whose answer is obvious, because the rule decides the whole
+finding. One of them caught an error in the port's comment: frappe leaves
+`read` open to a non-owner only *inside* `get_role_permissions`, to build the
+list-view filter, and `has_permission` then overwrites it, so a non-owner is
+refused read on a named document too.
