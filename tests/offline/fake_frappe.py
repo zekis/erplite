@@ -238,12 +238,25 @@ class _FakeDb(object):
     def exists(self, doctype, name):
         return any(r.get("name") == name for r in self._frappe.tables.get(doctype, []))
 
-    def get_value(self, doctype, name, fieldname, **kwargs):
+    def get_value(self, doctype, name=None, fieldname="name", **kwargs):
+        # Real frappe's signature is get_value(doctype, filters=None,
+        # fieldname="name", ...), and `filters` may be a dict as well as a
+        # name. This stand-in used to require `fieldname` and match only on
+        # row["name"], so erplite's own
+        #     frappe.db.get_value("Customer", {"xero_contact_id": cid})
+        # raised TypeError here -- a stand-in fault that surfaced through the
+        # app's broad `except Exception` as "Error importing customer from
+        # Xero: ... missing 1 required positional argument", reading exactly
+        # like a bug in the app. Matching real frappe is what makes the
+        # duplicate-contact check testable at all.
         many = isinstance(fieldname, (list, tuple))
         names = list(fieldname) if many else [fieldname]
         self._frappe._check_fields(doctype, names, "get_value")
+        if isinstance(name, dict):
+            self._frappe._check_fields(doctype, list(name), "get_value filters")
         for row in self._frappe.tables.get(doctype, []):
-            if row.get("name") == name:
+            if (all(row.get(k) == v for k, v in name.items())
+                    if isinstance(name, dict) else row.get("name") == name):
                 if not many:
                     return row.get(fieldname)
                 values = [row.get(f) for f in names]
