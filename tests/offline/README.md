@@ -472,3 +472,48 @@ finding. One of them caught an error in the port's comment: frappe leaves
 `read` open to a non-owner only *inside* `get_role_permissions`, to build the
 list-view filter, and `has_permission` then overwrites it, so a non-owner is
 refused read on a named document too.
+
+## test_xero_send_and_sync.py (6 Oct 2026)
+
+Two findings in `erplite/xero/`, both pinned as premises rather than asserted to be
+correct, behind review-tray item **rev_5c3dfe6ff3**.
+
+**The send is not repeatable.** All four `send_to_xero` endpoints guard against a
+double send by reading a local `xero_invoice_id` / `xero_contact_id`, and that field
+is written only after Xero answers 200. None of the 21 `requests` calls in the module
+passes a `timeout=`. So a POST that reaches Xero whose reply is lost leaves the
+invoice in Xero, the guard open, and the user reading "Failed to send invoice to
+Xero" — and the retry sends a second invoice carrying the same InvoiceNumber. The
+consequence tests run that sequence against the real controller and count what Xero
+received. Whether Xero *accepts* the duplicate is deliberately not tested: that would
+mean writing to the owner's real accounts.
+
+**The pull-from-Xero direction calls five functions that do not exist**, so three of
+the five whitelisted endpoints in `xero/api.py` cannot succeed and
+`Company.connect_to_xero` / `sync_with_xero` raise ImportError. `KNOWN_UNDEFINED`
+pins the four module-attribute references as a baseline.
+
+The guard behind the second finding — a `module.attr` reference must be defined in
+that module — is the first strict rule in this suite that came back **free and
+unanimous**: there are four such references in the whole app and all four are broken.
+The standing rule is to check whether a strict rule is free before building it; last
+time the answer was no (see test_timesheet_ownership.py, where a "don't swallow
+PermissionError" walker would have flagged nearly every endpoint). This time it was
+yes.
+
+### A stand-in fix, and why it mattered
+
+`fake_frappe`'s `db.set_value` only accepted a single field and a value. Real Frappe's
+signature is `set_value(dt, dn, field, val=None)` where `field` may be "a dictionary
+of values to be updated" (frappe/database/database.py), and
+`erplite/xero/accounts.py` calls it that way for all four `xero_*` fields at once. The
+stand-in therefore raised a TypeError that the app's broad `except` reported as
+"Error creating invoice in Xero: ... missing 1 required positional argument", which
+reads exactly like a bug in the app. It now takes the dict form and still refuses an
+undeclared field name.
+
+The same repro also printed "invoices in Xero: 0" under a line claiming Xero had
+created one. That was `_dict` inheriting `dict.items`, which shadows an `items` child
+table, so `for item in sales_invoice.items` iterated a bound method. Documents in this
+file are therefore a plain object, not a dict subclass, and
+`test_a_dict_subclass_cannot_carry_an_items_child_table` pins the trap.

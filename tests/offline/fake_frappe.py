@@ -250,16 +250,29 @@ class _FakeDb(object):
                 return _dict(zip(names, values)) if kwargs.get("as_dict") else values
         return None
 
-    def set_value(self, doctype, name, fieldname, value, **kwargs):
+    def set_value(self, doctype, name, fieldname, value=None, **kwargs):
         # Reads were checked and writes were not, so a set_value naming a
         # removed field or a removed DocType went through without a murmur.
         # Real Frappe puts the name straight into the UPDATE, so the write
         # either lands in an orphaned column or the statement fails.
-        self._frappe._check_fields(doctype, [fieldname], "set_value")
-        self._frappe.values_set.append((doctype, name, fieldname, value))
+        #
+        # `fieldname` may be a dict of several fields, which is real Frappe's
+        # documented signature -- frappe/database/database.py: "Property /
+        # field name or dictionary of values to be updated", with `val=None`.
+        # erplite/xero/accounts.py calls it that way for all four xero_* fields
+        # at once, so a stand-in that only took one field made that call look
+        # like a TypeError from the app rather than a gap here.
+        if isinstance(fieldname, dict):
+            updates = dict(fieldname)
+        else:
+            updates = {fieldname: value}
+        self._frappe._check_fields(doctype, list(updates), "set_value")
+        for field, val in updates.items():
+            self._frappe.values_set.append((doctype, name, field, val))
         for row in self._frappe.tables.get(doctype, []):
             if row.get("name") == name:
-                row[fieldname] = value
+                for field, val in updates.items():
+                    row[field] = val
 
     def commit(self):
         self._frappe.commits += 1
