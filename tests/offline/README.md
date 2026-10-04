@@ -517,3 +517,81 @@ created one. That was `_dict` inheriting `dict.items`, which shadows an `items` 
 table, so `for item in sales_invoice.items` iterated a bound method. Documents in this
 file are therefore a plain object, not a dict subclass, and
 `test_a_dict_subclass_cannot_carry_an_items_child_table` pins the trap.
+
+## test_core_doctype_collisions.py (7 Oct 2026) — the DocType NAME, not its fields
+
+Every sweep above asks whether a name inside a DocType points at something real.
+This one asks whether the DocType's own name is free, and the answer turns out to
+be no in one place.
+
+A DocType name is global: one `tabDocType` row and one table per name. When two
+installed apps ship a DocType with the same name the loser is **erased, not
+merged**, and nothing warns anyone. `sync_all` walks
+`frappe.get_installed_apps()` in order (`model/sync.py:42-44`) with frappe always
+first, so the other app syncs last; `import_doc` then does
+
+    if frappe.db.exists(doc.doctype, doc.name):
+        delete_old_doc(doc, reset_permissions)
+    ...
+    doc.insert()
+
+(`modules/import_file.py:230-239`). There is no collision check at all — last
+app to sync simply replaces the definition.
+
+Three things change at once, and each has a different symptom:
+
+1. **Fields vanish from the DocType while their data stays in the table**, because
+   Frappe's schema sync adds columns and never drops them. This is the same
+   orphan-column mechanism as the Activity `subject` / `assigned_to` bug, with the
+   roles reversed: here the orphans are what keeps core code working.
+2. **Mandatory flags from the new definition start applying to rows that predate
+   them.** A `reqd` field with no default is a new column, so it is NULL on every
+   existing row, and saving one of those rows aborts on mandatory validation.
+3. **The controller is swapped out.** `import_controller` reads `module` from the
+   DocType row (`model/base_document.py:82-86`), so the winning app's class takes
+   over and the replaced app's `validate` / `on_update` stop running.
+
+There is exactly one collision today, `Currency`: this app ships
+`erplite/setup/doctype/currency` (module Setup), frappe ships
+`frappe/geo/doctype/currency` (module Geo), and erplite's wins. All three
+symptoms land:
+
+- Five fields leave the DocType — `fraction`, `fraction_units`,
+  `smallest_currency_fraction_value`, `number_format`, `symbol_on_right`. Frappe
+  core reads four of them *by name*: `utils/data.py:1195` (`rounded`), `:1273`
+  (`money_in_words`), `:1314` (`fmt_money`) and `boot.py:476-478`. Those reads keep
+  working only because the columns orphan rather than being dropped, which is
+  worth sitting with: money formatting on a live accounting site depends on a
+  column nothing maintains.
+- `currency_code` is `reqd` with no default, so it is NULL on every currency row
+  that already existed and **saving any of them aborts**. Nothing in this app saves
+  a Currency document, so what this bites is the Currency form and any future code
+  path, not today's invoicing.
+- Frappe's `Currency.validate` exists *only* to call `frappe.clear_cache()`,
+  because `fmt_money` and `money_in_words` read currency values with `cache=True`.
+  erplite's controller replaces it and does not clear the cache, so an edited
+  currency can go on being formatted with its old values.
+- The two fields erplite added Currency for, `is_base_currency` and
+  `exchange_rate`, and both helpers on its controller (`get_base_currency`,
+  `get_exchange_rate`), are referenced by **nothing** else in the app — while
+  Currency is the link target of seven fields across Sales Invoice, Purchase
+  Invoice, Payment Entry, Supplier Quote, Account and Company.
+
+It is left as it is on purpose. Resolving it is a schema decision on a live
+accounting system — rename erplite's DocType, make it a superset of frappe's, or
+drop it and use Custom Fields — and that is the owner's call, not a test's. The
+three passes pin the collision exactly instead, so a **new** collision fails, and
+so does resolving this one, with a message saying what to update.
+
+Fault injection: a new DocType named `Note` breaks pass 1; renaming erplite's
+Currency breaks all three; adding the five fields back breaks pass 2 **and**
+`test_doctype_metadata.test_field_order_matches_the_declared_fields`, because a
+field added to `fields` has to be added to `field_order` too; giving
+`currency_code` a default breaks pass 3.
+
+The core DocType names live in `frappe_core_doctypes.json`, vendored because the
+offline suite has no bench to ask — the blind spot the two sections above record.
+It was dumped from the version-15 branch at 15.121.3 by
+`tools/dump_core_doctypes.py`; the live site runs 15.52.0, and Currency has been in
+`frappe/geo` since long before either. Re-run the tool when the Frappe version
+moves.
