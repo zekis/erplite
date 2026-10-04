@@ -100,15 +100,25 @@ HOOKS = frozenset({
 ALLOWED = frozenset()
 
 
-def hooks_defined_in(source):
-    """Hook methods defined directly in a class body, as (name, lineno).
+class Unparseable(Exception):
+    """A controller file that does not compile. Reported as itself, not as a hook."""
+
+
+def hooks_defined_in(source, where="<source>"):
+    """Hook methods defined directly in a class body, as (class, hook, lineno).
 
     Only direct children of a ClassDef body count. A def nested inside another
     method is a local function, not a hook, and a def at module level is not a
     method at all.
     """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as error:
+        # Found while proving this guard bites: a bad file otherwise surfaced as a
+        # traceback pointing into ast.py, which says nothing about which file.
+        raise Unparseable("%s does not compile: %s" % (where, error))
     found = []
-    for node in ast.parse(source).body:
+    for node in tree.body:
         if not isinstance(node, ast.ClassDef):
             continue
         for member in node.body:
@@ -153,7 +163,7 @@ def sweep_app(app_root=APP_ROOT):
             continue
         with open(controller, "rb") as handle:
             source = handle.read().decode("utf-8")
-        for class_name, hook, lineno in hooks_defined_in(source):
+        for class_name, hook, lineno in hooks_defined_in(source, rel):
             if rel in ALLOWED:
                 continue
             reported.append((name, rel, class_name, hook, lineno))
@@ -197,6 +207,12 @@ class ChildDoctypeHooks(unittest.TestCase):
 
 class WalkerSelfTests(unittest.TestCase):
     """What the walker must and must not report. Written before the sweep was run."""
+
+    def test_an_unparseable_controller_says_which_file(self):
+        with self.assertRaises(Unparseable) as caught:
+            hooks_defined_in("class X(Document):\n\tpass\n    def validate(self):\n        pass\n",
+                             "accounts/doctype/thing/thing.py")
+        self.assertIn("accounts/doctype/thing/thing.py", str(caught.exception))
 
     def test_reports_a_hook_in_a_class_body(self):
         source = "class SupplierQuoteItem(Document):\n    def validate(self):\n        pass\n"
