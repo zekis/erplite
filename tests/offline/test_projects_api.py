@@ -83,7 +83,10 @@ class ActivityQueryTestCase(unittest.TestCase):
         self.frappe.tables["Project"] = [
             _dict(name="5gofgdoomv", project_name="Novalith", status="Open"),
             _dict(name="other01", project_name="Another project", status="Open"),
-            _dict(name="dead01", project_name="Shelved", status="Cancelled"),
+            # "Archived", not "Cancelled": Project.status has no Cancelled option.
+            # This fixture said Cancelled for several sweeps and the test below passed
+            # on it, demonstrating an exclusion that cannot happen on the real site.
+            _dict(name="dead01", project_name="Shelved", status="Archived"),
         ]
         self.frappe.tables["Activity"] = [
             _dict(name="g68cfomvvu", activity_name="PO-0392 - CCTP Systems Engineering support",
@@ -156,8 +159,23 @@ class TestGetProjectsAndActivities(ActivityQueryTestCase):
         self.assertIn("5gofgdoomv", result)
         self.assertEqual([], result["5gofgdoomv"]["activities"])
 
-    def test_cancelled_projects_are_excluded(self):
+    def test_archived_projects_are_excluded(self):
+        """Archived is the only status Project has that means "do not show this".
+
+        The filter used to read `["!=", "Cancelled"]`, which Project.status cannot be,
+        so it excluded nothing and archived projects were listed.
+
+        The positive half of this assertion is not decoration. An earlier version
+        asserted only `assertNotIn("dead01", ...)`, and fault injection showed it
+        passing with the filter reverted: `get_projects_and_activities` wraps its
+        body in `except Exception` and returns `{"success": False, ...}`, in which
+        "dead01" is also absent. **A test that asserts only an absence is satisfied
+        by the endpoint failing outright.** Naming the projects that must be there
+        is what makes the absence mean anything.
+        """
         result = self.api.get_projects_and_activities()
+        self.assertIn("5gofgdoomv", result)
+        self.assertIn("other01", result)
         self.assertNotIn("dead01", result)
 
     def test_admin_can_view_another_users_activities(self):

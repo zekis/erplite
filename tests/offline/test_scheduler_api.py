@@ -94,7 +94,9 @@ class SchedulerQueryTestCase(unittest.TestCase):
                   project_lead=USER, division="div_eng"),
             _dict(name="other01", project_name="Another project", status="Open",
                   project_lead=None, division=None),
-            _dict(name="dead01", project_name="Shelved", status="Cancelled",
+            # "Archived", not "Cancelled": Project.status has no Cancelled option.
+            # Activity does have one, which is why act_cancelled below is left as is.
+            _dict(name="dead01", project_name="Shelved", status="Archived",
                   project_lead=USER, division="div_eng"),
         ]
         self.frappe.tables["Activity"] = [
@@ -161,7 +163,8 @@ class TestGetProjectsAndActivities(SchedulerQueryTestCase):
         self.assertEqual(USER, project["project_lead"])
         self.assertNotIn("project_manager", project)
 
-    def test_cancelled_projects_and_activities_are_left_out(self):
+    def test_archived_projects_and_cancelled_activities_are_left_out(self):
+        """Two different words on purpose: Project goes Archived, Activity Cancelled."""
         projects = self.projects_by_name()
 
         self.assertNotIn("dead01", projects)

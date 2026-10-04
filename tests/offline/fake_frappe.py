@@ -41,6 +41,35 @@ class UnknownField(Exception):
     """Raised when a query names a field the DocType does not have."""
 
 
+class ImpossibleValue(Exception):
+    """Raised when a Select field holds or is compared to a value it cannot take.
+
+    The field-name checks above answer "does this field exist". This answers
+    "can this field ever hold this". Real Frappe splits the two apart and
+    enforces them in different places, which is why both need standing in for:
+
+      * A WRITE of an unlisted value is rejected, by `_validate_selects`
+        (frappe-version-15/frappe/model/base_document.py:892-920), reached from
+        `_validate()` (document.py:627) on both the insert path (:310) and the
+        save path (:417). It ends in `frappe.throw`, so the save aborts.
+      * A FILTER on an unlisted value is not checked at all. It is valid SQL
+        against a value no row holds, so `==` matches nothing and `!=` matches
+        everything -- a filter that reads as if it excludes something and
+        excludes nothing.
+
+    This stand-in rejects both, because the second one is what bit the tests in
+    this folder. `test_projects_api` and `test_scheduler_api` both built a
+    fixture Project with `status="Cancelled"` to prove that
+    `filters={"status": ["!=", "Cancelled"]}` left it out. Both passed. But
+    `Project.status` is a Select whose options are Opportunity, Estimate, Open
+    and Archived -- there is no Cancelled -- so the fixture described a row the
+    real database cannot contain, and the filter it was demonstrating excludes
+    nothing on the real site. A green test about an impossible world.
+
+    Checking names and not values is what let that stand for several sweeps.
+    """
+
+
 class ValidationError(Exception):
     """What frappe.throw raises."""
 
@@ -79,12 +108,42 @@ def doctype_fields(module, doctype_dir):
     return fields
 
 
+def doctype_select_options(module, doctype_dir):
+    """fieldname -> set(options) for a DocType's Select fields, from its JSON."""
+    path = os.path.join(
+        APP_ROOT, "erplite", module, "doctype", doctype_dir, doctype_dir + ".json"
+    )
+    with open(path, "rb") as handle:
+        definition = json.loads(handle.read().decode("utf-8"))
+
+    options = {}
+    for field in definition.get("fields", []):
+        if field.get("fieldtype") != "Select":
+            continue
+        name, raw = field.get("fieldname"), field.get("options")
+        if not name or not raw:
+            continue
+        allowed = {o.strip() for o in raw.split("\n") if o.strip()}
+        if allowed:
+            options[name] = allowed
+    return options
+
+
 # ToDo is a Frappe DocType, not one of ours, so its fields are listed here.
 TODO_FIELDS = {
     "name", "owner", "creation", "modified", "modified_by", "docstatus", "idx",
     "status", "priority", "color", "date", "allocated_to", "description",
     "reference_type", "reference_name", "role", "assigned_by",
     "assigned_by_full_name", "sender", "assignment_rule", "_assign",
+}
+
+# Likewise ToDo's Select options, read from frappe version-15's
+# frappe/desk/doctype/todo/todo.json. Its controller states the same set a
+# second time as `status: DF.Literal["Open", "Closed", "Cancelled"]`
+# (frappe/desk/doctype/todo/todo.py:35).
+TODO_SELECT_OPTIONS = {
+    "status": {"Open", "Closed", "Cancelled"},
+    "priority": {"High", "Medium", "Low"},
 }
 
 ALIAS = re.compile(r"^\s*(?P<field>[\w.]+)\s+as\s+(?P<alias>[\w]+)\s*$", re.IGNORECASE)
@@ -130,6 +189,15 @@ class FakeFrappe(object):
             "Timesheet Entry": doctype_fields("projects", "timesheet_entry"),
             "Schedule Entry": doctype_fields("scheduler", "schedule_entry"),
             "Resource": doctype_fields("scheduler", "resource"),
+        }
+        self.select_options = {
+            "Activity": doctype_select_options("projects", "activity"),
+            "Project": doctype_select_options("projects", "project"),
+            "ToDo": dict(TODO_SELECT_OPTIONS),
+            "Division": doctype_select_options("scheduler", "division"),
+            "Timesheet Entry": doctype_select_options("projects", "timesheet_entry"),
+            "Schedule Entry": doctype_select_options("scheduler", "schedule_entry"),
+            "Resource": doctype_select_options("scheduler", "resource"),
         }
         self.errors = []
         self.messages = []
@@ -182,6 +250,56 @@ class FakeFrappe(object):
                     % (doctype, name, where, ", ".join(sorted(known)))
                 )
 
+    def _check_select_rows(self, doctype):
+        """Refuse to serve a fixture row holding a Select value its DocType forbids.
+
+        Checked when rows are read rather than when they are put in `tables`,
+        because the tests assign to `frappe.tables[...]` directly and there is
+        no single place a fixture passes through on the way in.
+        """
+        allowed_by_field = self.select_options.get(doctype)
+        if not allowed_by_field:
+            return
+        for row in self.tables.get(doctype, []):
+            for field, allowed in allowed_by_field.items():
+                value = row.get(field)
+                if value in (None, "") or value in allowed:
+                    continue
+                raise ImpossibleValue(
+                    "fixture %s %r has %s=%r, which %s.%s cannot hold. Options: %s"
+                    % (doctype, row.get("name"), field, value, doctype, field,
+                       ", ".join(sorted(allowed))))
+
+    def _check_select_filters(self, doctype, filters, where):
+        """Refuse a filter comparing a Select field to a value no row can hold."""
+        allowed_by_field = self.select_options.get(doctype)
+        if not allowed_by_field or not filters:
+            return
+        for field, condition in filters.items():
+            allowed = allowed_by_field.get(field)
+            if not allowed:
+                continue
+            if isinstance(condition, (list, tuple)) and len(condition) == 2:
+                operator, operand = str(condition[0]).lower(), condition[1]
+                if operator in ("in", "not in") and isinstance(operand, (list, tuple, set)):
+                    candidates = list(operand)
+                elif operator in ("=", "==", "!=", "not ="):
+                    candidates = [operand]
+                else:
+                    continue
+            elif isinstance(condition, (list, tuple)):
+                continue
+            else:
+                candidates = [condition]
+            for value in candidates:
+                if not isinstance(value, str) or value in allowed:
+                    continue
+                raise ImpossibleValue(
+                    "%s filters %s.%s against %r, which it cannot hold, so the filter "
+                    "matches the wrong set in silence (== matches nothing, != matches "
+                    "everything). Options: %s"
+                    % (where, doctype, field, value, ", ".join(sorted(allowed))))
+
     # -- the query API under test --
     def get_all(self, doctype, fields=None, filters=None, order_by=None,
                 pluck=None, limit=None, **kwargs):
@@ -205,6 +323,8 @@ class FakeFrappe(object):
         self._check_fields(doctype, list((filters or {}).keys()), "filters")
         if order_by:
             self._check_fields(doctype, [order_by.split()[0]], "order_by")
+        self._check_select_filters(doctype, filters, "get_all")
+        self._check_select_rows(doctype)
 
         rows = [r for r in self.tables.get(doctype, [])
                 if all(_matches(r, k, v) for k, v in (filters or {}).items())]
@@ -254,6 +374,8 @@ class _FakeDb(object):
         self._frappe._check_fields(doctype, names, "get_value")
         if isinstance(name, dict):
             self._frappe._check_fields(doctype, list(name), "get_value filters")
+            self._frappe._check_select_filters(doctype, name, "get_value")
+        self._frappe._check_select_rows(doctype)
         for row in self._frappe.tables.get(doctype, []):
             if (all(row.get(k) == v for k, v in name.items())
                     if isinstance(name, dict) else row.get("name") == name):
@@ -280,6 +402,9 @@ class _FakeDb(object):
         else:
             updates = {fieldname: value}
         self._frappe._check_fields(doctype, list(updates), "set_value")
+        # A write of an unlisted Select value is rejected by real Frappe
+        # (_validate_selects), so the stand-in rejects it too.
+        self._frappe._check_select_filters(doctype, updates, "set_value")
         for field, val in updates.items():
             self._frappe.values_set.append((doctype, name, field, val))
         for row in self._frappe.tables.get(doctype, []):

@@ -156,7 +156,7 @@ def get_projects_and_activities(target_user=None):
         # Get all projects
         projects = frappe.get_all("Project", 
             fields=["name", "project_name"], 
-            filters={"status": ["!=", "Cancelled"]},
+            filters={"status": ["!=", "Archived"]},
             order_by="project_name"
         )
         
@@ -384,7 +384,7 @@ def get_all_projects_and_activities():
         # Get all projects
         projects = frappe.get_all("Project", 
             fields=["name", "project_name"], 
-            filters={"status": ["!=", "Cancelled"]},
+            filters={"status": ["!=", "Archived"]},
             order_by="project_name"
         )
         
