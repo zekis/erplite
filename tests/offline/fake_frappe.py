@@ -3,10 +3,27 @@
 erplite.projects.api uses, so its queries can be tested without a bench.
 
 The important behaviour here is deliberately *stricter* than real Frappe.
-`frappe.get_all` in Frappe 15 does not validate field names: an unknown field
-in `fields` comes back as None, an unknown field in `filters` matches nothing,
-and an unknown `order_by` is ignored. Nothing raises and nothing is logged,
-which is what let the Activity `subject` / `assigned_to` bug sit unnoticed.
+`frappe.get_all` in Frappe 15 does not check field names against the DocType at
+all. Checked in frappe/frappe version-15: `DatabaseQuery.sanitize_fields`
+(frappe/model/db_query.py) only screens for SQL injection -- commas, parens and
+blacklisted keywords and functions -- and `Engine._apply_filter`
+(frappe/database/query.py) only rejects special characters in a filter name.
+Neither compares the name to the DocType's fields.
+
+So the name goes straight into the SQL, and what happens next depends on the
+database rather than on Frappe:
+
+- If the column still exists -- and `bench migrate` creates columns but never
+  drops them, so a field removed from a DocType JSON usually leaves its column
+  behind -- the query succeeds and returns whatever stale value is in that
+  orphaned column. In `filters` it matches nothing, because nothing maintains
+  the column.
+- If the column was never created on this site, MariaDB raises
+  "Unknown column 'x' in 'field list'" and the whole request fails.
+
+Either way nothing warns you, and which of the two you get depends on the
+site's migration history, not on the code. That is what let the Activity
+`subject` / `assigned_to` bug sit unnoticed.
 
 This stand-in raises UnknownField instead. That turns the silent bug into a
 test failure, so a query against a column that is no longer a DocType field
@@ -106,6 +123,7 @@ class FakeFrappe(object):
             "Project": doctype_fields("projects", "project"),
             "ToDo": TODO_FIELDS,
             "Division": doctype_fields("scheduler", "division"),
+            "Timesheet Entry": doctype_fields("projects", "timesheet_entry"),
         }
         self.errors = []
         self.messages = []
@@ -182,8 +200,17 @@ class FakeFrappe(object):
                 if all(_matches(r, k, v) for k, v in (filters or {}).items())]
 
         if order_by:
-            column = order_by.split()[0]
-            rows = sorted(rows, key=lambda r: (r.get(column) is None, r.get(column)))
+            # Direction matters: `modified desc` is how the callers ask for
+            # "the most recent N", and ignoring the keyword silently gave
+            # them the oldest N instead. NULLs sort lowest, as in MariaDB.
+            parts = order_by.split()
+            column = parts[0]
+            descending = len(parts) > 1 and parts[1].lower() == "desc"
+            rows = sorted(
+                rows,
+                key=lambda r: (r.get(column) is not None, r.get(column)),
+                reverse=descending,
+            )
 
         if limit:
             rows = rows[:limit]

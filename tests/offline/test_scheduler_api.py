@@ -22,8 +22,9 @@ from the orphaned `subject`.
 
 The replacement uses `frappe.get_all` on the real fields. The stand-in has no
 `db.sql`, so raw SQL here fails outright, and it validates field names where
-Frappe 15 quietly returns None - either way these tests go red if the orphaned
-columns come back. See fake_frappe.py.
+Frappe 15 does not check them at all - either way these tests go red if the
+orphaned columns come back. See fake_frappe.py for what Frappe really does
+with a field name the DocType does not have.
 """
 
 import os
