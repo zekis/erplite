@@ -141,3 +141,24 @@ These tests drive the real controller through the stand-in's save ordering over 
 five Afterz paths plus the full Draft → Submitted → Approved round trip. They are
 written against the **workflow** rather than against line numbers, because Afterz
 has its own release cycle and the deployed copy may differ from GitHub's.
+## Whole-app guards
+
+`test_undeclared_attributes.py` does not test one module. It parses the whole
+app and fails if anything reads a field its DocType does not declare, in
+either of the two places that failure lives:
+
+- `self.<x>` in a DocType's own controller, with the call graph walked out
+  from the new-document hooks (`validate`, `before_insert`, ...) so a helper
+  that `validate()` calls is reported as the creation-breaking kind rather
+  than the merely stale kind;
+- `doc = frappe.new_doc("X")` ... `doc.<y>` anywhere in the app, which is
+  where the whitelisted endpoints live.
+
+Both are deliberately conservative: a name is only reported if it is declared
+nowhere in the DocType JSON, is never assigned on the object, and is not a
+Frappe `Document` attribute. A failure is therefore a real finding, and the
+right response is to fix the read rather than to add an exception for it.
+
+Neither guard can see a DocType this app does not define, because the field
+list of a Frappe core DocType is not in this repo. The second one skips those
+rather than guessing at them.
