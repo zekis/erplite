@@ -344,11 +344,23 @@ class ScheduleRow(Document):
 
 
 @frappe.whitelist()
-def create_schedule_row(project: str, task: str = None, resource: str = None) -> str:
-    """Create a new schedule row"""
+def create_schedule_row(
+    project: str, activity: str = None, resource: str = None, task: str = None
+) -> str:
+    """Create a new schedule row.
+
+    `task` is the pre-rename name for `activity` and is still accepted, so a caller written
+    before the Task -> Activity rename keeps working. Prefer `activity`.
+    """
     doc = frappe.new_doc("Schedule Row")
     doc.project = project
-    doc.task = task
+    # This was `doc.task = task`. Schedule Row has no `task` field -- only `activity` -- and
+    # get_valid_dict() builds the INSERT from the DocType's declared fields, so an undeclared
+    # attribute is dropped without an error. The caller's task was silently discarded and the
+    # row was created with no work attached to it.
+    activity = activity or task
+    if activity:
+        doc.activity = activity
     doc.resource = resource
     doc.daily_entries = "{}"
     doc.insert()
@@ -383,14 +395,28 @@ def update_daily_entries(schedule_row: str, entries: str) -> Dict[str, Any]:
 
 
 @frappe.whitelist()
-def copy_schedule_row(source_row: str, target_project: str = None, target_task: str = None, target_resource: str = None) -> str:
-    """Copy a schedule row to create a new one"""
+def copy_schedule_row(
+    source_row: str,
+    target_project: str = None,
+    target_activity: str = None,
+    target_resource: str = None,
+    target_task: str = None,
+) -> str:
+    """Copy a schedule row to create a new one.
+
+    `target_task` is the pre-rename name for `target_activity` and is still accepted.
+    """
     try:
         source_doc = frappe.get_doc("Schedule Row", source_row)
-        
+
         new_doc = frappe.new_doc("Schedule Row")
         new_doc.project = target_project or source_doc.project
-        new_doc.task = target_task or source_doc.task
+        # This was `new_doc.task = target_task or source_doc.task`, which was wrong twice over:
+        # `source_doc.task` reads an orphan column left behind by the Task -> Activity rename
+        # (a loaded document gets it from SELECT *, so it is a stale value rather than an
+        # error), and `new_doc.task` is then dropped by get_valid_dict() on insert because
+        # Schedule Row declares only `activity`. The copy silently lost its activity.
+        new_doc.activity = target_activity or target_task or source_doc.activity
         new_doc.resource = target_resource or source_doc.resource
         new_doc.daily_entries = source_doc.daily_entries
         new_doc.insert()
