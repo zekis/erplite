@@ -137,5 +137,106 @@ XERO_GATE = Target(
         ]),
     ])
 
+# --- erplite/timesheet employee ownership ----------------------------------
+# rev_84dce415b5 (PR #27): on insert, booking time against someone else's name
+# needs write on Timesheet Entry, and the row then belongs to that employee.
+#
+# This target is the reason the line-ending guard is per-file rather than a
+# repo-wide claim: the controller below is CRLF and its DocType JSON is LF, in
+# the same folder. `harness.read` detects each file's own ending, so a fault may
+# name either -- but a pattern written for one and applied to the other matches
+# nothing, which is the silent failure EXPECTED_MATCHES exists to catch.
 
-TARGETS = {"xero_gate": XERO_GATE}
+TSE = "erplite/projects/doctype/timesheet_entry/timesheet_entry.py"
+TSE_JSON = "erplite/projects/doctype/timesheet_entry/timesheet_entry.json"
+
+# The rule itself, as the controller spells it (CRLF file).
+TSE_IS_NEW_GUARD = "        if not self.is_new():\n            return\n"
+TSE_SELF_GUARD = ("        if self.employee == frappe.session.user:\n"
+                  "            return\n")
+TSE_WRITE_CHECK = '        if not frappe.has_permission(self.doctype, "write"):\n'
+TSE_OWNER_ASSIGN = "        self.owner = self.employee\n"
+TSE_CALL = "        self.validate_employee_ownership()\n"
+TSE_DEFAULT_CALL = "        self.set_employee_default()\n"
+
+# The shipped rows and the field the rule judges (LF file).
+TSE_IF_OWNER = '   "if_owner": 1,\n'
+TSE_EMPLOYEE_FIELD = ('   "fieldname": "employee",\n'
+                      '   "fieldtype": "Link",\n')
+
+
+TIMESHEET_OWNERSHIP = Target(
+    test="tests/offline/test_timesheet_employee_ownership.py",
+    faults=[
+        # --- the gate, removed or defeated -------------------------------
+        Fault("gate deleted: any Projects User may book against a colleague",
+              True, [(TSE,
+                      TSE_WRITE_CHECK
+                      + "            frappe.throw(_(\n"
+                        '                "You can only book time against your own name. "\n'
+                        '                "Set Employee to yourself, or ask someone who may book time for "\n'
+                        '                "others to enter it."\n'
+                        "            ))\n",
+                      "")]),
+        Fault("gate warns instead of refusing, so the insert still happens",
+              True, [(TSE, "            frappe.throw(_(\n",
+                      "            frappe.msgprint(_(\n")]),
+        Fault("gate asks about this row instead of the DocType, so if_owner "
+              "answers for a row the booker owns", True, [
+                  (TSE, 'frappe.has_permission(self.doctype, "write")',
+                   'frappe.has_permission(self.doctype, "write", doc=self)'),
+              ]),
+
+        # --- the authority test: the rows, not a role list ----------------
+        Fault("authority test replaced by a hardcoded role list (so the "
+              "shipped rows stop deciding)", True, [
+                  (TSE, 'if not frappe.has_permission(self.doctype, "write"):',
+                   'if "System Manager" not in frappe.get_roles():'),
+              ]),
+
+        # --- the other half: owner follows employee -----------------------
+        Fault("owner left as whoever entered it, so the employee cannot "
+              "correct their own hours", True, [(TSE, TSE_OWNER_ASSIGN, "")]),
+
+        # --- wiring: the rule has to run, and run late enough -------------
+        Fault("validate() stops calling the rule", True,
+              [(TSE, TSE_CALL, "")]),
+        Fault("rule judged before a blank employee is defaulted",
+              True, [(TSE, TSE_DEFAULT_CALL + TSE_CALL,
+                      TSE_CALL + TSE_DEFAULT_CALL)]),
+
+        # --- insert-only, which is what keeps the six approval paths alive -
+        Fault("is_new() guard dropped, so the rule reaches every save and "
+              "refuses Afterz's submit/approve/reject/un-approve",
+              True, [(TSE, TSE_IS_NEW_GUARD, "")]),
+        Fault("owner re-pointed on every save as well, handing the row to "
+              "whoever it was last booked for", True, [
+                  (TSE,
+                   '        """Calculate duration in hours"""\n',
+                   '        """Calculate duration in hours"""\n'
+                   "        self.owner = self.employee\n"),
+              ]),
+
+        # --- the premises, read from the JSON (an LF file) ----------------
+        Fault("rows grant Projects User write outright (if_owner dropped), so "
+              "the gate permits what it was built to refuse",
+              True, [(TSE_JSON, TSE_IF_OWNER, "")]),
+        Fault("employee made read-only, which would make the gate moot",
+              True, [(TSE_JSON, TSE_EMPLOYEE_FIELD,
+                      TSE_EMPLOYEE_FIELD + '   "read_only": 1,\n')]),
+
+        # --- negative control --------------------------------------------
+        # The two early returns swapped. Both return with no side effect, so
+        # this changes the source and changes no behaviour. If it goes red, the
+        # test file is pinning the order the guards happen to be written in
+        # rather than the rule's effect, and the test is what needs fixing.
+        Fault("CONTROL: the two early returns swapped (must stay green)",
+              False, [(TSE, TSE_IS_NEW_GUARD + TSE_SELF_GUARD,
+                       TSE_SELF_GUARD + TSE_IS_NEW_GUARD)]),
+    ])
+
+
+TARGETS = {
+    "xero_gate": XERO_GATE,
+    "timesheet_ownership": TIMESHEET_OWNERSHIP,
+}

@@ -42,12 +42,20 @@ that moved the code, not months later when somebody next runs this by hand.
 Each guard exists because the mistake has actually been made in this repo, and
 each turns a false pass into a hard stop.
 
-1. **The edit matches nothing.** erplite is CRLF throughout, so a pattern
-   written with `\n` matches zero times in every file. Six of the first twelve
-   faults written for `test_xero_permission_gate.py` matched nothing for
-   exactly this reason; without the match-count assertion they would have been
-   reported as six passes. Write patterns with `\n` and let `harness.nl`
-   translate them.
+1. **The edit matches nothing.** A pattern written with `\n` matches zero times
+   in a CRLF file. Six of the first twelve faults written for
+   `test_xero_permission_gate.py` matched nothing for exactly this reason;
+   without the match-count assertion they would have been reported as six
+   passes. Write patterns with `\n` and let `harness.nl` translate them.
+
+   **This repo's line endings are mixed, so the ending is a property of the
+   file and never of the repo.** Measured 6 Oct 2026: 82 CRLF `.py` files and
+   62 LF, 31 CRLF `.json` and 22 LF. The split runs *inside* one DocType
+   folder — `timesheet_entry.py` is CRLF, `timesheet_entry.json` beside it is
+   LF — which is why `harness.read` detects each file's own ending. The first
+   version of this harness asserted every file a fault named was CRLF; that was
+   true of everything the first target happened to touch, and the second target
+   failed it immediately.
 2. **The edit matches more than once**, lands somewhere unintended, and the red
    you get is not the red you asked for.
 3. **Restoring destroys uncommitted work.** Hence the clean-tree refusal.
@@ -72,7 +80,18 @@ Three habits earn their keep:
   needs four faults. A test that notices two of them is guarding two — and you
   cannot find that out from a sample of two that both went red.
 
+And one more, learned from adding the second target: **a fault on a DocType JSON
+is worth as much as a fault on the code.** The rule in both targets asks frappe
+for a permission rather than naming a role, so what it actually enforces is the
+shipped rows. Granting the unprivileged role what the gate refuses is the only
+injection that can tell you the test enforces those rows and not a role list of
+its own — and it is the one most easily left out, because it does not look like
+breaking the code.
+
 ## Targets
+
+Two so far. Ten test files in this repo describe having been fault-injected;
+these are the ones where that proof is reproducible.
 
 ### `xero_gate` — `tests/offline/test_xero_permission_gate.py`
 
@@ -98,3 +117,45 @@ which could not succeed and duplicated the contact on the next attempt
 * **control:** a local variable rename in `customer.py`.
 
 All 13 go red and the control stays green, against `main` at `9df2adc`.
+### `timesheet_ownership` — `tests/offline/test_timesheet_employee_ownership.py`
+
+Two fields answer "whose timesheet is this": frappe decides who may read and
+write from `owner`, the app decides whose hours they are from `employee`, and
+nothing kept them in agreement. So any Projects User could insert an entry
+naming a colleague (`create` is the one right `if_owner` never restricts) and
+the hours counted as that colleague's everywhere the app looks; and an entry
+booked *for* you by someone else could not be corrected by you. On insert, an
+`employee` other than the session user now needs write on the DocType, and
+`owner` then becomes that employee (rev_84dce415b5, PR #27).
+
+12 faults, 11 expected red and one control:
+
+* **the gate removed or defeated** — deleted outright; `frappe.throw` softened
+  to `frappe.msgprint`, so the refusal becomes a warning and the insert still
+  happens; and the permission asked about *this row* (`doc=self`) instead of the
+  DocType, where `if_owner` answers yes for a row the booker owns and the gate
+  silently permits what it was built to refuse;
+* **the authority test replaced by a hardcoded role list.** The rule names no
+  role on purpose. With `"System Manager" not in frappe.get_roles()` in its
+  place, a Projects Manager — who holds write in the shipped rows — stops being
+  allowed, and four tests say so;
+* **`owner` left as whoever entered it**, which removes the half of the change
+  that lets the employee correct their own hours;
+* **the wiring** — `validate()` no longer calling the rule, and the rule run
+  *before* `set_employee_default`, where a blank `employee` is judged before it
+  is filled in and booking your own time is refused;
+* **insert-only, which is structural.** The `is_new()` guard dropped, so the
+  rule reaches every save and refuses the six approval paths that exist to act
+  on someone else's entry (Afterz's submit, approve, reject and un-approve, and
+  erplite's own `approve_timesheet` and `reject_timesheet`); and `owner`
+  re-pointed on every save as well, which would hand a row to whoever it was
+  last booked for;
+* **the premises, in the DocType JSON** — `if_owner` dropped from the Projects
+  User row, so that role holds write outright and the gate permits a colleague's
+  name; and `employee` made read-only, which would make the whole gate moot.
+  This is the LF file of the CRLF/LF pair above;
+* **the control**: the rule's two early returns swapped. Both return with no
+  side effect, so the source changes and the behaviour does not. If it goes red,
+  the test file is pinning the order the guards are written in rather than the
+  rule's effect, and the test is what needs fixing.
+
