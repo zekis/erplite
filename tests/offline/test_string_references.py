@@ -204,7 +204,10 @@ def _module_name(rel):
 def python_surface():
     """-> (module_level, class_methods) dotted-path maps.
 
-    `module_level[path] = (rel, lineno, whitelisted, argnames, accepts_kwargs)`
+    `module_level[path] = (rel, lineno, whitelisted, argnames, accepts_kwargs, required)`
+    where `required` is the parameters with no default. frappe.call supplies arguments by
+    keyword only, so an unsent required parameter is a TypeError and an unsent optional one
+    is simply its default.
     `class_methods[path] = (rel, lineno, classname)` -- recorded *separately*, because
     `frappe.get_attr` does `getattr(module, name)` and so cannot reach them. An earlier draft
     used `ast.walk`, which descends into classes, and mis-reported an unreachable class method
@@ -222,12 +225,26 @@ def python_surface():
                 whitelisted = any(
                     "whitelist" in ast.unparse(dec) for dec in node.decorator_list
                 )
-                args = [a.arg for a in node.args.args] + [
-                    a.arg for a in node.args.kwonlyargs
+                positional = [a.arg for a in node.args.args]
+                args = positional + [a.arg for a in node.args.kwonlyargs]
+                ndefaults = len(node.args.defaults)
+                # A slice of 0 defaults is the whole list, so this needs no special case.
+                required = positional[: len(positional) - ndefaults]
+                required += [
+                    a.arg
+                    for a, default in zip(node.args.kwonlyargs, node.args.kw_defaults)
+                    if default is None
                 ]
                 module_level.setdefault(
                     mod + "." + node.name,
-                    (rel, node.lineno, whitelisted, args, node.args.kwarg is not None),
+                    (
+                        rel,
+                        node.lineno,
+                        whitelisted,
+                        args,
+                        node.args.kwarg is not None,
+                        required,
+                    ),
                 )
             elif isinstance(node, ast.ClassDef):
                 for sub in node.body:
@@ -295,8 +312,14 @@ def kwarg_call_sites():
             text = live_source(path, rel)
             for pattern in (ARGS_OBJECT, CALL_POSITIONAL):
                 for match in pattern.finditer(text):
-                    keys = set(KEY.findall(match.group("body")))
-                    if keys:
+                    body = match.group("body")
+                    keys = set(KEY.findall(body))
+                    # An empty body is readable, and means what it says: this call sends
+                    # nothing. Record it, so a function with a required parameter is still
+                    # flagged. A body with text in it but no key KEY can read is NOT
+                    # readable (a spread, a variable), so it stays skipped: flagging it
+                    # would report every required parameter as missing.
+                    if keys or not body.strip():
                         sites.append((match.group(1), rel, keys))
     return sites
 
@@ -367,7 +390,7 @@ class DottedMethodPathsResolve(unittest.TestCase):
         for name in sorted(sites):
             if name not in module_level:
                 continue  # the test above owns that case
-            rel, line, whitelisted, _args, _kw = module_level[name]
+            rel, line, whitelisted, _args, _kw, _req = module_level[name]
             if whitelisted:
                 continue
             frontend = [(f, l) for f, l, is_fe in sorted(set(sites[name])) if is_fe]
@@ -385,11 +408,38 @@ class DottedMethodPathsResolve(unittest.TestCase):
 
 
 class CallArgumentsMatchSignatures(unittest.TestCase):
-    """Pass C: the arguments a readable call passes are ones the function accepts.
+    """Pass C: the arguments a readable call passes line up with the signature, both ways.
 
     This is the pass that matters once pass B is green: renaming a method to the one that
-    exists is not enough if the caller's argument names do not match, because the failure
-    simply moves from `get_attr` to a missing-argument `TypeError`.
+    exists is not enough if the argument names do not match. But what goes wrong is not what
+    this pass claimed when it was written.
+
+    What frappe actually does, read off `frappe/handler.py:86` -> `frappe.call`
+    (`frappe/__init__.py:1719`) -> `get_newargs` (`:1729`, "Remove any kwargs that are not
+    supported by the function"), then confirmed by lifting that function out of the v15.52.0
+    source and running it against these real signatures:
+
+      * `{doc_name: ...}` sent to `send_to_xero(docname)` -- the unknown name is **dropped**,
+        and the call then raises `TypeError: send_to_xero() missing 1 required positional
+        argument: docname`. It is **not** an unexpected-keyword error, which is what this
+        pass used to say in its failure message.
+      * `{item_name: ...}` sent to `get_supplier_quotes_for_comparison(item_name, project)`
+        -- the same `TypeError`, for `project`. No name here is wrong; the fault is an
+        argument that was never sent at all. **Nothing covered this until now**, and it is
+        the only shape that reliably raises.
+      * `{proj: ...}` where the parameter it was meant to fill **has a default** -- returns
+        normally, with the default in place. The value the caller sent is discarded in
+        silence: no exception, nothing in the Error Log, and a wrong answer on the screen.
+        The quietest of the three, and the reason the unknown-name test below stays.
+
+    So the two tests below are halves of one check, and the loud half is the second one.
+
+    BLIND SPOTS: positional-only parameters and `*args` can never be filled by `frappe.call`,
+    which passes by keyword only. The app has none of either (measured: 0 of 114 module-level
+    functions), so neither is handled here rather than guessed at. Both tests inherit the
+    readable-call-form limits documented at the top of this file. An `args` object that is
+    literally empty IS covered; one whose contents cannot be read exactly is skipped, and a
+    call with no `args` key at all is not matched by either pattern.
     """
 
     def test_called_arguments_are_accepted(self):
@@ -398,7 +448,7 @@ class CallArgumentsMatchSignatures(unittest.TestCase):
         for name, rel, keys in kwarg_call_sites():
             if name not in module_level:
                 continue  # pass B owns that
-            _f, _l, _wl, args, accepts_kwargs = module_level[name]
+            _f, _l, _wl, args, accepts_kwargs, _req = module_level[name]
             if accepts_kwargs:
                 continue
             unknown = sorted(k for k in keys if k not in args)
@@ -410,8 +460,36 @@ class CallArgumentsMatchSignatures(unittest.TestCase):
         self.assertEqual(
             [],
             sorted(set(bad)),
-            "frappe.call maps form_dict onto the function's parameters, so an argument name "
-            "the function does not declare raises TypeError server-side.",
+            "frappe.get_newargs drops an argument the function does not declare, so this is "
+            "not an unexpected-keyword TypeError. If the parameter it was meant to fill has a "
+            "default, the function runs silently with that default and the sent value is "
+            "lost. If it has no default, the failure arrives as the missing-required-argument "
+            "TypeError that test_required_arguments_are_passed owns.",
+        )
+
+    def test_required_arguments_are_passed(self):
+        """Every parameter without a default is one the caller actually sends.
+
+        This is the half that raises. See the class docstring for the three outcomes and
+        where each was verified in the frappe source.
+        """
+        module_level, _ = python_surface()
+        bad = []
+        for name, rel, keys in kwarg_call_sites():
+            if name not in module_level:
+                continue  # pass B owns that
+            where, line, _wl, _args, _kw, required = module_level[name]
+            missing = sorted(a for a in required if a not in keys)
+            if missing:
+                bad.append(
+                    "%s (defined %s:%d) is called from %s without %s; it requires %s"
+                    % (name, where, line, rel, ", ".join(missing), ", ".join(required))
+                )
+        self.assertEqual(
+            [],
+            sorted(set(bad)),
+            "frappe.call passes form_dict by keyword, so a required parameter the caller "
+            "never sends raises TypeError server-side -- a modal error dialog for the user.",
         )
 
 
