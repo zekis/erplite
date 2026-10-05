@@ -151,12 +151,12 @@ class TestWhoMayBookTimeForWhom(GateTestCase):
     def test_a_projects_manager_may_book_for_a_colleague(self):
         """Projects Manager holds write outright in the shipped rows.
 
-        Worth stating because erplite's own `save_timesheet_entries` disagrees:
-        its `target_user` gate is `is_timesheet_admin()` -- System Manager or
-        Timesheet Admin -- so a Projects Manager's `target_user` is silently
-        discarded there and the hours are booked against themselves. That
-        endpoint is untouched by this change and is reported separately; the
-        controller is not the place to restate a narrower rule.
+        Worth stating because erplite's own `save_timesheet_entries` used to
+        disagree: its `target_user` gate was `is_timesheet_admin()` -- System
+        Manager or Timesheet Admin -- so a Projects Manager's `target_user`
+        was silently discarded there and the hours were booked against
+        themselves. That endpoint now defers to this rule instead of
+        restating a narrower one; see test_timesheet_target_user.py.
         """
         frappe = self.frappe_for(YOU, ["Projects Manager"])
         doc = self.entry(frappe, COLLEAGUE)

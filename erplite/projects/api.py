@@ -60,12 +60,15 @@ def save_timesheet_entries(entries, target_user=None):
         import json
         from datetime import datetime
         
-        # Determine which user to save entries for
-        if target_user and is_timesheet_admin():
-            # Admin creating entries for another user
+        # Determine whose hours these are. Whether the caller may book
+        # them against someone else is Timesheet Entry's own rule, which
+        # the controller enforces on insert (rev_84dce415b5). It is not
+        # restated here: a second, narrower gate at this endpoint
+        # silently discarded target_user and booked the hours against the
+        # caller instead, reporting success.
+        if target_user:
             employee_user = target_user
         else:
-            # Regular user or admin creating entries for themselves
             employee_user = frappe.session.user
         
         # Parse entries if it's a JSON string
