@@ -156,6 +156,11 @@ TSE_IS_NEW_GUARD = "        if not self.is_new():\n            return\n"
 TSE_SELF_GUARD = ("        if self.employee == frappe.session.user:\n"
                   "            return\n")
 TSE_WRITE_CHECK = '        if not frappe.has_permission(self.doctype, "write"):\n'
+TSE_REFUSAL = ("            frappe.throw(_(\n"
+               '                "You can only book time against your own name. "\n'
+               '                "Set Employee to yourself, or ask someone who may book time for "\n'
+               '                "others to enter it."\n'
+               "            ))\n")
 TSE_OWNER_ASSIGN = "        self.owner = self.employee\n"
 TSE_CALL = "        self.validate_employee_ownership()\n"
 TSE_DEFAULT_CALL = "        self.set_employee_default()\n"
@@ -171,14 +176,7 @@ TIMESHEET_OWNERSHIP = Target(
     faults=[
         # --- the gate, removed or defeated -------------------------------
         Fault("gate deleted: any Projects User may book against a colleague",
-              True, [(TSE,
-                      TSE_WRITE_CHECK
-                      + "            frappe.throw(_(\n"
-                        '                "You can only book time against your own name. "\n'
-                        '                "Set Employee to yourself, or ask someone who may book time for "\n'
-                        '                "others to enter it."\n'
-                        "            ))\n",
-                      "")]),
+              True, [(TSE, TSE_WRITE_CHECK + TSE_REFUSAL, "")]),
         Fault("gate warns instead of refusing, so the insert still happens",
               True, [(TSE, "            frappe.throw(_(\n",
                       "            frappe.msgprint(_(\n")]),
@@ -237,7 +235,134 @@ TIMESHEET_OWNERSHIP = Target(
     ])
 
 
+# --- erplite/timesheet target_user ----------------------------------------
+# PR #28: `save_timesheet_entries` took a `target_user` and gated it on its own
+# role list -- `is_timesheet_admin()`, System Manager or Timesheet Admin. That
+# is narrower than Timesheet Entry's write rows, which also grant Projects
+# Manager. So a Projects Manager's `target_user` was silently discarded, the
+# hours were booked against the caller, and the endpoint returned success. The
+# endpoint now passes it through and the controller's rule -- the
+# TIMESHEET_OWNERSHIP target above -- is the only rule.
+#
+# That is why the controller and JSON faults below are deliberately the same
+# edits as that target's. This test file claims the endpoint has no rule of its
+# own, and the only way to show that is that breaking the rule it defers to
+# turns *this* file red too. If one of them did not, the endpoint would be
+# deciding something for itself after all.
+
+API = "erplite/projects/api.py"
+
+API_DECISION = ("        if target_user:\n"
+                "            employee_user = target_user\n"
+                "        else:\n"
+                "            employee_user = frappe.session.user\n")
+# The gate as it stood before #28, verbatim from 78e2934^.
+API_OLD_GATE = ("        if target_user and is_timesheet_admin():\n"
+                "            employee_user = target_user\n"
+                "        else:\n"
+                "            employee_user = frappe.session.user\n")
+API_WRITE_SITE = "                timesheet_doc.employee = employee_user\n"
+API_FAILURE_RETURN = ('        return {"success": False, "message": '
+                      'f"Error saving timesheet: {str(e)}"}\n')
+# The first of the two read endpoints that keep the role list on purpose. Its
+# comment is what makes the pattern name one of them rather than both.
+API_READ_GATE = ("        if target_user and is_timesheet_admin():\n"
+                 "            # Admin viewing another user's activities\n")
+
+# The shipped row the defect depended on: Projects Manager holds write, which
+# is precisely why the narrower role list threw their `target_user` away.
+TSE_PM_WRITE = ('   "role": "Projects Manager",\n'
+                '   "share": 1,\n'
+                '   "write": 1\n')
+
+
+TIMESHEET_TARGET_USER = Target(
+    test="tests/offline/test_timesheet_target_user.py",
+    faults=[
+        # --- the defect itself, put back exactly as it was ----------------
+        Fault("the bug restored: target_user gated on is_timesheet_admin, so a "
+              "Projects Manager's is discarded and the hours go to the caller",
+              True, [(API, API_DECISION, API_OLD_GATE)]),
+
+        # --- target_user decided, used, or neither ------------------------
+        # Two separate lines, so two faults: a test keyed on the decision alone
+        # would not notice the row being written against someone else.
+        Fault("target_user ignored outright: the hours always go to the caller",
+              True, [(API, API_DECISION,
+                      "        employee_user = frappe.session.user\n")]),
+        Fault("target_user decided but not used: the row is written against the "
+              "caller anyway", True,
+              [(API, API_WRITE_SITE,
+                "                timesheet_doc.employee = frappe.session.user\n")]),
+
+        # --- a refusal has to arrive as one -------------------------------
+        # The endpoint wraps its whole body in `except Exception` and reports
+        # the failure in a return value, so these two are the difference
+        # between "refused" and "quietly did something else".
+        Fault("the refusal relabelled as success by the endpoint's own "
+              "except Exception", True,
+              [(API, API_FAILURE_RETURN,
+                '        return {"success": True, "message": '
+                'f"Error saving timesheet: {str(e)}"}\n')]),
+        Fault("the refusal's reason dropped, so the caller is not told whose "
+              "name was refused", True,
+              [(API, 'f"Error saving timesheet: {str(e)}"}',
+                '"Error saving timesheet"}')]),
+
+        # --- the rule it defers to ----------------------------------------
+        Fault("the controller's gate deleted, so there is nothing left to "
+              "defer to", True, [(TSE, TSE_WRITE_CHECK + TSE_REFUSAL, "")]),
+        Fault("the controller warns instead of refusing, so the endpoint "
+              "reports success and the row is written anyway", True,
+              [(TSE, "            frappe.throw(_(\n",
+                "            frappe.msgprint(_(\n")]),
+        Fault("owner left as whoever entered it, so the colleague cannot "
+              "correct the hours booked for them", True,
+              [(TSE, TSE_OWNER_ASSIGN, "")]),
+
+        # --- the premises, in the shipped rows ----------------------------
+        # Both are what prove this file's claims rest on the DocType's own
+        # permissions. The first is the premise unique to this target: without
+        # Projects Manager holding write there was never a bug to fix.
+        Fault("Projects Manager loses write, so the one role the defect "
+              "affected could not book for a colleague even now", True,
+              [(TSE_JSON, TSE_PM_WRITE,
+                '   "role": "Projects Manager",\n'
+                '   "share": 1,\n'
+                '   "write": 0\n')]),
+        Fault("rows grant Projects User write outright (if_owner dropped), so "
+              "the refusal never happens", True,
+              [(TSE_JSON, TSE_IF_OWNER, "")]),
+
+        # --- scope: the read endpoints keep their role list ---------------
+        # The counterweight. #28 narrowed one endpoint, not the module, and
+        # `is_timesheet_admin()` is still the right gate for choosing whose
+        # data to show. Without this fault the AST test could be satisfied by
+        # deleting the role list everywhere.
+        Fault("the role list swept out of a read endpoint too, which this "
+              "change deliberately did not do", True,
+              [(API, API_READ_GATE,
+                "        if target_user:\n"
+                "            # Admin viewing another user's activities\n")]),
+
+        # --- negative control ---------------------------------------------
+        # The local variable renamed at all three of its occurrences: a real
+        # edit to the source, no change in behaviour. If it goes red, the test
+        # file is matching the endpoint's internal spelling.
+        Fault("CONTROL: the local variable renamed (must stay green)", False, [
+            (API, API_DECISION,
+             "        if target_user:\n"
+             "            whose_hours = target_user\n"
+             "        else:\n"
+             "            whose_hours = frappe.session.user\n"),
+            (API, API_WRITE_SITE,
+             "                timesheet_doc.employee = whose_hours\n"),
+        ]),
+    ])
+
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
+    "timesheet_target_user": TIMESHEET_TARGET_USER,
 }

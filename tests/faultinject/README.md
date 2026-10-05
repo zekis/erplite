@@ -37,6 +37,13 @@ reads and never writes, and it asserts every fault below still matches exactly
 the one place it names — so a fault that has rotted is reported in the commit
 that moved the code, not months later when somebody next runs this by hand.
 
+One consequence, worth knowing before it confuses you: **do not run the whole
+suite while a fault is applied.** That guard reads the source a fault names, so
+any fault editing a line a pattern contains makes it red — correctly, and with
+nothing wrong. `run.py` runs the target's own test file and only that, which is
+the question being asked. If you want to check that a control is inert across
+the app, run the suite under it with this one file ignored.
+
 ## The three ways this goes wrong silently
 
 Each guard exists because the mistake has actually been made in this repo, and
@@ -99,8 +106,8 @@ breaking the code.
 
 ## Targets
 
-Two so far. Ten test files in this repo describe having been fault-injected;
-these are the ones where that proof is reproducible.
+Three so far. Ten test files in this repo describe having been
+fault-injected; these are the ones where that proof is reproducible.
 
 ### `xero_gate` — `tests/offline/test_xero_permission_gate.py`
 
@@ -126,6 +133,7 @@ which could not succeed and duplicated the contact on the next attempt
 * **control:** a local variable rename in `customer.py`.
 
 All 13 go red and the control stays green, against `main` at `9df2adc`.
+
 ### `timesheet_ownership` — `tests/offline/test_timesheet_employee_ownership.py`
 
 Two fields answer "whose timesheet is this": frappe decides who may read and
@@ -167,4 +175,48 @@ booked *for* you by someone else could not be corrected by you. On insert, an
   side effect, so the source changes and the behaviour does not. If it goes red,
   the test file is pinning the order the guards are written in rather than the
   rule's effect, and the test is what needs fixing.
+
+### `timesheet_target_user` — `tests/offline/test_timesheet_target_user.py`
+
+`save_timesheet_entries(entries, target_user)` took a `target_user` and gated it
+on its own role list — `is_timesheet_admin()`, System Manager or Timesheet
+Admin. That is narrower than Timesheet Entry's write rows, which also grant
+Projects Manager. So a Projects Manager who sent `target_user` had it **silently
+discarded**: the hours were booked against themselves and the endpoint returned
+success with the entries listed, and nothing in the response carries `employee`,
+so the caller could not tell whose timesheet it had written. The endpoint now
+passes `target_user` through and the controller's rule above is the only rule
+(PR #28).
+
+12 faults, 11 expected red and one control:
+
+* **the defect itself, restored** — the pre-#28 gate, verbatim. Worth reading
+  the red set rather than the count: it is the Projects Manager test, the four
+  refusal tests and the AST test, while **System Manager and Timesheet Admin
+  stay green**. That is the shape of the real bug — it affected exactly one
+  role — and a count alone would not show it;
+* **`target_user` decided, used, or neither** — ignored outright, and decided
+  but then not used at the line that writes the row. Two lines, so two faults: a
+  test keyed on the decision would not notice the row;
+* **a refusal arriving as one.** The endpoint wraps its whole body in `except
+  Exception` and reports failure in a return value, so `success` flipped to True
+  and the reason dropped from the message are the difference between "refused"
+  and "quietly did something else";
+* **the rule it defers to** — the controller's gate deleted, softened to
+  `frappe.msgprint`, and `owner` left as whoever entered it. These are
+  deliberately the same edits as `timesheet_ownership`'s, and that is the point:
+  this test file claims the endpoint has no rule of its own, which can only be
+  shown by breaking the rule it defers to and watching *this* file go red;
+* **the premises, in the shipped rows** — Projects User granted write outright,
+  and **Projects Manager losing write**. The second is the premise unique to
+  this target: without Projects Manager holding write there was never a defect
+  to fix, and it turns exactly the two tests red that name that role;
+* **scope** — the role list swept out of a read endpoint as well. #28 narrowed
+  one endpoint, not the module; `is_timesheet_admin()` is still the right gate
+  for choosing whose data to *show*. Without this fault the AST test could be
+  satisfied by deleting the role list everywhere;
+* **the control**: the local variable renamed at all three occurrences. A real
+  edit to the endpoint, no change in behaviour.
+
+All 11 go red and the control stays green, against `main` at `03709ac`.
 
