@@ -30,9 +30,9 @@ frappe.listview_settings['Timesheet Entry'] = {
             frappe.set_route("List", "Timesheet Entry");
         });
         
-        // Add filter for pending approvals (if user is project manager)
+        // Add filter for pending approvals (if user is a timesheet approver)
         frappe.db.get_list('Project', {
-            filters: {'project_manager': frappe.session.user},
+            filters: {'timesheet_approver': frappe.session.user},
             fields: ['name']
         }).then(function(projects) {
             if (projects.length > 0) {

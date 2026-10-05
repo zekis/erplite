@@ -29,10 +29,14 @@ history -- stale values out of an orphaned column, or a hard "Unknown column"
 from MariaDB if the column was never created here. The fix is the same either
 way, which is why it needed no check against the live site.
 
-`project_manager` is deliberately still queried: Project now has both
-`timesheet_approver` and `project_lead`, and choosing between them is a
-business decision. `test_pending_approvals_is_empty_until_the_field_is_chosen`
-pins the current, deliberate behaviour so it is visible rather than forgotten.
+`project_manager`'s replacement is `timesheet_approver`, chosen by the owner
+in review tray rev_e73092bfb5. Project carries both it and `project_lead`, so
+which one gates timesheet approval was a business decision rather than a
+rename -- and it is also the field Afterz already reads to decide who is shown
+an Approve button, so erplite and Afterz now agree. The pending-approvals
+block is restored on it, and
+`test_the_project_query_filters_on_the_timesheet_approver` keeps it off the
+orphaned column.
 """
 
 import os
@@ -152,28 +156,42 @@ class TestGetTimesheetWidgetData(WidgetTestCase):
                     "%r is not a field on Timesheet Entry" % (orphan,),
                 )
 
-    def test_pending_approvals_is_empty_until_the_field_is_chosen(self):
-        """Pins the deliberate gap, so it is visible rather than forgotten.
+    def test_pending_approvals_are_the_submitted_entries_this_user_approves(self):
+        """The restored feature. USER is the approver on 5gofgdoomv.
 
-        The block that found "projects I manage" filtered Project on
-        `project_manager`, an orphaned column. It is gone rather than renamed:
-        Project now has both `timesheet_approver` and `project_lead`, and
-        choosing between them is a business decision. Until then this returns
-        nothing, which is what it already returned in practice.
+        Both Submitted entries on that project are waiting, including the one
+        somebody else filled in -- which is the point of an approval queue.
+        Newest first, and the Draft entry is not in it.
         """
+        pending = self.widgets.get_timesheet_widget_data()["pending_approvals"]
+        self.assertEqual(
+            [p["name"] for p in pending], ["ts_someone_else", "ts_done"]
+        )
+
+    def test_a_user_who_approves_nothing_sees_no_queue(self):
+        """The gate is the field, not the mere existence of a Project.
+
+        OTHER has an entry on 5gofgdoomv but is not its approver, so the queue
+        is empty rather than showing the project's submitted work.
+        """
+        self.frappe.session.user = OTHER
         data = self.widgets.get_timesheet_widget_data()
         self.assertEqual(data["pending_approvals"], [])
 
-    def test_the_dead_project_query_is_not_run_at_all(self):
-        """Not merely renamed-and-left: the orphaned column is not read.
+    def test_the_project_query_filters_on_the_timesheet_approver(self):
+        """And never on the orphaned column.
 
-        A stale `project_manager` value can outlive the field, so filtering on
-        it could hand someone approval visibility off a column nothing
-        maintains.
+        A stale `project_manager` value can outlive the field -- `bench
+        migrate` drops no columns -- so filtering on it would hand someone
+        approval visibility off a value nothing maintains.
         """
         self.widgets.get_timesheet_widget_data()
+        project_queries = [
+            q for q in self.frappe.queries if q["doctype"] == "Project"
+        ]
+        self.assertEqual(len(project_queries), 1)
         self.assertEqual(
-            [q for q in self.frappe.queries if q["doctype"] == "Project"], []
+            project_queries[0]["filters"], {"timesheet_approver": USER}
         )
 
     def test_a_user_with_no_entries_gets_nothing_rather_than_an_error(self):
@@ -196,6 +214,17 @@ class TestTheStandInWouldCatchARegression(WidgetTestCase):
                 "Timesheet Entry",
                 filters={"employee": USER},
                 fields=["name", "task"],
+            )
+
+    def test_filtering_project_on_project_manager_is_rejected(self):
+        """So the pending-approvals test above means something.
+
+        If the restored block went back to the removed field, this is the
+        failure it would produce.
+        """
+        with self.assertRaises(UnknownField):
+            self.frappe.get_all(
+                "Project", filters={"project_manager": USER}, fields=["name"]
             )
 
     def test_querying_date_on_timesheet_entry_is_rejected(self):

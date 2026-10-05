@@ -30,27 +30,30 @@ def get_timesheet_widget_data():
         limit=5
     )
     
-    # Pending approvals: switched off until the gating field is chosen.
-    #
-    # This block used to find the projects the user manages with
-    # filters={"project_manager": user}. `project_manager` was removed from
-    # the Project DocType and has no single successor -- Project now carries
-    # both `timesheet_approver` and `project_lead` -- so that filter cannot
-    # simply be renamed; which field should gate timesheet approval is a
-    # business decision.
-    #
-    # It is not left in place because it is worse than useless. The column
-    # survives in `tabProject` (bench migrate drops no columns) and nothing
-    # maintains it, so the filter matches either nothing at all or, on a
-    # site old enough to have set it while it was a real field, whichever
-    # stale rows still hold the user's name -- granting approval visibility
-    # off a value no longer under anyone's control. On a site where the
-    # column was never created it fails outright instead.
-    #
-    # Returning nothing keeps the behaviour this endpoint already has in
-    # practice, without reading a dead column. Restoring the feature means
-    # putting the chosen field in the filter below.
+    # Pending approvals: the submitted entries on the projects this user is
+    # the timesheet approver for. This block used to filter Project on
+    # `project_manager`, removed from the DocType by 8126278; the replacement
+    # field is `timesheet_approver` (review tray rev_e73092bfb5), which is
+    # also the field Afterz already reads to decide who sees approvals.
     pending_approvals = []
+    approving_projects = frappe.get_all("Project",
+        filters={
+            "timesheet_approver": user
+        },
+        fields=["name"]
+    )
+
+    if approving_projects:
+        project_names = [p.name for p in approving_projects]
+        pending_approvals = frappe.get_all("Timesheet Entry",
+            filters={
+                "project": ["in", project_names],
+                "status": "Submitted"
+            },
+            fields=["name", "employee", "project", "activity", "check_in_time as date", "duration_hours"],
+            order_by="modified desc",
+            limit=10
+        )
     
     return {
         "active_timesheet": active_timesheet[0] if active_timesheet else None,

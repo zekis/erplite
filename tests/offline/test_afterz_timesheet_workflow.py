@@ -205,10 +205,10 @@ class WorkflowTestCase(unittest.TestCase):
             for row in self.frappe.tables["Project"]:
                 if row.name == name:
                     project = _dict(copy.deepcopy(dict(row)))
-                    # The live Project DocType declares timesheet_approver, not
-                    # project_manager; erplite's approve/reject still read
-                    # project_manager (review tray rev_e73092bfb5). Serving only
-                    # what the DocType declares keeps that honest.
+                    # Serving only what the DocType declares. The live Project
+                    # declares timesheet_approver and project_lead, never
+                    # project_manager, so a controller reading the removed field
+                    # fails here rather than quietly reading an orphan column.
                     return project
             raise ValidationError("no Project %r" % (name,))
         stored = self.rows.get(name)
@@ -573,6 +573,109 @@ class TestNoSaveHookOwnsStatus(unittest.TestCase):
             submits,
             "check_out() no longer sets status, so checking out leaves the entry "
             "Draft and approve_timesheet() refuses it")
+
+
+class TestTheApprovalGate(WorkflowTestCase):
+    """Who may approve a timesheet: `timesheet_approver`, not `project_manager`.
+
+    `approve_timesheet` and `reject_timesheet` read the Project to decide who is
+    allowed. They read `project_manager`, which 8126278 removed from the
+    DocType, so the person Afterz shows an Approve button to -- the project's
+    `timesheet_approver` -- was the one person refused. The owner chose
+    `timesheet_approver` (review tray rev_e73092bfb5), which is the field Afterz
+    already reads, so the two agree rather than merely stop erroring.
+
+    How it failed before depended on the site, and neither way was visible:
+    `Document.load_from_db` selects `*`, so where the orphan column survives in
+    `tabProject` the gate compared against a stale value nothing maintains, and
+    where it was never created the attribute lookup raised -- swallowed by the
+    function's own `except Exception` into `{"success": False}`.
+
+    `has_permission` is injected False throughout, so these measure the field
+    rather than the `or not frappe.has_permission(...)` hatch beside it. One
+    test pins that hatch on purpose.
+    """
+
+    STRANGER = "approver@tierneymorris.com.au"
+    NOBODY = "nobody@tierneymorris.com.au"
+
+    def setUp(self):
+        super(TestTheApprovalGate, self).setUp()
+        # APPROVER == EMPLOYEE in this file; the gate only means anything when
+        # the approver is somebody other than whoever filled the timesheet in.
+        self.frappe.tables["Project"] = [
+            _dict(name="5gofgdoomv", project_name="Novalith", status="Open",
+                  timesheet_approver=self.STRANGER),
+        ]
+        self.frappe_pkg.has_permission = lambda *a, **k: False
+
+    def _submitted_entry(self):
+        created = self.module.check_in("5gofgdoomv", "g68cfomvvu")
+        name = created["timesheet_id"]
+        self.module.check_out(name)
+        self.assertEqual(
+            self.stored(name).status, "Submitted",
+            "the entry must be Submitted before approval is even reachable")
+        return name
+
+    def test_the_timesheet_approver_can_approve(self):
+        name = self._submitted_entry()
+        self.frappe.session.user = self.STRANGER
+        result = self.module.approve_timesheet(name, "Looks right")
+        self.assertTrue(result["success"], result["message"])
+        row = self.stored(name)
+        self.assertEqual(row.status, "Approved")
+        self.assertEqual(row.approved_by, self.STRANGER)
+        self.assertEqual(row.approval_notes, "Looks right")
+
+    def test_the_timesheet_approver_can_reject(self):
+        name = self._submitted_entry()
+        self.frappe.session.user = self.STRANGER
+        result = self.module.reject_timesheet(name, "Wrong activity")
+        self.assertTrue(result["success"], result["message"])
+        self.assertEqual(self.stored(name).status, "Rejected")
+
+    def test_somebody_who_is_not_the_approver_is_refused(self):
+        name = self._submitted_entry()
+        self.frappe.session.user = self.NOBODY
+        result = self.module.approve_timesheet(name)
+        self.assertFalse(result["success"])
+        self.assertIn("timesheet approver", result["message"])
+        self.assertEqual(
+            self.stored(name).status, "Submitted",
+            "a refused approval must leave the entry where it was")
+
+    def test_the_employee_is_not_the_approver_just_by_owning_the_entry(self):
+        name = self._submitted_entry()
+        result = self.module.approve_timesheet(name)   # session.user is EMPLOYEE
+        self.assertFalse(result["success"])
+        self.assertEqual(self.stored(name).status, "Submitted")
+
+    def test_write_permission_still_approves_without_being_the_approver(self):
+        """The `or not frappe.has_permission(...)` branch, pinned as it stands.
+
+        Unchanged by this fix, and recorded so that changing it is a decision
+        rather than an accident.
+        """
+        name = self._submitted_entry()
+        self.frappe.session.user = self.NOBODY
+        self.frappe_pkg.has_permission = lambda *a, **k: True
+        result = self.module.approve_timesheet(name)
+        self.assertTrue(result["success"], result["message"])
+
+    def test_the_gate_does_not_name_the_removed_field(self):
+        """The fault-injection half, so a green run above means something.
+
+        The stand-in serves Project only what the DocType declares, so putting
+        `project_manager` back makes every test in this class fail. Asserting
+        both halves: the field really is gone, and the controller really does
+        read the chosen one.
+        """
+        self.assertNotIn("project_manager", self.frappe.fields["Project"])
+        with open(CONTROLLER, "rb") as handle:
+            source = handle.read().decode("utf-8")
+        self.assertNotIn("project_manager", source)
+        self.assertIn("project.timesheet_approver", source)
 
 
 if __name__ == "__main__":
