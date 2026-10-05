@@ -1004,9 +1004,26 @@ class TestClearOldLogsRefusesADaysItCannotMean(unittest.TestCase):
         self.assertEqual(table.rows, ["2026-10-05"])
 
     def test_the_default_is_still_thirty_days(self):
-        table = FakeLogTable(["2026-08-01", "2026-10-04"])
+        """The two dates have to straddle the cutoff, or this pins nothing.
+
+        `today` is 2026-10-05, so the default puts the cutoff at 2026-09-05,
+        and the rows immediately either side of it are the only data that can
+        tell 30 days from 29 or 31.
+
+        The first version of this test used 2026-08-01 and 2026-10-04, which
+        sit either side of a cutoff **anywhere between 1 and 64 days back**: it
+        passed with the default changed to 60, so it was pinning "the default
+        is some number in that range", not thirty. `tests/faultinject/run.py
+        whitelist_write_gate` is what found that, by changing the default and
+        getting a green file.
+        """
+        table = FakeLogTable(["2026-09-04", "2026-09-05"])
         module = load_scheduler_log(table)
+
         self.assertEqual(module.clear_old_logs()["deleted_count"], 1)
+        self.assertEqual(
+            table.rows, ["2026-09-05"],
+            "the row *on* the cutoff stays: `older than` is `<`, not `<=`")
 
 
 # --------------------------------------------------------------------------

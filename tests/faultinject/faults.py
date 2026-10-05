@@ -561,9 +561,200 @@ SCHEDULER_READ_GATE = Target(
               [(SCH_API, old, new) for old, new in ROLES_VAR]),
     ])
 
+# --- the whitelisted-write rule, whole-app ---------------------------------
+# rev_18a8f8826d ("any logged-in user can wipe the scheduler's log") and the
+# generalisation of rev_c3343b2cf3 it belongs to. The test file has two halves
+# and both are injected here: `clear_old_logs` itself, and the sweep that is
+# meant to notice the *next* instance of the rule rather than wait for someone
+# to go looking. `KNOWN_UNGATED` is empty, so the sweep's green is a claim that
+# no whitelisted endpoint in the app reaches an unchecked write ungated -- which
+# is only worth anything if adding one turns it red.
+
+SL = "erplite/scheduler/doctype/scheduler_log/scheduler_log.py"
+SL_JSON = "erplite/scheduler/doctype/scheduler_log/scheduler_log.json"
+SL_JS = "erplite/scheduler/doctype/scheduler_log/scheduler_log.js"
+
+# This file is indented with TABS, where scheduler/api.py beside it uses four
+# spaces. Same lesson as the line endings in #30/#31: indentation is a property
+# of the file, and a pattern copied from its neighbour matches nothing.
+SL_DEF = "def clear_old_logs(days=30):\n"
+SL_GATE = '\tfrappe.has_permission("Scheduler Log", "delete", throw=True)\n'
+SL_INT = '\t\tfrappe.throw(frappe._("days must be a whole number"))\n'
+SL_NEGATIVE = ('\tif days < 0:\n'
+               '\t\tfrappe.throw(frappe._("days must be zero or more"))\n')
+SL_CUTOFF = "\tcutoff_date = frappe.utils.add_days(frappe.utils.today(), -days)\n"
+SL_COUNT = ('\trows = frappe.db.sql("""\n'
+            '\t\tSELECT COUNT(*) FROM `tabScheduler Log`\n'
+            '\t\tWHERE DATE(timestamp) < %s\n'
+            '\t""", (cutoff_date,))\n'
+            '\tdeleted_count = rows[0][0] if rows else 0\n')
+SL_DELETE = ('\tfrappe.db.sql("""\n'
+             '\t\tDELETE FROM `tabScheduler Log`\n'
+             '\t\tWHERE DATE(timestamp) < %s\n'
+             '\t""", (cutoff_date,))\n')
+SL_COMMIT = "\tfrappe.db.commit()\n"
+SL_RETURN = '\t\t"deleted_count": deleted_count\n'
+
+# The DELETE's own result, which is `()` in frappe because the cursor has no
+# description -- the shape the endpoint shipped with before rev_18a8f8826d's
+# PR, and which reported 0 however many rows it had removed.
+SL_COUNT_OFF_THE_DELETE = ('\trows = frappe.db.sql("""\n'
+                           '\t\tDELETE FROM `tabScheduler Log`\n'
+                           '\t\tWHERE DATE(timestamp) < %s\n'
+                           '\t""", (cutoff_date,))\n'
+                           '\tdeleted_count = rows[0][0] if rows else 0\n')
+
+# Hosts for the sweep's half. `get_scheduler_data` is whitelisted and gated by
+# nothing -- 73 of the app's 88 whitelisted endpoints are, which is fine while
+# they do not write. Giving one a write is the regression the sweep exists for.
+SCH_DATA = '    """Get all data needed for the scheduler interface"""\n'
+SCH_UTILISATION = '    """Get total scheduled hours for a resource on a specific date"""\n'
+TSE_APPROVE = '    """Approve a timesheet entry"""\n'
+
+WHITELIST_WRITE_GATE = Target(
+    test="tests/offline/test_whitelist_write_gate.py",
+    faults=[
+        # --- the gate on clear_old_logs, broken eight ways ----------------
+        Fault("gate deleted: any logged-in user wipes the scheduler log", True,
+              [(SL, SL_GATE, "")]),
+        Fault("gate asks about `read` instead of `delete`, which every "
+              "Scheduler User holds", True,
+              [(SL, SL_GATE,
+                SL_GATE.replace('"delete"', '"read"'))]),
+        Fault("gate asks about the wrong DocType (Scheduler Role)", True,
+              [(SL, SL_GATE,
+                SL_GATE.replace('"Scheduler Log"', '"Scheduler Role"'))]),
+        Fault("gate checks but does not throw, so a False answer is ignored",
+              True,
+              [(SL, SL_GATE, SL_GATE.replace(", throw=True", ""))]),
+        Fault("gate asks about one row instead of the DocType, letting "
+              "`if_owner` answer for the whole table", True,
+              [(SL, SL_GATE,
+                SL_GATE.replace(", throw=True",
+                                ', doc="SCHEDLOG-00001", throw=True'))]),
+        Fault("gate moved inside the try, where a handler could drop the "
+              "refusal", True,
+              [(SL, SL_GATE + "\n\ttry:\n",
+                "\ttry:\n\t" + SL_GATE)]),
+        Fault("gate moved after `days` is read, turning the endpoint into an "
+              "argument oracle for callers who may not delete", True,
+              [(SL, SL_GATE, ""),
+               (SL, SL_NEGATIVE, SL_NEGATIVE + "\n" + SL_GATE)]),
+        Fault("gate nested in a branch, so days=0 skips it", True,
+              [(SL, SL_GATE, "\tif days:\n\t" + SL_GATE)]),
+
+        # --- `days`, which the caller chooses -----------------------------
+        Fault("negative days accepted, putting the cutoff in the future so "
+              "every row goes", True,
+              [(SL, SL_NEGATIVE, "")]),
+        Fault("days=0 refused as well, which is a meaning a caller can have",
+              True,
+              [(SL, "\tif days < 0:\n", "\tif days <= 0:\n")]),
+        Fault("a non-numeric days read as 0 instead of refused, so a typo "
+              "clears everything before today", True,
+              [(SL, SL_INT, "\t\tdays = 0\n")]),
+        Fault("the cutoff computed forwards, so `older than 30 days` deletes "
+              "everything", True,
+              [(SL, SL_CUTOFF, SL_CUTOFF.replace("-days", "days"))]),
+        # Both sides of 30, because one side only shows the test rejects
+        # *something*. These two were a single fault that came back GREEN; see
+        # `test_the_default_is_still_thirty_days`, which was what needed fixing.
+        Fault("the default retention lengthened from 30 days to 60", True,
+              [(SL, SL_DEF, SL_DEF.replace("days=30", "days=60"))]),
+        Fault("the default retention shortened from 30 days to 29", True,
+              [(SL, SL_DEF, SL_DEF.replace("days=30", "days=29"))]),
+
+        # --- what it reports, and whether the work lands ------------------
+        Fault("the count read off the DELETE's own result, which is the bug "
+              "the endpoint shipped with: always 0", True,
+              [(SL, SL_COUNT + "\n" + SL_DELETE, SL_COUNT_OFF_THE_DELETE)]),
+        Fault("counted after deleting, so it always reports 0", True,
+              [(SL, SL_COUNT + "\n" + SL_DELETE, SL_DELETE + "\n" + SL_COUNT)]),
+        Fault("commit removed, so the deletion rides on whatever the request "
+              "does next", True,
+              [(SL, SL_COMMIT, "")]),
+
+        # --- the rows the gate rests on -----------------------------------
+        # The endpoint invents no policy: it asks frappe, and frappe answers
+        # from this JSON. So the rows are part of the behaviour being guarded.
+        Fault("rows: System Manager loses delete, so nobody may clear the log",
+              True,
+              [(SL_JSON, '   "delete": 1,\n', "")]),
+        Fault("rows: Scheduler User granted delete, which is who the gate is "
+              "meant to keep out", True,
+              [(SL_JSON, '   "role": "Scheduler User",\n',
+                '   "delete": 1,\n   "role": "Scheduler User",\n')]),
+        Fault("rows: Scheduler User granted write, so the read-only role is "
+              "no longer read-only", True,
+              [(SL_JSON, '   "role": "Scheduler User",\n   "share": 1\n',
+                '   "role": "Scheduler User",\n   "share": 1,\n'
+                '   "write": 1\n')]),
+
+        # --- the author's own intent, in the client script -----------------
+        Fault("the Desk button offered to Scheduler User, contradicting the "
+              "rows the gate enforces", True,
+              [(SL_JS, "has_role('System Manager')",
+                "has_role('Scheduler User')")]),
+
+        # --- the sweep: would it see the NEXT instance of the rule? --------
+        # KNOWN_UNGATED is empty, so each of these has to turn the whole-app
+        # guard red on its own. Note the host: `get_scheduler_data` is a read
+        # endpoint with no gate, which is exactly where such a write appears.
+        Fault("sweep: an unchecked db.set_value added to an ungated "
+              "whitelisted endpoint", True,
+              [(SCH_API, SCH_DATA, SCH_DATA +
+                '    frappe.db.set_value("Scheduler Log", "SCHEDLOG-00001",\n'
+                '                        "message", "scheduler opened")\n')]),
+        Fault("sweep: a raw DELETE added to an ungated whitelisted endpoint",
+              True,
+              [(SCH_API, SCH_DATA, SCH_DATA +
+                '    frappe.db.sql("""\n'
+                '        DELETE FROM `tabScheduler Log`\n'
+                '        WHERE DATE(timestamp) < %s\n'
+                '    """, (start_date,))\n')]),
+        Fault("sweep: an unchecked write one level down, in a helper an "
+              "ungated endpoint calls", True,
+              [(SCH_API, SCH_UTILISATION, SCH_UTILISATION +
+                '    frappe.db.set_value("Resource", resource,\n'
+                '                        "last_checked", date)\n')]),
+        Fault("sweep: a statement built as a string, which cannot be read and "
+              "so must be reported rather than excused", True,
+              [(SCH_API, SCH_DATA, SCH_DATA +
+                '    cleanup_sql = ("DELETE FROM `tabSchedule Entry` "\n'
+                '                   "WHERE project = \'%s\'" % project)\n'
+                '    frappe.db.sql(cleanup_sql)\n')]),
+        Fault("sweep: one of the six Xero endpoints loses its gate, seen "
+              "through the sweep instead of its own test", True,
+              [(CUST, CUST_GATE, "")]),
+
+        # --- two controls, of two different kinds -------------------------
+        # 1. A real edit with no behaviour change at all. If it goes red, the
+        #    test file is pinning the endpoint's internal spelling.
+        Fault("CONTROL: the locals in clear_old_logs renamed (must stay "
+              "green)", False,
+              [(SL, '\trows = frappe.db.sql("""\n',
+                '\tcounted = frappe.db.sql("""\n'),
+               (SL, "\tdeleted_count = rows[0][0] if rows else 0\n",
+                "\tremoved_rows = counted[0][0] if counted else 0\n"),
+               (SL, SL_RETURN, '\t\t"deleted_count": removed_rows\n')]),
+        # 2. The sweep's discrimination, which is a different claim: the same
+        #    unchecked write that must be reported above is added to an
+        #    endpoint that IS gated, and must NOT be reported. This one does
+        #    change behaviour -- it is a control for the classifier, not a
+        #    no-op edit -- and without it a sweep that simply reported every
+        #    new write would pass all five faults above.
+        Fault("CONTROL (sweep discrimination): the same unchecked write added "
+              "to a GATED endpoint must not be reported (must stay green)",
+              False,
+              [(TSE, TSE_APPROVE, TSE_APPROVE +
+                '    frappe.db.set_value("Timesheet Entry", timesheet_id,\n'
+                '                        "approval_seen", 1)\n')]),
+    ])
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
     "timesheet_target_user": TIMESHEET_TARGET_USER,
     "scheduler_read_gate": SCHEDULER_READ_GATE,
+    "whitelist_write_gate": WHITELIST_WRITE_GATE,
 }
