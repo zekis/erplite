@@ -30,6 +30,7 @@ test failure, so a query against a column that is no longer a DocType field
 cannot be reintroduced without a test going red.
 """
 
+import datetime
 import json
 import os
 import re
@@ -149,6 +150,15 @@ TODO_SELECT_OPTIONS = {
 ALIAS = re.compile(r"^\s*(?P<field>[\w.]+)\s+as\s+(?P<alias>[\w]+)\s*$", re.IGNORECASE)
 
 
+def _as_datetime(value):
+    """A datetime for a datetime, a date or an ISO-ish string. Used by `between`."""
+    if isinstance(value, datetime.datetime):
+        return value
+    if isinstance(value, datetime.date):
+        return datetime.datetime(value.year, value.month, value.day)
+    return datetime.datetime.fromisoformat(str(value))
+
+
 def _matches(row, key, condition):
     value = row.get(key)
 
@@ -173,6 +183,17 @@ def _matches(row, key, condition):
             return value in (None, "")
     if operator == "like":
         return operand.replace("%", "") in (value or "")
+    if operator == "between":
+        # Afterz's submit_week_entries filters check_in_time with
+        # ["between", ["<date> 00:00:00", "<date> 23:59:59"]], so the two sides
+        # are a datetime column and two strings. Compare as datetimes, because
+        # string order and datetime order disagree the moment a format differs.
+        low, high = operand
+        if value is None:
+            return False
+        value, low, high = (_as_datetime(v) for v in (value, low, high))
+        # frappe's `between` is inclusive on both ends (frappe/database/query.py).
+        return low <= value <= high
     raise NotImplementedError("fake get_all does not implement operator %r" % (operator,))
 
 

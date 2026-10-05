@@ -27,8 +27,11 @@ What this found when it was written (6 Oct 2026):
     `status = "Submitted"` once check-out completed. Lost, so a checked-out
     timesheet stayed `Draft`, and `approve_timesheet()` opens with
     `if timesheet.status != "Submitted": frappe.throw("Only submitted timesheets
-    can be approved")`. **The approval path could never be entered.** Fixed by
-    moving the line into the existing (empty) `before_save`.
+    can be approved")`. **The approval path could never be entered.**
+
+    First fixed by moving the line into the existing (empty) `before_save`, and
+    **that fix was wrong** -- see the correction below. It is now in `check_out()`,
+    the one caller that means it, set before `save()`.
   * `projects/doctype/trip/trip.py` -- `on_update` derived
     `Planned`/`In Progress`/`Completed` from the trip's dates. Lost. Fixed the same
     way.
@@ -41,6 +44,31 @@ The giveaway in the timesheet case is worth keeping, because it is what makes th
 class findable by reading: `validate()` sets `is_active` and `duration_hours` and
 both persist; `on_update()` set `status` and it did not. Same document, same save,
 two different outcomes, no error either way.
+
+## The correction: a pre-save hook is not always the right home
+
+This guard pins a **mechanism** -- do not assign a field after the row is written.
+Satisfying it says nothing about whether the hook you moved the line *into* is the
+right one, and twice now it was not:
+
+  * **Timesheet Entry.** `before_save` runs on every save of the document, by
+    anyone. Afterz (repo `zekis/afterz`) never calls erplite code but saves
+    `Timesheet Entry` rows directly, and all five of its timesheet paths hand the
+    hook a `Draft` row that already has both times -- so the rule locked entries
+    on creation, left submit-week with nothing to find, and turned reject and
+    un-approve into no-ops that landed back on `Submitted` in the same save.
+    Pinned by `test_afterz_timesheet_workflow.py`.
+  * **Trip.** The same commit broke the "Start Trip" / "Complete Trip" buttons,
+    for the same underlying reason: deriving unconditionally before the write
+    overwrote the value the user had just chosen. Pinned by `test_trip_status.py`.
+
+Both are the same mistake. `status` in each case is a **workflow state someone
+else sets explicitly**, not a derived field, and a save hook cannot tell which
+caller it is running inside. The remedy is not a different hook: it is to put the
+rule in the caller that means it, or to consult the pre-save document.
+
+So a green run of this file is **not** evidence that a feature still works. It
+only means no field write is being silently dropped.
 
 ## What counts as persisting
 
@@ -271,7 +299,17 @@ class PostSaveFieldWrites(unittest.TestCase):
         )
 
     def test_the_two_fixed_controllers_stay_fixed(self):
-        """Timesheet Entry and Trip must keep deriving status before the write."""
+        """Neither may bring back an `on_update` that assigns a field.
+
+        Note what this does and does not say. It pins that the lost-write
+        mechanism has not returned. It does NOT say the remedy is `before_save`:
+        for Timesheet Entry the rule now lives in `check_out()`, because a hook
+        here runs on Afterz's saves too. `before_save` is still required to exist
+        on both, since each carries the note explaining what belongs in it --
+        for Timesheet Entry that note is the only warning against putting the
+        auto-submit back. The behaviour is pinned by
+        test_afterz_timesheet_workflow.py and test_trip_status.py.
+        """
         for rel in ("projects/doctype/timesheet_entry/timesheet_entry.py",
                     "projects/doctype/trip/trip.py"):
             path = os.path.join(APP_ROOT, *rel.split("/"))
@@ -285,8 +323,10 @@ class PostSaveFieldWrites(unittest.TestCase):
             self.assertIn("before_save", hooks, "%s lost its before_save" % rel)
             self.assertNotIn(
                 "on_update", hooks,
-                "%s has an on_update again -- status derivation belongs in "
-                "before_save, or the write is lost" % rel,
+                "%s has an on_update again -- a field assigned there is lost. "
+                "Move it before the write, but check WHICH caller should own it: "
+                "an unconditional rule in before_save runs on every save, "
+                "including other apps' (see this file's correction note)" % rel,
             )
 
 
