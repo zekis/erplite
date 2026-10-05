@@ -20,8 +20,20 @@ That is what broke `scheduler.api.create_schedule_entry` (see test_schedule_entr
 scheduler could not create an entry at all, while a query against the same removed field would
 have failed silently. Testing the loaded case tells you nothing about the new case.
 
-These two tests sweep the whole app for that class so it cannot come back in a module nobody is
-looking at. Both are deliberately conservative -- a name has to be declared nowhere to be reported
+WRITING an undeclared attribute is the silent half of the same mistake, and it is why the first
+two tests here were not enough. `doc.<x> = v` never raises -- it is an ordinary setattr on a
+Python object -- and then `get_valid_dict()` builds the INSERT from `meta.get_valid_columns()`,
+the DocType's declared fields, so the value is dropped without an error, a log line or a failed
+save. The caller is told the write succeeded.
+
+That is what `scheduler.doctype.schedule_row.create_schedule_row` did: a whitelisted endpoint
+taking a `task` argument, assigning `doc.task` on a DocType that has only `activity`, and
+discarding it on insert. The row was created with no work attached and the caller got its name
+back. The first two tests here missed it for a year of sweeps because both filter on `ast.Load`:
+the symptom being hunted was AttributeError, and a write has no symptom at all.
+
+These three tests sweep the whole app for that class so it cannot come back in a module nobody is
+looking at. All are deliberately conservative -- a name has to be declared nowhere to be reported
 -- so a failure here is a real finding rather than something to add an exception for.
 """
 
@@ -286,6 +298,84 @@ class TestInMemoryDocumentsAreNotReadByUndeclaredField(unittest.TestCase):
             sorted(set(findings)),
             "These read a field off a document built in memory that the DocType does not have, so "
             "they raise AttributeError:\n  " + "\n  ".join(sorted(set(findings))),
+        )
+
+
+class TestInMemoryDocumentsAreNotWrittenByUndeclaredField(unittest.TestCase):
+    """`doc = frappe.new_doc("X")` ... `doc.<y> = v`, where <y> is not a field of X.
+
+    The silent twin of the test above. Nothing raises: the attribute is set on the object and
+    then dropped by `get_valid_dict()`, which reads `meta.get_valid_columns()` -- the DocType's
+    declared fields, not the table's columns. So the write is accepted, discarded, and reported
+    as a success. Scoped exactly as the read test is: only locals assigned once from a literal
+    new_doc/get_doc, and only DocTypes this app defines.
+    """
+
+    def test_no_new_document_is_written_by_a_field_it_does_not_have(self):
+        doctypes = _app_doctypes()
+        doctypes.pop("__paths__", None)
+        findings, parsed = [], 0
+
+        for dirpath, _dirs, names in os.walk(MODULE_ROOT):
+            for n in sorted(names):
+                if not n.endswith(".py"):
+                    continue
+                p = os.path.join(dirpath, n)
+                try:
+                    with open(p, encoding="utf-8") as fh:
+                        tree = ast.parse(fh.read(), filename=p)
+                except (SyntaxError, OSError):
+                    continue
+                parsed += 1
+                rel = os.path.relpath(p, APP_ROOT)
+                for fn in ast.walk(tree):
+                    if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        continue
+                    origin, count = {}, {}
+                    for node in ast.walk(fn):
+                        targets = []
+                        if isinstance(node, ast.Assign):
+                            targets = node.targets
+                        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+                            targets = [node.target]
+                        for t in targets:
+                            if not isinstance(t, ast.Name):
+                                continue
+                            count[t.id] = count.get(t.id, 0) + 1
+                            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+                                dt = _literal_doctype(node.value)
+                                if dt:
+                                    origin[t.id] = dt
+                    for var, dt in origin.items():
+                        if count.get(var) != 1 or dt not in doctypes:
+                            continue
+                        for node in ast.walk(fn):
+                            if not (
+                                isinstance(node, ast.Attribute)
+                                and isinstance(node.value, ast.Name)
+                                and node.value.id == var
+                                and isinstance(node.ctx, ast.Store)
+                            ):
+                                continue
+                            if (
+                                node.attr in doctypes[dt]
+                                or node.attr in FRAPPE_ATTRS
+                                or node.attr.startswith("__")
+                            ):
+                                continue
+                            findings.append(
+                                "{}:{}  {} = new {!r}, then {}.{} = ...  (in {}())".format(
+                                    rel, node.lineno, var, dt, var, node.attr, fn.name
+                                )
+                            )
+
+        self.assertGreater(parsed, 50, "sweep parsed almost nothing; the walk is wrong")
+        self.assertEqual(
+            [],
+            sorted(set(findings)),
+            "These write a field the DocType does not have onto a document built in memory. "
+            "Nothing raises; get_valid_dict() drops the value on insert and the caller is told "
+            "it succeeded:\n  " + "\n  ".join(sorted(set(findings))),
         )
 
 
