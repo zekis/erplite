@@ -1582,6 +1582,294 @@ TRIP_STATUS = Target(
                 "\t\t\tfrm.set_value('status', 'Draft');\n")]),
     ])
 
+# --- erplite post-save field writes (the whole-app detector) ---------------
+# The first eight targets each asked of a *behavioural rule*: would this test
+# notice if the rule were broken? This one asks it of a **detector** -- a
+# whole-app sweep whose whole job is to find a bug class in real source. The
+# question changes shape with it: not "is this rule pinned" but "what does this
+# detector actually see, and what can real code do that it cannot see?"
+#
+# So every fault here plants (or removes) something in real app source and asks
+# whether the sweep notices. Three of the six hook names in POST_SAVE_HOOKS
+# (`on_change`, `on_update_after_submit`, `after_insert`) appear in no real
+# controller at all, so a fault has to add the hook as well as the write --
+# which is the measurement: those three are pinned only by synthetic source
+# inside the test file.
+#
+# A third verdict is needed here that the first eight targets did not want.
+# `CONTROL` means an edit that changes no behaviour and must stay green.
+# **`KNOWN BLIND SPOT` means a real regression that this detector deliberately
+# cannot see**, so it is also green -- but for the opposite reason, and reading
+# it as a control would be reading "no bug here" off a line that means "bug,
+# invisible, on purpose". Each one names why it is not worth closing.
+
+PROJ = "erplite/projects/doctype/project/project.py"
+PE = "erplite/accounts/doctype/payment_entry/payment_entry.py"
+COMPANY = "erplite/setup/doctype/company/company.py"
+
+# Project's three post-save hooks are all `pass`, which makes it the one
+# controller where a planted write is the only thing in the hook.
+PROJ_UPD = '    def on_update(self):\n        """Actions on update"""\n        pass\n'
+PROJ_SUB = '    def on_submit(self):\n        """Actions on submit"""\n        pass\n'
+PROJ_CAN = '    def on_cancel(self):\n        """Actions on cancel"""\n        pass\n'
+PROJ_VALIDATE = ('    def validate(self):\n        """Validate project"""\n'
+                 '        self.set_default_company()\n')
+
+
+def _body(anchor, body):
+    """One of Project's hooks with its `pass` replaced by `body`."""
+    return (PROJ, anchor, anchor.replace("        pass\n", body))
+
+
+def _added_hook(hook, body):
+    """A post-save hook frappe runs but no real controller defines, added to
+    Project after on_cancel (the last method in the file)."""
+    return (PROJ, PROJ_CAN,
+            PROJ_CAN + '    \n    def %s(self):\n%s' % (hook, body))
+
+
+POST_SAVE_WRITES = Target(
+    test="tests/offline/test_post_save_field_writes.py",
+    faults=[
+        # 1. The bug class itself, in each hook the real tree already defines.
+        # One fault per hook, not a sample: the detector reads a frozenset of
+        # names, and a frozenset is exactly the kind of thing that is right for
+        # the names someone thought of.
+        Fault("lost write planted in Project.on_update", True,
+              [_body(PROJ_UPD, '        self.status = "Open"\n')]),
+        Fault("lost write planted in Project.on_submit", True,
+              [_body(PROJ_SUB, '        self.status = "Open"\n')]),
+        Fault("lost write planted in Project.on_cancel", True,
+              [_body(PROJ_CAN, '        self.status = "Cancelled"\n')]),
+
+        # 2. The three hook names no real controller defines. These are the
+        # measurement of what the real tree exercises: before this target they
+        # were pinned only by synthetic source inside the test file.
+        Fault("lost write in on_change, a hook no real controller defines",
+              True, [_added_hook("on_change", '        self.status = "Open"\n')]),
+        Fault("lost write in on_update_after_submit, a hook no real controller "
+              "defines", True,
+              [_added_hook("on_update_after_submit",
+                           '        self.status = "Open"\n')]),
+        Fault("lost write in after_insert, a hook no real controller defines",
+              True, [_added_hook("after_insert", '        self.status = "Open"\n')]),
+
+        # 3. The shapes a lost write can take. Plain assignment is one of
+        # several ways to bind a field, and the sweep is a pattern match over
+        # AST node types -- so each shape is a separate claim.
+        Fault("lost write buried in if/for/try", True,
+              [_body(PROJ_SUB,
+                     '        if self.project_name:\n'
+                     '            for _ in range(1):\n'
+                     '                try:\n'
+                     '                    self.status = "Open"\n'
+                     '                except Exception:\n'
+                     '                    pass\n')]),
+        Fault("lost write as an augmented assignment", True,
+              [_body(PROJ_UPD, '        self.status += "!"\n')]),
+        Fault("lost write through self.set(), frappe's own field setter", True,
+              [_body(PROJ_UPD, '        self.set("status", "Open")\n')]),
+        Fault("lost write through setattr(self, ...)", True,
+              [_body(PROJ_UPD, '        setattr(self, "status", "Open")\n')]),
+        Fault("lost write as tuple unpacking onto two fields", True,
+              [_body(PROJ_UPD,
+                     '        self.status, self.project_name = "Open", "x"\n')]),
+        Fault("lost write as an annotated assignment", True,
+              [_body(PROJ_UPD, '        self.status: str = "Open"\n')]),
+        Fault("lost write as a for-loop target", True,
+              [_body(PROJ_UPD,
+                     '        for self.status in ["Open"]:\n'
+                     '            break\n')]),
+        Fault("lost write as a with-statement target", True,
+              [_body(PROJ_UPD,
+                     '        with open(__file__) as self.project_name:\n'
+                     '            pass\n')]),
+        # frappe's BaseDocument.update() loops straight into set() for every
+        # key (base_document.py:169-186), so a dict of fields is the same bug
+        # class as a plain assignment -- and the only shape that loses several
+        # fields at once. update_if_missing() is the same loop.
+        Fault("lost write through self.update(), frappe's documented "
+              "several-fields-at-once setter", True,
+              [_body(PROJ_UPD,
+                     '        self.update({"status": "Open", '
+                     '"project_name": "x"})\n')]),
+        Fault("lost write through self.update_if_missing()", True,
+              [_body(PROJ_UPD,
+                     '        self.update_if_missing({"status": "Open"})\n')]),
+
+        # 4. The baseline. PENDING_DECISION keys a finding by
+        # (file, class, hook, field) -- so these ask whether that key is tight
+        # enough to let a NEW lost write through in a file that already has one.
+        Fault("a second field lost in a baselined hook "
+              "(SalesInvoice.on_submit also loses rounded_total)", True,
+              [(SI, '        self.status = "Submitted"\n',
+                '        self.status = "Submitted"\n'
+                '        self.rounded_total = 0\n')]),
+        Fault("a new hook in a baselined file (SalesInvoice.on_change loses "
+              "status)", True,
+              [(SI, '    def on_cancel(self):\n',
+                '    def on_change(self):\n        self.status = "Open"\n'
+                '    \n    def on_cancel(self):\n')]),
+        Fault("a new hook in the other baselined file "
+              "(PurchaseInvoice.on_update loses status)", True,
+              [(PI, '    def on_cancel(self):\n',
+                '    def on_update(self):\n        self.status = "Open"\n'
+                '    \n    def on_cancel(self):\n')]),
+
+        # 5. The baseline must not outlive what it documents. rev_7b11901cfb is
+        # still open; when it is answered these lines change, and the test has
+        # to say so rather than stay quietly green.
+        Fault("a baselined lost write fixed by persisting it "
+              "(SalesInvoice.on_submit calls db_update)", True,
+              [(SI, '        if self.is_paid:\n            self.status = "Paid"\n',
+                '        if self.is_paid:\n            self.status = "Paid"\n'
+                '        self.db_update()\n')]),
+        Fault("a baselined lost write removed outright "
+              "(SalesInvoice.on_cancel no longer assigns status)", True,
+              [(SI, '        """Actions on cancel"""\n        self.status = "Cancelled"\n',
+                '        """Actions on cancel"""\n        pass\n')]),
+        Fault("a baselined lost write removed outright "
+              "(PurchaseInvoice.on_cancel no longer assigns status)", True,
+              [(PI, '        """Actions on cancel"""\n        self.status = "Cancelled"\n',
+                '        """Actions on cancel"""\n        pass\n')]),
+        Fault("half a baselined entry removed: one of SalesInvoice.on_submit's "
+              "TWO status lines goes, so the key survives and the line count "
+              "does not", True,
+              [(SI, '        if self.is_paid:\n            self.status = "Paid"\n',
+                '        if self.is_paid:\n            pass\n')]),
+        Fault("half a baselined entry removed, purchase side "
+              "(PurchaseInvoice.on_submit keeps its key, loses a line)", True,
+              [(PI, '        if self.is_paid:\n            self.status = "Paid"\n',
+                '        if self.is_paid:\n            pass\n')]),
+
+        # 6. The persisting-call escape, per hook. payment_entry is the one
+        # controller that legitimately assigns in a post-save hook and then
+        # writes the row, so it is where this half of the rule lives.
+        Fault("db_update dropped from PaymentEntry.on_submit, so its status "
+              "write is lost", True,
+              [(PE, '        self.payment_status = "Submitted"\n        self.db_update()\n',
+                '        self.payment_status = "Submitted"\n')]),
+        Fault("db_update dropped from PaymentEntry.on_cancel, so its status "
+              "write is lost", True,
+              [(PE, '        self.payment_status = "Cancelled"\n        self.db_update()\n',
+                '        self.payment_status = "Cancelled"\n')]),
+
+        # 7. Every module the walk is meant to reach. The sweep selects
+        # directories by `os.path.dirname(dirpath)` ending in "doctype", so a
+        # module whose controllers sit anywhere else is invisible -- and which
+        # modules it reaches is not visible from any single fault.
+        Fault("lost write in the scheduler module (ScheduleEntry.on_update)",
+              True,
+              [(SCHED_ENTRY, '        # field to hold it.\n        pass\n',
+                '        # field to hold it.\n        self.status = "Draft"\n')]),
+        Fault("lost write in the setup module (Company.on_update)", True,
+              [(COMPANY,
+                '    def on_update(self):\n        """Actions after company update"""\n'
+                '        pass\n',
+                '    def on_update(self):\n        """Actions after company update"""\n'
+                '        self.company_name = "x"\n')]),
+
+        # 8. The two controllers this guard was written for, which must not
+        # bring the mechanism back. Note what each fault breaks: the first two
+        # restore an on_update, the last two remove the before_save that
+        # carries the note explaining what belongs in it.
+        Fault("Trip gets an on_update back, assigning status", True,
+              [(TRIP, '    def before_save(self):\n',
+                '    def on_update(self):\n        self.status = "Completed"\n'
+                '    \n    def before_save(self):\n')]),
+        Fault("Timesheet Entry gets an on_update back, assigning status", True,
+              [(TSE, '    def before_save(self):\n',
+                '    def on_update(self):\n        self.status = "Submitted"\n'
+                '    \n    def before_save(self):\n')]),
+        Fault("Trip's before_save renamed, so nothing derives its status",
+              True, [(TRIP, '    def before_save(self):\n',
+                      '    def _derive_status(self):\n')]),
+        Fault("Timesheet Entry's before_save renamed, so the note warning "
+              "against auto-submitting here goes with it", True,
+              [(TSE, '    def before_save(self):\n',
+                '    def _unused_hook(self):\n')]),
+
+        # 9. A controller that does not parse. The sweep turns SyntaxError into
+        # an AssertionError naming the file, rather than skipping it -- a
+        # detector that silently stops reading a file it cannot parse would
+        # report "no findings" for an app it never read.
+        Fault("a controller stops parsing, so the sweep cannot read it", True,
+              [_body(PROJ_UPD, '        self.status = "Open"\n    def (\n')]),
+
+        # --- controls: real edits that genuinely change no behaviour ---------
+        Fault("CONTROL: a non-field attribute set in a post-save hook "
+              "(must stay green)", False,
+              [_body(PROJ_UPD,
+                     '        self.flags.ignore_x = True\n'
+                     '        self._cached_total = 1\n'
+                     '        self.not_a_field = 2\n')]),
+        Fault("CONTROL: a field only read in a post-save hook "
+              "(must stay green)", False,
+              [_body(PROJ_UPD,
+                     '        if self.status == "Open":\n'
+                     '            frappe.logger().debug(self.status)\n')]),
+        Fault("CONTROL: a field assigned in a PRE-save hook, where it persists "
+              "(must stay green)", False,
+              [(PROJ, PROJ_VALIDATE,
+                PROJ_VALIDATE + '        self.status = "Open"\n')]),
+        Fault("CONTROL: a nested class's on_update is not a hook "
+              "(must stay green)", False,
+              [_body(PROJ_UPD,
+                     '        pass\n'
+                     '    \n    class _Inner:\n'
+                     '        def on_update(self):\n'
+                     '            self.status = "Open"\n')]),
+        Fault("CONTROL: a module-level on_update function is not a hook "
+              "(must stay green)", False,
+              [(PROJ, 'class Project(Document):\n',
+                'def on_update(self):\n    self.status = "Open"\n\n'
+                'class Project(Document):\n')]),
+        Fault("CONTROL: a sibling top-level class that is not a Document has "
+              "no frappe hooks, so its on_update must not be reported "
+              "(must stay green)", False,
+              [(PROJ, 'class Project(Document):\n',
+                'class _ProjectTotals:\n    def on_update(self):\n'
+                '        self.status = "Open"\n\n'
+                'class Project(Document):\n')]),
+        Fault("CONTROL: a local renamed in Project.validate_dates "
+              "(must stay green)", False,
+              [(PROJ,
+                '        if self.start_date and self.end_date:\n'
+                '            if self.start_date > self.end_date:\n',
+                '        start, end = self.start_date, self.end_date\n'
+                '        if start and end:\n'
+                '            if start > end:\n')]),
+
+        # --- known blind spots: real regressions, invisible on purpose -------
+        # Each of these loses a field write and stays green. They are here to
+        # be measured and named rather than closed: every one needs reasoning
+        # about control flow or data flow, and this file's own rule is that a
+        # missed case costs nothing while a confidently wrong finding sends
+        # someone to rewrite working code.
+        Fault("KNOWN BLIND SPOT: db_update() runs BEFORE the assignment, so "
+              "the write is still lost (green: the persisting check is per "
+              "hook, with no ordering)", False,
+              [(PE, '        self.payment_status = "Submitted"\n        self.db_update()\n',
+                '        self.db_update()\n        self.payment_status = "Submitted"\n')]),
+        Fault("KNOWN BLIND SPOT: db_update() sits in a branch that cannot run "
+              "(green: reachability is not read)", False,
+              [(PE, '        self.payment_status = "Submitted"\n        self.db_update()\n',
+                '        self.payment_status = "Submitted"\n'
+                '        if False:\n            self.db_update()\n')]),
+        Fault("KNOWN BLIND SPOT: the write moved into a closure the hook calls "
+              "immediately (green: nested scopes are skipped, which the "
+              "docstring justifies for callbacks -- this is not one)", False,
+              [_body(PROJ_UPD,
+                     '        def _go():\n'
+                     '            self.status = "Open"\n'
+                     '        _go()\n')]),
+        Fault("KNOWN BLIND SPOT: self bound to a local first "
+              "(green: no data flow)", False,
+              [_body(PROJ_UPD,
+                     '        doc = self\n'
+                     '        doc.status = "Open"\n')]),
+    ])
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -1591,4 +1879,5 @@ TARGETS = {
     "xero_invoice_send": XERO_INVOICE_SEND,
     "todo_assignment": TODO_ASSIGNMENT,
     "trip_status": TRIP_STATUS,
+    "post_save_writes": POST_SAVE_WRITES,
 }

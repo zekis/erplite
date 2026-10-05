@@ -202,6 +202,27 @@ Three habits earn their keep:
   file looks symmetric; the guarding is not, and only one fault per copy shows
   it.
 
+* **When the thing under test is a *detector*, the faults are the bug it was
+  written to find — and the question changes shape.** Eight of the nine targets
+  here ask of a behavioural rule: would this test notice if the rule broke? The
+  ninth (`post_save_writes`) asks it of a whole-app sweep, and there the useful
+  question is not "is the rule pinned" but **"what can real code do that this
+  detector cannot see?"** You cannot answer it from the detector's own unit
+  tests, because those are synthetic fixtures the author wrote: they pin the
+  shapes the author thought of, and are silent by construction about the ones
+  they did not. The answer only comes from planting real ones in real source.
+  Eight of eleven exceptions in that target's first run were shapes nobody had
+  thought of — including `self.set("status", x)`, frappe's own setter.
+* **A detector needs a third verdict, and conflating it with a control is a
+  reporting bug.** `run.py` has two: red-expected and green-expected, and
+  green-expected reads as "equivalent edit, no bug here". For a detector some
+  faults are green because the regression is **real and deliberately invisible**
+  — closing it would need control flow or data flow, and a wrong finding costs
+  more than a missed one. Those are the opposite claim wearing the same colour.
+  `post_save_writes` names them `KNOWN BLIND SPOT: ... (green: <why>)` against
+  `CONTROL: ... (must stay green)`, and the test file lists them in a
+  "What this cannot see" section, so a green run is read for what it is.
+
 And one more, learned from adding the second target: **a fault on a DocType JSON
 is worth as much as a fault on the code.** The rule in both targets asks frappe
 for a permission rather than naming a role, so what it actually enforces is the
@@ -212,7 +233,7 @@ breaking the code.
 
 ## Targets
 
-Eight so far. Ten test files in this repo describe having been
+Nine so far. Ten test files in this repo describe having been
 fault-injected; these are the ones where that proof is reproducible.
 
 ### `xero_gate` — `tests/offline/test_xero_permission_gate.py`
@@ -769,3 +790,94 @@ units — the same honest limit as `whitelist_write_gate`. And the buttons
 themselves are pinned by reading `trip.js` as text: nothing here runs any
 JavaScript, so "the button does what the test says it does" rests on a string
 match.
+
+### `post_save_writes` — `tests/offline/test_post_save_field_writes.py`
+
+44 faults, 33 red, 7 controls green, 4 known blind spots green. The first
+target whose subject is a **detector** rather than a behavioural rule: a
+whole-app sweep for a field assigned in a hook frappe runs *after* the row has
+been written, where the value is silently discarded. So every fault plants (or
+removes) something in real app source and asks whether the sweep notices.
+
+**The finding: a detector's unit tests pin the shapes its author thought of,
+and are silent by construction about the ones they did not.** This file had
+fifteen self-tests covering every post-save hook name, nesting, augmented
+assignment, the scope boundary, three kinds of non-finding — a thorough set, and
+all of it against synthetic source the file writes itself. Eight of the eleven
+exceptions in the first run were ways of binding a field that none of those
+tests names:
+
+| planted in real source | seen |
+| --- | --- |
+| `self.status = "Open"` | yes |
+| `self.set("status", "Open")` | **no** |
+| `self.update({"status": "Open"})` | **no** |
+| `self.update_if_missing({...})` | **no** |
+| `setattr(self, "status", "Open")` | **no** |
+| `self.status, self.project_name = ...` | **no** |
+| `self.status: str = "Open"` | **no** |
+| `for self.status in [...]` | **no** |
+| `with ... as self.project_name` | **no** |
+
+The first three are not exotica. `BaseDocument.set` is frappe's own setter
+(`base_document.py:228`, ending in `self.__dict__[key] = value`) and `update()`
+is a documented loop into it (`:169-186`) with an example in its own docstring —
+so a sweep that reads `ast.Assign` alone covers one of four documented ways to
+set a field, and the one that loses *several* fields on one line was invisible.
+Tuple unpacking is the shape most likely to be written by accident: it puts a
+single `ast.Tuple` in `targets`, and `isinstance(tgt, ast.Attribute)` on that
+Tuple is simply false. All eight now report, through one generic
+`_attr_targets` + `_setter_fields` pass rather than an enumeration of node
+types, which is why `for`/`with` targets come free.
+
+The general form, and it is not about AST: **a detector tested only against
+fixtures it writes itself has been asked "do you find what I thought of?" and
+answered yes.** The question it has not been asked is what real code can do.
+That one needs the real tree.
+
+**Second: a control that goes red can mean the detector is wrong, not the
+test.** `run.py` prints "the control went red: the test is pinning the code's
+internals" — the right reading for eight targets, and the wrong one here. A
+plain `class _ProjectTotals:` added beside the controller, with an `on_update`
+that frappe never calls, was reported as a lost write. That is a *false
+positive*, in a file whose own rule is that coarse-and-silent beats
+confidently-wrong, and the author had already reasoned about the same mistake
+one level in (`test_a_method_of_a_nested_class_is_not_a_hook`). The fix is
+narrow on purpose: a class with **no base at all** is not a controller. It does
+not try to decide whether a base *is* `Document`, because that cannot be
+resolved offline and guessing wrong would silently stop reading a real
+controller — under-detection a sweep cannot report. A helper class that does
+declare a base is still swept, and
+`test_a_helper_class_with_a_base_is_still_reported` pins that as the remaining
+surface rather than leaving it implied.
+
+**Third: a baseline keyed by a tuple counts keys, not lines.**
+`PENDING_DECISION` lists four known lost writes awaiting the owner's answer on
+`rev_7b11901cfb`, keyed `(file, class, hook, field)`. But
+`SalesInvoice.on_submit` assigns `status` on two lines — once plainly, once
+under `if self.is_paid` — so **four entries stand for six lines**, and deleting
+either line of either pair left both baseline tests green: the key survived, so
+nothing went stale, and the pending set had quietly changed. The file's own
+BASELINE note says "six". Asserting the number the docstring already claims is
+the whole fix, and it is the cheap half of a general point: *when a baseline
+collapses several instances into one key, the count is the only thing that
+notices a partial change.*
+
+**What this target does not reach**, and the test file now lists it under "What
+this cannot see" rather than leaving a green run to be over-read: four faults
+are real regressions that stay green on purpose. `self.db_update()` moved
+*above* the assignment it persists, or put under `if False:`, still loses the
+write — the persisting check is per hook with no ordering and no reachability.
+The write moved into a closure the hook calls immediately is skipped, because
+`walk_scope` skips nested scopes on the grounds that a nested def may be a
+callback run elsewhere (right for a callback, wrong here, and telling them apart
+needs a call graph). `doc = self; doc.status = x` needs data flow. Each would
+cost control-flow reasoning to close, which is how a guard like this starts
+producing confidently wrong findings.
+
+One more limit, found by reading rather than injecting: a post-save hook
+attached through `doc_events` in `hooks.py` is a **module-level function** taking
+`doc`, not a method taking `self` — so `test_a_module_level_function_is_not_a_hook`
+is pinning the right thing only while `doc_events` is unused. It is commented
+out in `erplite/hooks.py` today. If it is ever filled in, this sweep stops
+covering the app and that test's name becomes wrong.
