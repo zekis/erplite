@@ -6,6 +6,7 @@ import frappe
 import requests
 import json
 from .auth import get_valid_token
+from . import XERO_HTTP_TIMEOUT
 
 class XeroClient:
     """Base client for Xero API interactions"""
@@ -26,7 +27,9 @@ class XeroClient:
     def get(self, endpoint, params=None):
         """Make a GET request to Xero API"""
         url = f"{self.API_BASE_URL}/{endpoint}"
-        response = requests.get(url, headers=self.get_headers(), params=params)
+        response = requests.get(
+            url, headers=self.get_headers(), params=params, timeout=XERO_HTTP_TIMEOUT
+        )
         
         if response.status_code == 200:
             return response.json()
@@ -39,7 +42,8 @@ class XeroClient:
         response = requests.post(
             url, 
             headers=self.get_headers(), 
-            data=json.dumps(data)
+            data=json.dumps(data),
+            timeout=XERO_HTTP_TIMEOUT,
         )
         
         if response.status_code in [200, 201]:
@@ -53,7 +57,8 @@ class XeroClient:
         response = requests.put(
             url, 
             headers=self.get_headers(), 
-            data=json.dumps(data)
+            data=json.dumps(data),
+            timeout=XERO_HTTP_TIMEOUT,
         )
         
         if response.status_code in [200, 201]:

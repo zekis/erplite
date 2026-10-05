@@ -10,6 +10,105 @@ import os
 from datetime import datetime
 from frappe.utils import now_datetime, cstr, get_files_path
 from erplite.xero.auth import get_valid_token
+from erplite.xero import XERO_HTTP_TIMEOUT
+
+def find_invoice_in_xero(invoice_number, invoice_type, contact_name, tenant_id, token):
+    """Return the invoice Xero already holds under this InvoiceNumber, or None.
+
+    This is what makes "Send to Xero" repeatable. `xero_invoice_id` is stored
+    only after Xero answers, so a POST that reaches Xero whose reply is lost
+    leaves three things true at once: the invoice is in Xero, the local
+    already-sent guard is still open, and the user is reading a failure. The
+    obvious retry then creates a second invoice. Asking Xero first turns that
+    retry into a stop.
+
+    It never answers None on doubt. If Xero cannot be reached, or answers
+    something this cannot read, it throws: "we could not check" is not "it is
+    not there", and the caller must not post on a maybe. Nothing is sent in that
+    case, so the user can simply try again.
+
+    A match has to agree on InvoiceNumber, Type and the contact's name, because
+    an ACCPAY invoice number belongs to the supplier and two suppliers can both
+    use "INV-001". VOIDED and DELETED invoices do not count as a match: Xero
+    frees that number again, so sending is the right thing to do.
+    """
+    if not invoice_number:
+        return None
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "Xero-Tenant-Id": tenant_id
+    }
+
+    try:
+        response = requests.get(
+            "https://api.xero.com/api.xro/2.0/Invoices",
+            headers=headers,
+            params={"InvoiceNumbers": cstr(invoice_number)},
+            timeout=XERO_HTTP_TIMEOUT
+        )
+    except Exception as e:
+        frappe.throw(
+            f"Could not check whether Xero already has invoice {invoice_number}: "
+            f"{str(e)}. Nothing was sent. Please try again."
+        )
+
+    if response.status_code != 200:
+        frappe.throw(
+            f"Could not check whether Xero already has invoice {invoice_number}: "
+            f"Xero answered {response.status_code}, {response.text[:500]}. "
+            "Nothing was sent. Please try again."
+        )
+
+    try:
+        invoices = response.json().get("Invoices") or []
+    except Exception as e:
+        frappe.throw(
+            f"Could not read Xero's answer when checking invoice {invoice_number}: "
+            f"{str(e)}. Nothing was sent. Please try again."
+        )
+
+    wanted = cstr(invoice_number).strip().lower()
+
+    # If anything came back under a different number then Xero did not apply the
+    # InvoiceNumbers filter, and "nothing here matches" stops being evidence of
+    # absence -- the list is capped at 100 and ours could be on a later page.
+    others = [
+        inv for inv in invoices
+        if cstr(inv.get("InvoiceNumber")).strip().lower() != wanted
+    ]
+    if others:
+        frappe.throw(
+            f"Could not check whether Xero already has invoice {invoice_number}: "
+            f"asked Xero for that number and it returned {len(invoices)} invoice(s), "
+            f"{len(others)} of them under other numbers, so the answer cannot be "
+            "trusted. Nothing was sent."
+        )
+
+    for invoice in invoices:
+        if invoice.get("Type") != invoice_type:
+            continue
+        if cstr(invoice.get("Status")).strip().upper() in ("VOIDED", "DELETED"):
+            continue
+        if contact_name:
+            theirs = cstr((invoice.get("Contact") or {}).get("Name")).strip().lower()
+            if theirs != cstr(contact_name).strip().lower():
+                continue
+        return invoice
+
+    return None
+
+
+def _already_in_xero_message(invoice_number, existing):
+    return (
+        f"Xero already has invoice {invoice_number} "
+        f"(Xero Invoice ID {existing.get('InvoiceID')}, "
+        f"status {existing.get('Status')}), so nothing was sent. "
+        "This happens when an earlier send reached Xero but its reply did not "
+        "reach us. Check the invoice in Xero before sending anything again."
+    )
+
 
 def create_sales_invoice(sales_invoice):
     """Create a sales invoice in Xero"""
@@ -42,10 +141,26 @@ def create_sales_invoice(sales_invoice):
         "Date": sales_invoice.posting_date.strftime("%Y-%m-%d"),
         "DueDate": sales_invoice.due_date.strftime("%Y-%m-%d"),
         "LineItems": line_items,
-        "Status": "AUTHORISED" if sales_invoice.status == "Submitted" else "DRAFT",
+        # Always a draft. Invoices are reviewed and approved in Xero, not here.
+        # This replaces "AUTHORISED" if <doc>.status == "Submitted" else "DRAFT",
+        # which promised a choice the app could not make: Sales Invoice is not
+        # submittable and its status is read-only, so it is always "Draft", and
+        # on Purchase Invoice the Select is editable, so the same line sent an
+        # authorised invoice to the real ledger if someone had set it by hand.
+        "Status": "DRAFT",
         "InvoiceNumber": cstr(sales_invoice.name)  # For sales invoices, use our internal reference
     }
     
+    # Don't post a second copy of an invoice Xero already has: see
+    # find_invoice_in_xero. Deliberately outside the try/except below, so that
+    # this stop reaches the user as a stop and not as a failed send.
+    existing = find_invoice_in_xero(
+        invoice_data["InvoiceNumber"], "ACCREC",
+        sales_invoice.customer_name, settings.tenant_id, token
+    )
+    if existing:
+        frappe.throw(_already_in_xero_message(invoice_data["InvoiceNumber"], existing))
+
     # Send to Xero
     headers = {
         "Authorization": f"Bearer {token}",
@@ -58,7 +173,8 @@ def create_sales_invoice(sales_invoice):
         response = requests.post(
             "https://api.xero.com/api.xro/2.0/Invoices",
             headers=headers,
-            data=json.dumps({"Invoices": [invoice_data]})
+            data=json.dumps({"Invoices": [invoice_data]}),
+            timeout=XERO_HTTP_TIMEOUT,
         )
         
         if response.status_code == 200:
@@ -130,10 +246,26 @@ def create_purchase_invoice(purchase_invoice):
         "Date": purchase_invoice.posting_date.strftime("%Y-%m-%d"),
         "DueDate": purchase_invoice.due_date.strftime("%Y-%m-%d"),
         "LineItems": line_items,
-        "Status": "AUTHORISED" if purchase_invoice.status == "Submitted" else "DRAFT",
+        # Always a draft. Invoices are reviewed and approved in Xero, not here.
+        # This replaces "AUTHORISED" if <doc>.status == "Submitted" else "DRAFT",
+        # which promised a choice the app could not make: Sales Invoice is not
+        # submittable and its status is read-only, so it is always "Draft", and
+        # on Purchase Invoice the Select is editable, so the same line sent an
+        # authorised invoice to the real ledger if someone had set it by hand.
+        "Status": "DRAFT",
         "InvoiceNumber": invoice_number
     }
     
+    # Don't post a second copy of an invoice Xero already has: see
+    # find_invoice_in_xero. Deliberately outside the try/except below, so that
+    # this stop reaches the user as a stop and not as a failed send.
+    existing = find_invoice_in_xero(
+        invoice_data["InvoiceNumber"], "ACCPAY",
+        purchase_invoice.supplier_name, settings.tenant_id, token
+    )
+    if existing:
+        frappe.throw(_already_in_xero_message(invoice_data["InvoiceNumber"], existing))
+
     # Log the invoice data for debugging
     frappe.log_error("Xero Integration", f"Xero Invoice Data: {json.dumps(invoice_data)}")
     
@@ -149,7 +281,8 @@ def create_purchase_invoice(purchase_invoice):
         response = requests.post(
             "https://api.xero.com/api.xro/2.0/Invoices",
             headers=headers,
-            data=json.dumps({"Invoices": [invoice_data]})
+            data=json.dumps({"Invoices": [invoice_data]}),
+            timeout=XERO_HTTP_TIMEOUT,
         )
         
         # Log the response for debugging
@@ -268,7 +401,8 @@ def upload_attachments_to_xero_invoice(invoice_id, purchase_invoice_name):
                     response = requests.post(
                         f"https://api.xero.com/api.xro/2.0/Invoices/{invoice_id}/Attachments/{attachment.file_name}",
                         headers=headers,
-                        files=files
+                        files=files,
+                        timeout=XERO_HTTP_TIMEOUT,
                     )
                     
                     if response.status_code == 200:
@@ -364,7 +498,8 @@ def create_customer(customer):
         response = requests.post(
             "https://api.xero.com/api.xro/2.0/Contacts",
             headers=headers,
-            data=json.dumps({"Contacts": [customer_data]})
+            data=json.dumps({"Contacts": [customer_data]}),
+            timeout=XERO_HTTP_TIMEOUT,
         )
         
         if response.status_code == 200:
@@ -443,7 +578,8 @@ def create_supplier(supplier):
         response = requests.post(
             "https://api.xero.com/api.xro/2.0/Contacts",
             headers=headers,
-            data=json.dumps({"Contacts": [supplier_data]})
+            data=json.dumps({"Contacts": [supplier_data]}),
+            timeout=XERO_HTTP_TIMEOUT,
         )
         
         if response.status_code == 200:
@@ -495,7 +631,8 @@ def get_customers_from_xero():
     try:
         response = requests.get(
             "https://api.xero.com/api.xro/2.0/Contacts?where=IsCustomer=true",
-            headers=headers
+            headers=headers,
+            timeout=XERO_HTTP_TIMEOUT,
         )
         
         if response.status_code == 200:
@@ -539,7 +676,8 @@ def get_suppliers_from_xero():
     try:
         response = requests.get(
             "https://api.xero.com/api.xro/2.0/Contacts?where=IsSupplier=true",
-            headers=headers
+            headers=headers,
+            timeout=XERO_HTTP_TIMEOUT,
         )
         
         if response.status_code == 200:
@@ -583,7 +721,8 @@ def import_customer_from_xero(xero_contact_id):
     try:
         response = requests.get(
             f"https://api.xero.com/api.xro/2.0/Contacts/{xero_contact_id}",
-            headers=headers
+            headers=headers,
+            timeout=XERO_HTTP_TIMEOUT,
         )
         
         if response.status_code == 200:
@@ -653,7 +792,8 @@ def import_supplier_from_xero(xero_contact_id):
     try:
         response = requests.get(
             f"https://api.xero.com/api.xro/2.0/Contacts/{xero_contact_id}",
-            headers=headers
+            headers=headers,
+            timeout=XERO_HTTP_TIMEOUT,
         )
         
         if response.status_code == 200:

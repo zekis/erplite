@@ -85,6 +85,16 @@ def send_to_xero(docname):
             return True
         
         frappe.throw(_("Failed to send invoice to Xero"))
+    except frappe.ValidationError as e:
+        # Everything on this path that calls frappe.throw has already written a
+        # message for the user, and some of them are deliberate stops rather than
+        # failures -- "already sent to Xero", or "Xero already has this invoice".
+        # Re-labelling a stop as "Failed to send" is exactly what makes someone
+        # retry a send that must not be retried, so the message goes through
+        # unchanged. It is still logged: the Error Log is where a send whose
+        # outcome is unknown gets traced from.
+        frappe.log_error("Sales Invoice", f"Send to Xero stopped: {str(e)}")
+        raise
     except Exception as e:
         frappe.log_error("Sales Invoice", f"Error sending sales invoice to Xero: {str(e)}")
         frappe.throw(_("Failed to send invoice to Xero: {0}").format(str(e)))

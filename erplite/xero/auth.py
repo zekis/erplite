@@ -8,6 +8,7 @@ import json
 import base64
 from datetime import datetime, timedelta
 from frappe.utils import now_datetime, get_datetime
+from erplite.xero import XERO_HTTP_TIMEOUT
 
 def get_access_token():
     """Get access token using client credentials flow"""
@@ -38,7 +39,8 @@ def get_access_token():
         response = requests.post(
             "https://identity.xero.com/connect/token",
             data=data,
-            headers=headers
+            headers=headers,
+            timeout=XERO_HTTP_TIMEOUT,
         )
         
         if response.status_code == 200:
@@ -102,7 +104,8 @@ def get_tenants():
     try:
         response = requests.get(
             "https://api.xero.com/connections",
-            headers=headers
+            headers=headers,
+            timeout=XERO_HTTP_TIMEOUT,
         )
         
         if response.status_code == 200:
@@ -127,7 +130,8 @@ def get_tenants():
             headers["Authorization"] = f"Bearer {token}"
             response = requests.get(
                 "https://api.xero.com/connections",
-                headers=headers
+                headers=headers,
+                timeout=XERO_HTTP_TIMEOUT,
             )
             
             if response.status_code == 200:
@@ -196,19 +200,27 @@ def handle_api_request(url, method="GET", headers=None, data=None, json_data=Non
     while retry_count <= max_retries:
         try:
             if method.upper() == "GET":
-                response = requests.get(url, headers=headers)
+                response = requests.get(url, headers=headers, timeout=XERO_HTTP_TIMEOUT)
             elif method.upper() == "POST":
                 if json_data:
-                    response = requests.post(url, headers=headers, json=json_data)
+                    response = requests.post(
+                        url, headers=headers, json=json_data, timeout=XERO_HTTP_TIMEOUT
+                    )
                 else:
-                    response = requests.post(url, headers=headers, data=data)
+                    response = requests.post(
+                        url, headers=headers, data=data, timeout=XERO_HTTP_TIMEOUT
+                    )
             elif method.upper() == "PUT":
                 if json_data:
-                    response = requests.put(url, headers=headers, json=json_data)
+                    response = requests.put(
+                        url, headers=headers, json=json_data, timeout=XERO_HTTP_TIMEOUT
+                    )
                 else:
-                    response = requests.put(url, headers=headers, data=data)
+                    response = requests.put(
+                        url, headers=headers, data=data, timeout=XERO_HTTP_TIMEOUT
+                    )
             elif method.upper() == "DELETE":
-                response = requests.delete(url, headers=headers)
+                response = requests.delete(url, headers=headers, timeout=XERO_HTTP_TIMEOUT)
             else:
                 frappe.throw(f"Unsupported HTTP method: {method}")
             
