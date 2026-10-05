@@ -78,15 +78,16 @@ diverge this choice stops being free and a test says so.
 * Who holds which role on `crew.tierneymorris.com.au`. That is the owner's data.
   If Accounts User is the only non-admin role in use the exposure was small; the
   code was wrong either way and roles change.
-* That the contact path is now idempotent. It is not. The gate makes a *refusal*
-  send nothing, which is what the owner approved. A permitted user whose
-  `save()` fails for some other reason still leaves a Xero contact with its id
-  unstored, and the next attempt still duplicates it. That is a separate defect
-  with a separate fix (record the id with `db.set_value` as the invoice path
-  does, rather than through `save()`), it affects users who are allowed to be
-  there, and it is filed for the owner rather than changed here.
-  `test_a_permitted_save_failure_still_strands_the_contact` pins the hazard as
-  it stands, so the day it is fixed this test fails and names itself.
+* That the contact path has been exercised against the live site. It has not.
+  The duplicate-contact defect this file used to waive is **fixed** as of
+  5 Oct 2026 (rev_6c9dc08cf7): see `TestTheContactIdIsRecordedAndSurvives`,
+  which replaced the waiver after it failed, as it was written to. The
+  mechanism behind that fix is read off frappe 15.52.0 and this app's source,
+  not observed on `crew.tierneymorris.com.au`, and what is reproduced here is
+  the stand-in's model of it. `TestNoStaleDocumentIsSavedAfterASend` reads the
+  four controllers instead, so the rule holds even if that model is wrong --
+  and it was wrong until this change, which is why these endpoints were green
+  on a path that could not work.
 * Anything about the Xero wire format or retry behaviour, which
   `test_xero_invoice_send.py` already covers.
 
@@ -105,7 +106,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from fake_frappe import (  # noqa: E402
     DoesNotExistError, FakeDocumentBase, FakeFrappe, PermissionError,
-    ValidationError, _dict, doctype_fields, doctype_permissions,
+    TimestampMismatchError, ValidationError, _dict, doctype_fields,
+    doctype_permissions,
 )
 
 APP_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -404,33 +406,77 @@ class TestThePermissionRowsAreWhatTheGateRestsOn(unittest.TestCase):
 # --------------------------------------------------------------------------
 
 class FakeLedger(object):
-    """Xero, as far as these endpoints can tell. Records what reached it."""
+    """Xero, as far as these endpoints can tell. Records what reached it.
 
-    def __init__(self, fail_on_save=False):
+    These four stand in for `erplite/xero/accounts.py`, and each one of them
+    **records the Xero id against the row before it returns**, with
+    `frappe.db.set_value`, because that is what the real functions do:
+    `create_sales_invoice` at `accounts.py:186`, `create_purchase_invoice` at
+    `:297`, `create_customer` at `:511`, `create_supplier` at `:591`.
+
+    That was missing here until 5 Oct 2026, and it was not a cosmetic gap. The
+    callers then set the same fields on a document they loaded *before* this
+    write and save it, so the real write is what makes that save stale. A
+    stand-in that posted to Xero and recorded nothing made every such save
+    succeed, which is why these tests were green on a path that cannot work.
+    Do not simplify this back to a bare return.
+    """
+
+    def __init__(self, frappe=None, fail_on_save=False):
         self.sent = []
         self.imported = []
         self.fail_on_save = fail_on_save
+        self._frappe = frappe
         self._n = 0
 
     def _id(self, kind):
         self._n += 1
         return "xero-%s-%d" % (kind, self._n)
 
+    def _record(self, doctype, name, fields):
+        """What accounts.py does on a successful post, and when it does it."""
+        if self._frappe is not None:
+            self._frappe.db.set_value(doctype, name, fields)
+
     def create_sales_invoice(self, doc):
         self.sent.append(("Sales Invoice", doc.name))
-        return self._id("sinv")
+        xero_id = self._id("sinv")
+        self._record("Sales Invoice", doc.name, {
+            "xero_invoice_id": xero_id,
+            "xero_invoice_number": "INV-%s" % xero_id,
+            "xero_status": "AUTHORISED",
+            "xero_sync_date": "2026-10-06 09:00:00",
+        })
+        return xero_id
 
     def create_purchase_invoice(self, doc):
         self.sent.append(("Purchase Invoice", doc.name))
-        return self._id("pinv")
+        xero_id = self._id("pinv")
+        self._record("Purchase Invoice", doc.name, {
+            "xero_invoice_id": xero_id,
+            "xero_invoice_number": "BILL-%s" % xero_id,
+            "xero_status": "AUTHORISED",
+            "xero_sync_date": "2026-10-06 09:00:00",
+        })
+        return xero_id
 
     def create_customer(self, doc):
         self.sent.append(("Customer", doc.name))
-        return self._id("cust")
+        xero_id = self._id("cust")
+        self._record("Customer", doc.name, {
+            "xero_contact_id": xero_id,
+            "xero_sync_date": "2026-10-06 09:00:00",
+        })
+        return xero_id
 
     def create_supplier(self, doc):
         self.sent.append(("Supplier", doc.name))
-        return self._id("supp")
+        xero_id = self._id("supp")
+        self._record("Supplier", doc.name, {
+            "xero_contact_id": xero_id,
+            "xero_sync_date": "2026-10-06 09:00:00",
+        })
+        return xero_id
 
     def import_customer_from_xero(self, contact_id):
         self.imported.append(("Customer", contact_id))
@@ -439,6 +485,11 @@ class FakeLedger(object):
     def import_supplier_from_xero(self, contact_id):
         self.imported.append(("Supplier", contact_id))
         return {"name": "SUPP-9001"}
+
+
+def ledger_names(ledger, doctype):
+    """How many records of one DocType reached Xero. One is the whole point."""
+    return len([d for d, _name in ledger.sent if d == doctype])
 
 
 def _load(name, path):
@@ -454,6 +505,11 @@ def load_endpoints(frappe, ledger):
     `erplite.xero.accounts` is stubbed by the ledger: this file is about the
     gate, not the Xero wire format, which test_xero_invoice_send.py covers.
     """
+    # accounts.py records the Xero id against the row with db.set_value
+    # before returning, so the ledger needs the database to do that to. Wiring
+    # it here rather than at each call site means no test can forget.
+    ledger._frappe = frappe
+
     for name in list(sys.modules):
         if name == "frappe" or name.startswith("frappe.") or name.startswith("erplite"):
             del sys.modules[name]
@@ -467,6 +523,7 @@ def load_endpoints(frappe, ledger):
     pkg.ValidationError = ValidationError
     pkg.PermissionError = PermissionError
     pkg.DoesNotExistError = DoesNotExistError
+    pkg.TimestampMismatchError = TimestampMismatchError
 
     utils = types.ModuleType("frappe.utils")
     utils.now_datetime = lambda: datetime.datetime(2026, 10, 5, 12, 0, 0)
@@ -534,6 +591,11 @@ def world(roles, user="pat@tierneymorris.com.au"):
         frappe.tables[doctype] = [{
             "name": ROW_NAMES[doctype],
             "owner": "zeke@tierneymorris.com.au",
+            # Every real row has a `modified`, and the stale-document check
+            # compares against it. Without one here the comparison would be
+            # against None, which reaches the right verdict for the wrong
+            # reason and reads like a missing field rather than a moved row.
+            "modified": "2026-10-06 08:00:00",
             "xero_contact_id": None,
             "xero_invoice_id": None,
             "xero_sync_date": None,
@@ -677,49 +739,171 @@ class TestAPermittedUserIsUnaffected(unittest.TestCase):
         self.assertEqual(self.ledger.sent, [])
 
 
-class TestTheGateAloneIsNotIdempotency(unittest.TestCase):
-    """Stating the limit of this change, as a test rather than a comment."""
+class TestTheContactIdIsRecordedAndSurvives(unittest.TestCase):
+    """rev_6c9dc08cf7: a send records the Xero id durably, so a retry is refused.
 
-    def test_a_permitted_save_failure_still_strands_the_contact(self):
-        """Known, unfixed, and deliberately out of scope for rev_c3343b2cf3.
+    This class replaces TestTheGateAloneIsNotIdempotency, which asserted the
+    opposite and was written to fail the day this was fixed. It has now failed
+    for that reason, so it is gone rather than deleted quietly: the assertions
+    below are its inverse, over the same mechanism.
 
-        The contact path posts to Xero first and `save()`s second. The gate
-        removes the *permission* reason for that save to fail, which is what the
-        owner approved. Any other reason still leaves a contact in Xero whose id
-        was never stored -- so the `if customer.xero_contact_id` guard stays open
-        and the next attempt creates a second one.
+    What the old class waived, and what the owner then decided (rev_6c9dc08cf7):
+    the contact path posted to Xero and then saved a document it had loaded
+    BEFORE `create_customer` recorded the id with db.set_value. That save could
+    not succeed -- `modified` had moved -- so every successful post ended in a
+    rolled-back request, an id that nothing local remembered, and a duplicate
+    contact on the next attempt.
 
-        Fixing it means recording the id with `db.set_value`, as the invoice path
-        does since PR #12. That changes behaviour for users who are permitted, so
-        it is the owner's call and is filed separately. **When it is fixed this
-        test fails** -- which is the point: a waiver that cannot outlive what it
-        waives.
+    The honest limit, stated here rather than only in the pull request: the
+    mechanism is read off frappe 15.52.0 and this app, NOT observed on the live
+    site. What is reproduced below is the stand-in's model of it -- see
+    fake_frappe.FakeStoredDoc.save and _FakeDb.set_value, which were taught
+    `modified` for exactly this reason. TestNoStaleDocumentIsSavedAfterASend
+    below checks the source instead, and does not depend on that model at all.
+    """
+
+    def setUp(self):
+        self.ledger = FakeLedger()
+        self.frappe = world(["Accounts User"])
+        self.modules = load_endpoints(self.frappe, self.ledger)
+
+    def test_a_send_records_the_id_against_the_row(self):
+        """Red against main: the send raised TimestampMismatchError instead."""
+        for doctype in ("Customer", "Supplier"):
+            with self.subTest(doctype=doctype):
+                self.assertTrue(
+                    self.modules[doctype].send_to_xero(ROW_NAMES[doctype]))
+                row = self.frappe.tables[doctype][0]
+                self.assertIsNotNone(row["xero_contact_id"])
+                self.assertIsNotNone(row["xero_sync_date"])
+
+    def test_nothing_saves_the_document_after_the_post(self):
+        """The fix, stated as the absence it is.
+
+        accounts.py has already written both fields with db.set_value by the
+        time the endpoint regains control. A save() here would be a write from
+        a document read before that one -- which is the whole bug, so its
+        absence is the thing worth pinning.
         """
-        ledger = FakeLedger()
-        frappe = world(["Accounts User"])
-        modules = load_endpoints(frappe, ledger)
+        for doctype in ("Customer", "Supplier"):
+            with self.subTest(doctype=doctype):
+                self.modules[doctype].send_to_xero(ROW_NAMES[doctype])
+        self.assertEqual(
+            [s.doctype for s in self.frappe.saves], [],
+            "a document was saved after the Xero post; that save is stale by "
+            "construction and is what duplicated the contact")
 
-        def refuse_to_save(*args, **kwargs):
-            raise ValidationError("link validation failed")
+    def test_the_transaction_is_committed(self):
+        """The commit is kept, not removed with the save.
 
-        frappe.tables["Customer"][0]["_save_raises"] = True
-        original = FakeDocumentBase.save if hasattr(FakeDocumentBase, "save") else None
+        Deleting both would leave the id to the request's own commit and undo
+        it on any later failure in the same request -- the same class of bug,
+        moved rather than fixed.
+        """
+        self.modules["Customer"].send_to_xero(ROW_NAMES["Customer"])
+        self.assertGreaterEqual(self.frappe.commits, 1)
 
-        # Make the save fail the way any ordinary validation failure would.
-        import fake_frappe
-        saved = fake_frappe.FakeStoredDoc.save
-        fake_frappe.FakeStoredDoc.save = refuse_to_save
-        try:
-            with self.assertRaises(ValidationError):
-                modules["Customer"].send_to_xero(ROW_NAMES["Customer"])
-        finally:
-            fake_frappe.FakeStoredDoc.save = saved
+    def test_a_second_send_is_refused_and_reaches_xero_once(self):
+        """The duplicate, as a test: the recorded id must stop the retry.
 
-        # The contact reached Xero and nothing local remembers its id.
-        self.assertEqual(ledger.sent, [("Customer", "CUST-0001")])
-        self.assertIsNone(frappe.tables["Customer"][0]["xero_contact_id"])
-        del frappe.tables["Customer"][0]["_save_raises"]
-        _ = original
+        This is what the owner's decision was actually for. Recording the id is
+        only worth anything because the `if ...xero_contact_id` guard reads it
+        on the next attempt.
+        """
+        for doctype in ("Customer", "Supplier"):
+            with self.subTest(doctype=doctype):
+                self.modules[doctype].send_to_xero(ROW_NAMES[doctype])
+                with self.assertRaises(ValidationError):
+                    self.modules[doctype].send_to_xero(ROW_NAMES[doctype])
+        # One contact per DocType reached Xero across both attempts.
+        self.assertEqual(
+            sorted(self.ledger.sent),
+            [("Customer", ROW_NAMES["Customer"]),
+             ("Supplier", ROW_NAMES["Supplier"])])
+
+    def test_a_failure_after_the_post_still_leaves_the_id_recorded(self):
+        """The original hazard, now harmless, driven rather than argued.
+
+        A later failure in the same request used to take the recorded id with
+        it. db.set_value has already written the row, so the guard still reads
+        the id and the retry is refused rather than duplicating the contact.
+        """
+        self.modules["Customer"].send_to_xero(ROW_NAMES["Customer"])
+        recorded = self.frappe.tables["Customer"][0]["xero_contact_id"]
+        self.assertIsNotNone(recorded)
+
+        with self.assertRaises(ValidationError):
+            self.modules["Customer"].send_to_xero(ROW_NAMES["Customer"])
+        self.assertEqual(
+            self.frappe.tables["Customer"][0]["xero_contact_id"], recorded)
+        self.assertEqual(ledger_names(self.ledger, "Customer"), 1)
+
+
+class TestNoStaleDocumentIsSavedAfterASend(unittest.TestCase):
+    """The same rule read off the source, so it does not rest on the stand-in.
+
+    The stand-in models `modified`, and that model could be wrong -- it was
+    absent until 5 Oct 2026, which is why these endpoints were green on a path
+    that cannot work. This class reads the four controllers instead and asserts
+    the shape directly, so the rule survives a stand-in that is mistaken.
+
+    The rule: in a `send_to_xero`, once the Xero create has been called, the
+    document must not be assigned to and saved. accounts.py has already written
+    those fields with db.set_value, so any such save is from a stale read.
+    """
+
+    CREATORS = {
+        "Sales Invoice": "create_sales_invoice",
+        "Purchase Invoice": "create_purchase_invoice",
+        "Customer": "create_customer",
+        "Supplier": "create_supplier",
+    }
+
+    def test_no_send_to_xero_saves_after_calling_the_creator(self):
+        checked = []
+        for doctype, (module, directory) in sorted(GATED_DOCTYPES.items()):
+            rel = os.path.join(
+                "erplite", module, "doctype", directory, directory + ".py")
+            path = os.path.join(APP_ROOT, rel)
+            with io.open(path, encoding="utf-8") as handle:
+                tree = ast.parse(handle.read(), rel)
+
+            fn = next(
+                (n for n in ast.walk(tree)
+                 if isinstance(n, ast.FunctionDef) and n.name == "send_to_xero"),
+                None)
+            self.assertIsNotNone(fn, "%s has no send_to_xero" % rel)
+
+            creator = self.CREATORS[doctype]
+            creator_line = next(
+                (n.lineno for n in ast.walk(fn)
+                 if isinstance(n, ast.Call)
+                 and isinstance(n.func, ast.Name) and n.func.id == creator),
+                None)
+            self.assertIsNotNone(
+                creator_line, "%s: send_to_xero never calls %s" % (rel, creator))
+
+            saves = [
+                n.lineno for n in ast.walk(fn)
+                if isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute) and n.func.attr == "save"
+                and n.lineno > creator_line
+            ]
+            self.assertEqual(
+                saves, [],
+                "%s: send_to_xero calls .save() at line(s) %s, after %s() at "
+                "line %d. That document was read before %s recorded the Xero "
+                "id with db.set_value, so the save is stale: frappe raises "
+                "TimestampMismatchError, the except Exception below re-labels "
+                "it as a failed send, and the request rolls back -- leaving the "
+                "record in Xero with its id unstored and duplicating it on the "
+                "next attempt (rev_6c9dc08cf7). Commit instead; accounts.py has "
+                "already written the fields."
+                % (rel, saves, creator, creator_line, creator))
+            checked.append(doctype)
+
+        # The assertion is only worth anything if it looked at all four.
+        self.assertEqual(sorted(checked), sorted(GATED_DOCTYPES))
 
 
 if __name__ == "__main__":
