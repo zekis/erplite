@@ -3,6 +3,49 @@ from frappe import _
 import json
 from datetime import datetime, timedelta
 
+# Who may see and change a todo.
+#
+# Frappe already answers this for ToDo, and its answer is the one the owner
+# asked for. frappe/desk/doctype/todo/todo.py has_permission returns
+#
+#     doc.allocated_to == user or doc.assigned_by == user or doc.owner == user
+#
+# and get_permission_query_conditions builds the same three-way OR in SQL. So
+# whoever a todo is with, whoever created it and whoever last handed it on may
+# each read and write it. That applies to anyone without a role granting ToDo
+# outright; ToDo's only non-automatic role is System Manager.
+#
+# This page used to apply a narrower rule of its own -- allocated_to only --
+# which is why handing a todo over locked its creator out of it. The helpers
+# below restate frappe's rule rather than invent one, so the page and the
+# framework agree.
+#
+# One asymmetry is worth stating because it is easy to get backwards:
+# `frappe.get_all` sets ignore_permissions=True (frappe/__init__.py), so
+# frappe's query conditions never run for the lists this page builds and the
+# filters here are the only thing deciding what a non-manager sees. Saves and
+# deletes go through Document, so frappe's has_permission does apply to those.
+MANAGER_ROLES = ["System Manager", "Administrator"]
+
+
+def _is_manager(user):
+    """True if `user` holds a role that grants ToDo outright."""
+    return bool(frappe.db.exists("Has Role", {
+        "parent": user,
+        "role": ["in", MANAGER_ROLES]
+    }))
+
+
+def _can_manage_todo(todo, user, user_is_manager):
+    """Frappe's own ToDo rule: it is yours if it is with you, by you, or from you."""
+    return bool(
+        user_is_manager
+        or todo.allocated_to == user
+        or todo.assigned_by == user
+        or todo.owner == user
+    )
+
+
 def get_context(context):
     """Get context data for the todo kanban page"""
     
@@ -14,51 +57,46 @@ def get_context(context):
         frappe.throw(_("Please login to access the Todo Kanban application"), frappe.PermissionError)
     
     # Check if user is a manager (has System Manager role or custom manager role)
-    is_manager = frappe.db.exists("Has Role", {
-        "parent": current_user,
-        "role": ["in", ["System Manager", "Administrator"]]
-    })
+    is_manager = _is_manager(current_user)
     
-    # Get all users for assignment dropdown (managers can see all, others see themselves)
-    if is_manager:
-        users = frappe.get_all("User", 
-            filters={"enabled": 1, "user_type": "System User"},
-            fields=["name", "full_name", "user_image"],
-            order_by="full_name"
-        )
-    else:
-        # Get current user data as dictionary, not document object
-        current_user_doc = frappe.get_doc("User", current_user)
-        users = [{
-            "name": current_user_doc.name,
-            "full_name": current_user_doc.full_name,
-            "user_image": current_user_doc.user_image
-        }]
+    # Everyone gets the whole list. Anyone may assign a todo to anyone, so
+    # everyone needs somebody to assign it to; a non-manager used to get a
+    # dropdown containing only themselves, which left create_todo honouring a
+    # choice the page could not offer.
+    users = frappe.get_all("User",
+        filters={"enabled": 1, "user_type": "System User"},
+        fields=["name", "full_name", "user_image"],
+        order_by="full_name"
+    )
     
     # Get todos based on user permissions
+    # `owner` is read as well as `assigned_by`, because both decide who may see
+    # and change the todo, and both are sent to the page below.
+    todo_fields = [
+        "name", "description", "status", "priority", "date",
+        "allocated_to", "color", "reference_type", "reference_name",
+        "assigned_by", "owner", "creation", "modified"
+    ]
     if is_manager:
         # Managers can see all todos
         todos = frappe.get_all("ToDo",
             filters={"status": ["!=", "Cancelled"]},  # Don't show cancelled by default
-            fields=[
-                "name", "description", "status", "priority", "date", 
-                "allocated_to", "color", "reference_type", "reference_name",
-                "assigned_by", "creation", "modified"
-            ],
+            fields=todo_fields,
             order_by="creation desc"
         )
     else:
-        # Regular users see only their assigned todos
+        # Everyone else sees the todos that are theirs by frappe's rule: with
+        # them, created by them, or handed on by them. Without the last two a
+        # user lost sight of work the moment they gave it to somebody else,
+        # which is the opposite of keeping track of it.
         todos = frappe.get_all("ToDo",
-            filters={
+            filters={"status": ["!=", "Cancelled"]},
+            or_filters={
                 "allocated_to": current_user,
-                "status": ["!=", "Cancelled"]
+                "assigned_by": current_user,
+                "owner": current_user
             },
-            fields=[
-                "name", "description", "status", "priority", "date", 
-                "allocated_to", "color", "reference_type", "reference_name",
-                "assigned_by", "creation", "modified"
-            ],
+            fields=todo_fields,
             order_by="creation desc"
         )
     
@@ -102,6 +140,14 @@ def get_context(context):
             "color": todo.color,
             "column": column,
             "user": user_info,
+            # The three fields the page decides its own permissions from. They
+            # were not sent before, so `todo.allocated_to` was undefined on
+            # every card and TodoDataManager.canEditTodo compared undefined
+            # with the current user -- always false, which hid the edit,
+            # delete, assign, date and drag controls from every non-manager.
+            "allocated_to": todo.allocated_to,
+            "assigned_by": todo.assigned_by,
+            "owner": todo.owner,
             "due_date": due_date_info,
             "reference": {
                 "type": todo.reference_type,
@@ -352,12 +398,8 @@ def update_todo_status(todo_name, new_status, new_column=None):
         
         # Check permissions
         current_user = frappe.session.user
-        is_manager = frappe.db.exists("Has Role", {
-            "parent": current_user,
-            "role": ["in", ["System Manager", "Administrator"]]
-        })
         
-        if not is_manager and todo.allocated_to != current_user:
+        if not _can_manage_todo(todo, current_user, _is_manager(current_user)):
             frappe.throw(_("You don't have permission to update this todo"))
         
         # Update status
@@ -380,15 +422,14 @@ def update_todo_status(todo_name, new_status, new_column=None):
 def create_todo(description, priority="Medium", allocated_to=None, date=None, color=None):
     """Create a new todo"""
     try:
-        # Check if user can create todos
         current_user = frappe.session.user
-        is_manager = frappe.db.exists("Has Role", {
-            "parent": current_user,
-            "role": ["in", ["System Manager", "Administrator"]]
-        })
         
-        # If not manager, can only create for themselves
-        if not is_manager:
+        # Anyone may assign a todo to anyone. This used to overwrite a
+        # non-manager's choice with themselves and still return success: True,
+        # so the assignee they picked in the New Todo dialog was discarded and
+        # nobody was told. An unset assignee still means "mine", which is what
+        # the quick-add buttons rely on.
+        if not allocated_to:
             allocated_to = current_user
         
         todo = frappe.get_doc({
@@ -419,12 +460,8 @@ def update_todo(todo_name, description=None, priority=None, allocated_to=None, d
         
         # Check permissions
         current_user = frappe.session.user
-        is_manager = frappe.db.exists("Has Role", {
-            "parent": current_user,
-            "role": ["in", ["System Manager", "Administrator"]]
-        })
         
-        if not is_manager and todo.allocated_to != current_user:
+        if not _can_manage_todo(todo, current_user, _is_manager(current_user)):
             frappe.throw(_("You don't have permission to update this todo"))
         
         # Update fields if provided
@@ -432,8 +469,14 @@ def update_todo(todo_name, description=None, priority=None, allocated_to=None, d
             todo.description = description
         if priority is not None:
             todo.priority = priority
-        if allocated_to is not None:
+        if allocated_to is not None and allocated_to != todo.allocated_to:
+            # Handing it on. Record who did so, so that person keeps both
+            # sight of it and the right to update it afterwards; the creator
+            # keeps theirs through `owner`, which never changes.
+            # `assigned_by_full_name` follows on its own -- frappe's todo.json
+            # fetches it from assigned_by.full_name.
             todo.allocated_to = allocated_to
+            todo.assigned_by = current_user
         if date is not None:
             todo.date = date
         if color is not None:
@@ -454,14 +497,14 @@ def delete_todo(todo_name):
     try:
         todo = frappe.get_doc("ToDo", todo_name)
         
-        # Check permissions
+        # Check permissions. Deliberately narrower than updating: the ask was
+        # that whoever created or assigned a todo keep track of it, not that
+        # they be able to destroy it once it is somebody else's. They can still
+        # set it to Cancelled through update_todo. Widening this to
+        # _can_manage_todo is a one-line change if that is what is wanted.
         current_user = frappe.session.user
-        is_manager = frappe.db.exists("Has Role", {
-            "parent": current_user,
-            "role": ["in", ["System Manager", "Administrator"]]
-        })
         
-        if not is_manager and todo.allocated_to != current_user:
+        if not _is_manager(current_user) and todo.allocated_to != current_user:
             frappe.throw(_("You don't have permission to delete this todo"))
         
         frappe.delete_doc("ToDo", todo_name)

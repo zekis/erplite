@@ -250,14 +250,32 @@ class TodoDataManager {
     
     /**
      * Check if current user can edit todo
+     *
+     * The same rule the server applies (_can_manage_todo in
+     * erplite/www/todo/index.py, which restates frappe's own ToDo
+     * permission): it is yours if it is with you, was created by you, or was
+     * handed on by you.
+     *
+     * These three fields reach the page only because get_context now sends
+     * them. It did not before, so `todo.allocated_to` was undefined on every
+     * card and this returned `undefined === currentUser` -- false -- which
+     * hid the edit, delete, assign, date and drag controls from every
+     * non-manager at all eight call sites that gate on it.
      */
     canEditTodo(todo) {
         if (this.isManager) return true;
-        return todo.allocated_to === this.currentUser;
+        return todo.allocated_to === this.currentUser
+            || todo.assigned_by === this.currentUser
+            || todo.owner === this.currentUser;
     }
     
     /**
      * Check if current user can delete todo
+     *
+     * Narrower than canEditTodo, matching delete_todo on the server: a
+     * manager, or the person it is allocated to. Subject to the same
+     * undefined-field bug as above until get_context began sending
+     * `allocated_to`.
      */
     canDeleteTodo(todo) {
         if (this.isManager) return true;
