@@ -102,14 +102,15 @@ SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "public"}
 #     (erplite/www/todo/index.py:299-305, erplite/public/js/todo/utils/TodoUtils.js:128-137).
 #
 # WHERE THOSE TWO EXTRA OPTIONS LIVE: as of `erplite.patches.declare_todo_status_options`,
-# in a Property Setter this app declares. Before that patch they existed only in `tabDocField`
-# on the live database.
-# There is no Property Setter on ToDo (the only ones on this site are two on
-# `Project.naming_series`), erplite declares them nowhere (`fixtures = ["Workspace"]`, empty
-# patches.txt, no todo.json, no make_property_setter), and there is no frappe fork to hold
-# them.
+# in a Property Setter this app declares (see DECIDED below).
 #
-# CORRECTION, 6 Oct 2026 (Ellis). The paragraph above used to end "which a `bench migrate`
+# Before that patch they existed only as a hand-edited row in `tabDocField` on the live
+# database. There was no Property Setter on ToDo (the only ones on the site were two on
+# `Project.naming_series`), erplite declared them nowhere (`fixtures = ["Workspace"]`, an
+# empty patches.txt, no todo.json, no make_property_setter), and there is no frappe fork to
+# hold them. That is what made the upgrade below silent, and it is the state the patch ends.
+#
+# CORRECTION, 5 Oct 2026 (Ellis). The paragraph above used to end "which a `bench migrate`
 # would reset to frappe's three". That was the wrong trigger and it is worth being exact
 # about, because the wrong trigger makes a routine deploy look dangerous and a frappe upgrade
 # look safe. It is the other way round. Traced read-only through frappe's own source at the
