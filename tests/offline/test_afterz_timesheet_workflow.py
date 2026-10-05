@@ -23,11 +23,11 @@ it a Draft row with both times already set on all five of its timesheet paths:
 
 | Afterz call (afterz/afterz_api.py)         | what it does                        | under e585a5b                              |
 |--------------------------------------------|-------------------------------------|--------------------------------------------|
-| `create_timesheet_entry` (:38)             | insert Draft, both times set        | **locked Submitted on creation**           |
-| `update_timesheet_entry` (:82)             | move/resize the block, save         | **locked Submitted on first edit**         |
-| `submit_week_entries` (:246)               | filter `status == "Draft"`          | **finds nothing: "No draft entries found"**|
-| `reject_entry_with_reason` (:360)          | `status = "Draft"`, then `save()`   | **back to Submitted in the same save**     |
-| `unapprove_entry` (:394)                   | `status = "Draft"`, then `save()`   | **back to Submitted in the same save**     |
+| `create_timesheet_entry` (:44)             | insert Draft, both times set        | **locked Submitted on creation**           |
+| `update_timesheet_entry` (:88)             | move/resize the block, save         | **locked Submitted on first edit**         |
+| `submit_week_entries` (:271)               | filter `status == "Draft"`          | **finds nothing: "No draft entries found"**|
+| `reject_entry_with_reason` (:443)          | `status = "Draft"`, then `save()`   | **back to Submitted in the same save**     |
+| `unapprove_entry` (:477)                   | `status = "Draft"`, then `save()`   | **back to Submitted in the same save**     |
 
 The last two are the worst of it, and worse than "could not go back to Draft":
 the save succeeds, the rejection notes are written, and the status the hook leaves
@@ -42,12 +42,27 @@ may assign it. erplite's `check_out()` is the one caller that genuinely means
 
 ## What is NOT asserted here
 
-That these are the exact lines Afterz runs today. GitHub's `zekis/afterz` was last
-pushed **15 Aug 2025** (dd78fe0), so the deployed copy may differ. So the tests
-below pin the **workflow Afterz performs** -- a Draft entry with both times can be
-created, edited, submitted in a week batch, rejected back to Draft and un-approved
-back to Draft -- rather than any line number in it. Those five states are what the
-UI is built on; a change in Afterz's internals does not change them.
+That these are the exact lines Afterz runs today. The tests below pin the
+**workflow Afterz performs** -- a Draft entry with both times can be created,
+edited, submitted in a week batch, rejected back to Draft and un-approved back to
+Draft -- rather than any line number in it. Those five states are what the UI is
+built on; a change in Afterz's internals does not change them.
+
+That choice has since paid for itself, and the measurement is worth recording
+because the version it replaces was wrong. This file used to say Afterz "was last
+pushed 15 Aug 2025 (dd78fe0), so the deployed copy may differ" -- a date read off
+GitHub at the time. Afterz is now one of the office's repositories and it moves
+daily: its default branch is **develop**, whose tip was `caa000d` on 6 Oct 2026,
+three merged pull requests after that claim. Every line number in the table above
+had moved with it (`create_timesheet_entry` 38 -> 44, `update_timesheet_entry`
+82 -> 88, `submit_week_entries` 246 -> 271, `reject_entry_with_reason` 360 -> 443,
+`unapprove_entry` 394 -> 477). **Not one of the five behaviours had.** Read from
+`origin/develop` at `caa000d`: `submit_week_entries` still filters
+`'status': 'Draft'`, and `reject_entry_with_reason` and `unapprove_entry` still
+assign `doc.status = 'Draft'` and save.
+
+So the line numbers below are a sketch of where to look, not a claim, and they
+are the part of this file to distrust. The five states are the claim.
 
 `TestNoSaveHookOwnsStatus` is the general form, and it is the one that stops this
 recurring: it fails if any pre-save hook on Timesheet Entry assigns `status` again,
@@ -284,7 +299,7 @@ class WorkflowTestCase(unittest.TestCase):
     # -- Afterz's five calls, as afterz/afterz_api.py performs them -----------
 
     def afterz_create(self, **overrides):
-        """afterz_api.create_timesheet_entry (:38-78): get_doc({...}).insert()."""
+        """afterz_api.create_timesheet_entry (:44 at caa000d): get_doc({...}).insert()."""
         data = dict(employee=EMPLOYEE, project="5gofgdoomv", activity="g68cfomvvu",
                     check_in_time=DAY_IN, check_out_time=DAY_OUT,
                     duration_hours=1, description="Working on: PO-0392",
@@ -294,7 +309,7 @@ class WorkflowTestCase(unittest.TestCase):
         return doc.insert()
 
     def afterz_update(self, name, **kwargs):
-        """afterz_api.update_timesheet_entry (:82-126): setattr then save()."""
+        """afterz_api.update_timesheet_entry (:88 at caa000d): setattr then save()."""
         doc = self._get_doc("Timesheet Entry", name)
         for key, value in kwargs.items():
             if hasattr(doc, key) and key != "name":
@@ -302,7 +317,7 @@ class WorkflowTestCase(unittest.TestCase):
         return doc.save()
 
     def afterz_submit_week(self, employee, start, end):
-        """afterz_api.submit_week_entries (:246-287)."""
+        """afterz_api.submit_week_entries (:271 at caa000d)."""
         names = [r.name for r in self.frappe.get_all(
             "Timesheet Entry", fields=["name"],
             filters={"employee": employee, "status": "Draft",
@@ -314,7 +329,7 @@ class WorkflowTestCase(unittest.TestCase):
         return len(names)
 
     def afterz_approve(self, name):
-        """afterz_api.approve_all_entries (:291-356), one entry's worth."""
+        """afterz_api.approve_all_entries, one entry's worth."""
         doc = self._get_doc("Timesheet Entry", name)
         doc.status = "Approved"
         doc.approved_by = APPROVER
@@ -322,7 +337,7 @@ class WorkflowTestCase(unittest.TestCase):
         return doc
 
     def afterz_reject(self, name, reason):
-        """afterz_api.reject_entry_with_reason (:360-390)."""
+        """afterz_api.reject_entry_with_reason (:443 at caa000d)."""
         doc = self._get_doc("Timesheet Entry", name)
         doc.status = "Draft"
         doc.approved_by = APPROVER
@@ -331,7 +346,7 @@ class WorkflowTestCase(unittest.TestCase):
         return doc
 
     def afterz_unapprove(self, name):
-        """afterz_api.unapprove_entry (:394-431)."""
+        """afterz_api.unapprove_entry (:477 at caa000d)."""
         doc = self._get_doc("Timesheet Entry", name)
         if doc.status != "Approved":
             raise ValidationError("Only approved entries can be un-approved")
@@ -673,6 +688,78 @@ class TestTheApprovalGate(WorkflowTestCase):
         result = self.module.approve_timesheet(name)
         self.assertTrue(result["success"], result["message"])
 
+    # -- the reject half of the same gate ----------------------------------
+    # Every test above drives `approve_timesheet`. `reject_timesheet` applies
+    # the same rule from its own copy of the same two lines -- byte-identical
+    # except for the word in the refusal -- and had one test, the happy path.
+    # Fault injection found five regressions only reject could have, all green:
+    # its gate deleted, inverted, warning instead of refusing, its
+    # write-permission hatch removed, and its Submitted requirement dropped.
+    # Two copies of a rule need two sets of tests; the second copy is free to
+    # be wrong for exactly as long as nobody asks it the questions.
+
+    def test_somebody_who_is_not_the_approver_cannot_reject(self):
+        name = self._submitted_entry()
+        self.frappe.session.user = self.NOBODY
+        result = self.module.reject_timesheet(name, "not mine to judge")
+        self.assertFalse(result["success"])
+        self.assertIn("timesheet approver", result["message"])
+        self.assertEqual(
+            self.stored(name).status, "Submitted",
+            "a refused rejection must leave the entry where it was -- a reject "
+            "that half-happens takes the entry out of the approval queue "
+            "without telling anyone it was rejected")
+
+    def test_the_employee_is_not_the_rejecter_just_by_owning_the_entry(self):
+        name = self._submitted_entry()
+        result = self.module.reject_timesheet(name)   # session.user is EMPLOYEE
+        self.assertFalse(result["success"])
+        self.assertEqual(self.stored(name).status, "Submitted")
+
+    def test_write_permission_still_rejects_without_being_the_approver(self):
+        """reject's `or not frappe.has_permission(...)` hatch, pinned as it
+        stands -- the mirror of the approve test above."""
+        name = self._submitted_entry()
+        self.frappe.session.user = self.NOBODY
+        self.frappe_pkg.has_permission = lambda *a, **k: True
+        result = self.module.reject_timesheet(name)
+        self.assertTrue(result["success"], result["message"])
+
+    def test_reject_records_who_rejected_and_why(self):
+        name = self._submitted_entry()
+        self.frappe.session.user = self.STRANGER
+        self.module.reject_timesheet(name, "Wrong activity")
+        row = self.stored(name)
+        self.assertEqual(
+            row.approved_by, self.STRANGER,
+            "the entry must say who rejected it: the employee is being asked "
+            "to change it and has to know who to ask about it")
+        self.assertEqual(row.approval_notes, "Wrong activity")
+
+    # -- both halves act only on a Submitted entry --------------------------
+    # Nothing above ever offered either function an entry in another state, so
+    # dropping the `!= "Submitted"` guard from either one was invisible. It
+    # matters in both directions: approving a Draft signs off hours the
+    # employee has not finished entering, and rejecting one sends back
+    # something never submitted.
+
+    def test_approve_refuses_an_entry_that_was_never_submitted(self):
+        doc = self.afterz_create()
+        self.assertEqual(self.stored(doc.name).status, "Draft")
+        self.frappe.session.user = self.STRANGER
+        result = self.module.approve_timesheet(doc.name)
+        self.assertFalse(result["success"])
+        self.assertIn("Only submitted", result["message"])
+        self.assertEqual(self.stored(doc.name).status, "Draft")
+
+    def test_reject_refuses_an_entry_that_was_never_submitted(self):
+        doc = self.afterz_create()
+        self.frappe.session.user = self.STRANGER
+        result = self.module.reject_timesheet(doc.name)
+        self.assertFalse(result["success"])
+        self.assertIn("Only submitted", result["message"])
+        self.assertEqual(self.stored(doc.name).status, "Draft")
+
     def test_the_gate_does_not_name_the_removed_field(self):
         """The fault-injection half, so a green run above means something.
 
@@ -686,6 +773,143 @@ class TestTheApprovalGate(WorkflowTestCase):
             source = handle.read().decode("utf-8")
         self.assertNotIn("project_manager", source)
         self.assertIn("project.timesheet_approver", source)
+
+
+
+class TestCheckOutGuards(WorkflowTestCase):
+    """check_out's two refusals, and the two validate() calls nothing drove.
+
+    Found by fault injection (`tests/faultinject`, target `afterz_workflow`):
+    deleting check_out's ownership check, its is_active check, the
+    `validate_times()` call or the `check_overlapping_entries()` call left all
+    22 tests in this file passing. Every entry the tests above build is
+    well-formed, owned by the session user and alone on the clock, so the
+    guards against the other cases were never asked anything.
+
+    These are guards Afterz depends on rather than erplite niceties: Afterz
+    inserts and saves Timesheet Entry rows directly, so the controller's checks
+    are the only ones its rows meet.
+    """
+
+    OTHER = "someone.else@tierneymorris.com.au"
+
+    def _open_entry(self, when):
+        """An entry with a check-in and no check-out: `is_active` 1."""
+        doc = self._get_doc(dict(
+            doctype="Timesheet Entry", employee=EMPLOYEE, project="5gofgdoomv",
+            activity="g68cfomvvu", check_in_time=when, status="Draft"))
+        return doc.insert()
+
+    def test_check_out_refuses_somebody_elses_entry(self):
+        created = self.module.check_in("5gofgdoomv", "g68cfomvvu")
+        name = created["timesheet_id"]
+        self.frappe.session.user = self.OTHER
+        result = self.module.check_out(name, "finishing your work for you")
+        self.assertFalse(result["success"])
+        self.assertIn("your own", result["message"])
+        row = self.stored(name)
+        self.assertFalse(
+            row.get("check_out_time"),
+            "a refused check-out must not write a check-out time: it would "
+            "close somebody else's entry and fix their billable hours")
+        self.assertEqual(row.status, "Draft")
+        self.assertEqual(row.is_active, 1)
+
+    def test_check_out_refuses_an_entry_that_is_already_finished(self):
+        created = self.module.check_in("5gofgdoomv", "g68cfomvvu")
+        name = created["timesheet_id"]
+        first = self.module.check_out(name)
+        self.assertTrue(first["success"], first)
+        finished = self.stored(name)
+
+        again = self.module.check_out(name, "second go")
+        self.assertFalse(again["success"])
+        self.assertIn("not active", again["message"])
+        self.assertEqual(
+            self.stored(name).check_out_time, finished.check_out_time,
+            "a second check-out must not rewrite the time: the clock has moved "
+            "on, so it would silently inflate the hours on a submitted entry")
+
+    def test_check_out_before_check_in_is_refused(self):
+        """validate_times(). Every entry above is well-ordered, so dropping the
+        call from validate() changed nothing any test could see."""
+        with self.assertRaises(ValidationError) as caught:
+            self._get_doc(dict(
+                doctype="Timesheet Entry", employee=EMPLOYEE,
+                project="5gofgdoomv", activity="g68cfomvvu",
+                check_in_time=DAY_OUT, check_out_time=DAY_IN,
+                status="Draft")).insert()
+        self.assertIn("Check Out Time must be after", str(caught.exception))
+
+    def test_a_second_open_entry_is_refused_as_an_overlap(self):
+        """check_overlapping_entries().
+
+        Driven by inserting directly rather than by calling check_in() twice,
+        and that is the whole point: check_in() has an active-entry guard of its
+        own, so going through it measures that guard and leaves the
+        controller's untested. Afterz never calls check_in(), so the
+        controller's is the only one its rows meet.
+        """
+        first = self._open_entry(DAY_IN)
+        with self.assertRaises(ValidationError) as caught:
+            self._open_entry(DAY_IN + datetime.timedelta(hours=3))
+        message = str(caught.exception)
+        self.assertIn("already has an active timesheet entry", message)
+        self.assertIn(first.name, message,
+                      "the refusal must name the entry to check out first")
+
+    def test_a_finished_entry_is_not_an_overlap(self):
+        """The other side of the same rule, so the fix for it cannot be
+        'refuse everything': a closed entry must not block the next check-in."""
+        self.afterz_create()
+        later = self._open_entry(DAY_OUT + datetime.timedelta(hours=1))
+        self.assertEqual(self.stored(later.name).is_active, 1)
+
+
+class TestWhoseHoursTheseAre(WorkflowTestCase):
+    """`employee` answers "whose hours are these", on every save Afterz makes.
+
+    Both faults below were green across all 22 tests. The second is the one
+    worth the class: all four of Afterz's approval-side calls save an entry
+    whose `employee` is somebody else, so a `set_employee_default` that
+    assigned instead of only filling a blank would re-book the hours against
+    whoever clicked -- an approver's click silently transferring the time to
+    themselves, with the entry still reading Approved.
+    """
+
+    OTHER = "someone.else@tierneymorris.com.au"
+
+    def test_a_blank_employee_becomes_the_session_user(self):
+        doc = self.afterz_create(employee="")
+        self.assertEqual(
+            self.stored(doc.name).employee, EMPLOYEE,
+            "an entry saved with no employee must be booked to whoever saved "
+            "it; `employee` is what every week view and dashboard filters on, "
+            "so a blank one is hours that belong to nobody")
+
+    def test_saving_somebody_elses_entry_does_not_move_their_hours_to_you(self):
+        doc = self.afterz_create()
+        self.frappe.session.user = self.OTHER
+        self.frappe_pkg.has_permission = lambda *a, **k: True
+        self.afterz_approve(doc.name)
+        row = self.stored(doc.name)
+        self.assertEqual(row.status, "Approved")
+        self.assertEqual(
+            row.employee, EMPLOYEE,
+            "approving an entry must not re-book it against the approver: "
+            "`employee` is only ever defaulted when it is blank, never "
+            "assigned, because every approval-side save in Afterz is a save of "
+            "somebody else's row")
+
+    def test_submitting_a_week_does_not_move_the_hours_either(self):
+        """The same claim on the path that saves the most rows at once."""
+        doc = self.afterz_create()
+        self.frappe.session.user = self.OTHER
+        self.frappe_pkg.has_permission = lambda *a, **k: True
+        count = self.afterz_submit_week(
+            EMPLOYEE, "2026-10-05 00:00:00", "2026-10-11 23:59:59")
+        self.assertEqual(count, 1)
+        self.assertEqual(self.stored(doc.name).employee, EMPLOYEE)
 
 
 if __name__ == "__main__":

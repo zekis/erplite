@@ -2653,6 +2653,336 @@ TODO_STATUS_PATCH = Target(
 )
 
 
+# --- afterz's timesheet workflow ------------------------------------------
+# e585a5b moved the check-out auto-submit into `before_save`, which runs on
+# EVERY save -- including all five of Afterz's timesheet paths, each of which
+# hands it a Draft row with both times already set. So creation locked the
+# entry, submit-week found nothing, and reject and un-approve landed back on
+# "Submitted": a rejection that silently re-queues the entry it just rejected,
+# with no exception and nothing in the Error Log.
+#
+# The claim the test file makes is not "before_save is empty" but the general
+# one: `status` is a workflow state other apps own, so NO hook on the save path
+# may assign it, and the caller that means it says so itself. That is why the
+# faults below put the submit in seven different hooks rather than only the one
+# it was in -- a test that notices `before_save` and not `validate` is guarding
+# a line, not a rule.
+#
+# The approval gate in the same file is the other half (rev_e73092bfb5): 8126278
+# removed `project_manager` from the Project DocType, so the gate that still
+# read it refused the one person Afterz shows an Approve button to.
+
+AFZ_SUBMIT_IF_DRAFT = (
+    '        if self.check_in_time and self.check_out_time and self.status == "Draft":\n'
+    '            self.status = "Submitted"\n')
+
+# before_save's body, as it stands: the end of its docstring, the leftover
+# comment, and the `pass` that the test file insists on keeping.
+AFZ_BEFORE_SAVE_BODY = ('        # Date field has been removed - no longer needed\n'
+                        '        pass\n')
+
+AFZ_VALIDATE_CALLS = ('        self.calculate_duration()\n'
+                      '        self.validate_times()\n'
+                      '        self.check_overlapping_entries()\n')
+
+AFZ_DURATION_CALL = "        self.calculate_duration()\n"
+AFZ_DEFAULT_CALL = "        self.set_employee_default()\n"
+AFZ_OVERLAP_CALL = "        self.check_overlapping_entries()\n"
+
+AFZ_DURATION_BOTH = ('            self.duration_hours = time_diff_in_hours('
+                     'self.check_out_time, self.check_in_time)\n'
+                     '            self.is_active = 0\n')
+AFZ_DURATION_OPEN = ('            self.is_active = 1\n'
+                     '            self.duration_hours = 0\n'
+                     '        else:\n')
+
+AFZ_DEFAULT_RULE = ('        if not self.employee:\n'
+                    '            self.employee = frappe.session.user\n')
+
+AFZ_SELF_EXCLUDE = '                "name": ["!=", self.name or ""]\n'
+AFZ_OVERLAP_BLOCK = (
+    '        active_entries = frappe.get_all("Timesheet Entry", \n'
+    '            filters={\n'
+    '                "employee": self.employee,\n'
+    '                "is_active": 1,\n'
+    '                "name": ["!=", self.name or ""]\n'
+    '            },\n'
+    '            fields=["name", "check_in_time", "project", "activity"]\n'
+    '        )\n'
+    '        \n'
+    '        if active_entries:\n'
+    '            entry = active_entries[0]\n'
+)
+
+# check_out's submit, and the save it must come before.
+AFZ_CHECKOUT_SUBMIT = ('        if timesheet.status == "Draft":\n'
+                       '            timesheet.status = "Submitted"\n')
+AFZ_CHECKOUT_OWNERSHIP = ('        if timesheet.employee != frappe.session.user:\n'
+                          '            frappe.throw(_("You can only check out your own '
+                          'timesheet entries"))\n')
+AFZ_CHECKOUT_ACTIVE = ('        if not timesheet.is_active:\n'
+                       '            frappe.throw(_("This timesheet entry is not active"))\n')
+
+# The gate is written out TWICE, once in approve_timesheet and once in
+# reject_timesheet, and the two lines are byte-identical. Only the refusal
+# message below each one tells them apart -- which is why every pattern here
+# carries it, and why each fault has to be written twice to cover the rule.
+AFZ_APPROVE_GATE = (
+    '        if project.timesheet_approver != frappe.session.user and not '
+    'frappe.has_permission("Timesheet Entry", "write"):\n'
+    '            frappe.throw(_("Only the timesheet approver can approve '
+    'timesheets for this project"))\n')
+AFZ_REJECT_GATE = (
+    '        if project.timesheet_approver != frappe.session.user and not '
+    'frappe.has_permission("Timesheet Entry", "write"):\n'
+    '            frappe.throw(_("Only the timesheet approver can reject '
+    'timesheets for this project"))\n')
+AFZ_APPROVE_SUBMITTED = ('        if timesheet.status != "Submitted":\n'
+                         '            frappe.throw(_("Only submitted timesheets '
+                         'can be approved"))\n')
+AFZ_REJECT_SUBMITTED = ('        if timesheet.status != "Submitted":\n'
+                        '            frappe.throw(_("Only submitted timesheets '
+                        'can be rejected"))\n')
+AFZ_APPROVE_WRITES = ('        timesheet.status = "Approved"\n'
+                      '        timesheet.approved_by = frappe.session.user\n'
+                      '        timesheet.approval_date = now_datetime()\n'
+                      '        if approval_notes:\n'
+                      '            timesheet.approval_notes = approval_notes\n')
+AFZ_REJECT_WRITES = ('        timesheet.status = "Rejected"\n'
+                     '        timesheet.approved_by = frappe.session.user\n')
+AFZ_APPROVE_SWALLOW = ('    except Exception as e:\n'
+                       '        frappe.log_error("Timesheet Approval", str(e))\n')
+
+
+AFTERZ_WORKFLOW = Target(
+    test="tests/offline/test_afterz_timesheet_workflow.py",
+    faults=[
+        # --- the regression itself, restored verbatim ---------------------
+        Fault("e585a5b restored: before_save auto-submits, so creation locks "
+              "the entry and reject/un-approve land back on Submitted",
+              True, [(TSE, AFZ_BEFORE_SAVE_BODY,
+                      AFZ_SUBMIT_IF_DRAFT)]),
+
+        # --- the SAME rule in every other save hook -----------------------
+        # The claim is not "before_save is empty", it is "no save hook owns
+        # status". A test that notices one hook and not the next six is
+        # guarding a line. Both halves of the file are in play here: the
+        # behavioural tests catch the hooks the driver runs, the AST test
+        # catches the ones it does not.
+        Fault("the submit moved into validate() instead", True, [
+            (TSE, AFZ_VALIDATE_CALLS, AFZ_VALIDATE_CALLS + AFZ_SUBMIT_IF_DRAFT)]),
+        Fault("the submit moved into before_validate()", True, [
+            (TSE, "    def validate(self):\n",
+             "    def before_validate(self):\n" + AFZ_SUBMIT_IF_DRAFT
+             + "\n    def validate(self):\n")]),
+        Fault("the submit moved into before_insert(), so only creation locks",
+              True, [
+                  (TSE, "    def calculate_duration(self):\n",
+                   "    def before_insert(self):\n" + AFZ_SUBMIT_IF_DRAFT
+                   + "\n    def calculate_duration(self):\n")]),
+        Fault("the submit moved back into on_update(), where it is discarded "
+              "(only the source test can see this one)", True, [
+                  (TSE, "    def calculate_duration(self):\n",
+                   "    def on_update(self):\n" + AFZ_SUBMIT_IF_DRAFT
+                   + "\n    def calculate_duration(self):\n")]),
+        Fault("the submit moved into on_change()", True, [
+            (TSE, "    def calculate_duration(self):\n",
+             "    def on_change(self):\n" + AFZ_SUBMIT_IF_DRAFT
+             + "\n    def calculate_duration(self):\n")]),
+        Fault("the submit moved into after_insert()", True, [
+            (TSE, "    def calculate_duration(self):\n",
+             "    def after_insert(self):\n" + AFZ_SUBMIT_IF_DRAFT
+             + "\n    def calculate_duration(self):\n")]),
+        Fault("the submit moved into on_update_after_submit()", True, [
+            (TSE, "    def calculate_duration(self):\n",
+             "    def on_update_after_submit(self):\n" + AFZ_SUBMIT_IF_DRAFT
+             + "\n    def calculate_duration(self):\n")]),
+
+        # --- the same rule, spelled so the AST test cannot see it ---------
+        # `setattr` is an assignment the source test does not recognise, and an
+        # augmented assignment is one it does. Two faults, because they are two
+        # different claims about which half of the file is load-bearing.
+        Fault("before_save submits via setattr, invisible to the source test",
+              True, [(TSE, AFZ_BEFORE_SAVE_BODY,
+                      '        if self.check_in_time and self.check_out_time '
+                      'and self.status == "Draft":\n'
+                      '            setattr(self, "status", "Submitted")\n')]),
+        Fault("before_save appends to status (an augmented assignment)",
+              True, [(TSE, AFZ_BEFORE_SAVE_BODY,
+                      '        if self.status == "Draft":\n'
+                      '            self.status += "ted"\n')]),
+
+        # --- the rule weakened rather than moved --------------------------
+        Fault("before_save submits unconditionally, ignoring the times",
+              True, [(TSE, AFZ_BEFORE_SAVE_BODY,
+                      '        self.status = "Submitted"\n')]),
+        Fault("before_save submits only on creation: the entry is locked the "
+              "moment Afterz drags it onto the calendar", True, [
+                  (TSE, AFZ_BEFORE_SAVE_BODY,
+                   '        if self.is_new() and self.status == "Draft":\n'
+                   '            self.status = "Submitted"\n')]),
+        Fault("before_save re-submits only on later saves: creation is fine, "
+              "reject and un-approve are no-ops", True, [
+                  (TSE, AFZ_BEFORE_SAVE_BODY,
+                   '        if not self.is_new() and self.status == "Draft":\n'
+                   '            self.status = "Submitted"\n')]),
+        Fault("the hook deleted outright, so the next person finds no note",
+              True, [(TSE, "    def before_save(self):\n",
+                      "    def _why_before_save_is_empty(self):\n")]),
+
+        # --- check_out: the half of e585a5b that was right ----------------
+        Fault("check_out stops submitting, so approve_timesheet can never be "
+              "entered", True, [(TSE, AFZ_CHECKOUT_SUBMIT, "")]),
+        Fault("check_out submits AFTER save(), so the status is discarded "
+              "exactly as it was before e585a5b", True, [
+                  (TSE, AFZ_CHECKOUT_SUBMIT + "        \n" + "        timesheet.save()\n",
+                   "        timesheet.save()\n" + AFZ_CHECKOUT_SUBMIT)]),
+        Fault("check_out submits whatever the status was, so checking out "
+              "un-approves an approved entry", True, [
+                  (TSE, AFZ_CHECKOUT_SUBMIT,
+                   '        timesheet.status = "Submitted"\n')]),
+        Fault("check_out's ownership check removed: anyone may check out "
+              "anyone's entry", True, [(TSE, AFZ_CHECKOUT_OWNERSHIP, "")]),
+        Fault("check_out's is_active check removed, so a finished entry can be "
+              "checked out again and its times rewritten", True, [
+                  (TSE, AFZ_CHECKOUT_ACTIVE, "")]),
+
+        # --- validate() must still do its real job ------------------------
+        # The fix is "take the status rule out", and the way to get that wrong
+        # is to take something else out with it.
+        Fault("calculate_duration no longer called: Afterz's hours are never "
+              "derived", True, [(TSE, AFZ_DURATION_CALL, "")]),
+        Fault("duration computed backwards, so every entry is negative",
+              True, [(TSE,
+                      'time_diff_in_hours(self.check_out_time, self.check_in_time)',
+                      'time_diff_in_hours(self.check_in_time, self.check_out_time)')]),
+        Fault("a finished entry left is_active, so the next check-in is "
+              "refused as an overlap", True, [
+                  (TSE, AFZ_DURATION_BOTH,
+                   AFZ_DURATION_BOTH.replace("self.is_active = 0",
+                                             "self.is_active = 1"))]),
+        Fault("a checked-in entry not marked active, so check_out refuses it",
+              True, [(TSE, AFZ_DURATION_OPEN,
+                      AFZ_DURATION_OPEN.replace("self.is_active = 1",
+                                                "self.is_active = 0"))]),
+        Fault("validate_times no longer called, so check-out before check-in "
+              "is accepted", True, [(TSE, "        self.validate_times()\n", "")]),
+        Fault("the overlap check loses its self-exclusion, so saving an entry "
+              "clashes with itself", True, [(TSE, AFZ_SELF_EXCLUDE,
+                                             '                "name": ["!=", ""]\n')]),
+        Fault("the overlap check no longer called", True,
+              [(TSE, AFZ_OVERLAP_CALL, "")]),
+        Fault("employee defaulting dropped", True, [(TSE, AFZ_DEFAULT_RULE, "")]),
+        Fault("employee overwritten with the session user on every save, so "
+              "approving someone's timesheet moves their hours to you",
+              True, [(TSE, AFZ_DEFAULT_RULE,
+                      "        self.employee = frappe.session.user\n")]),
+
+        # --- the approval gate: TWICE, because it is written twice ---------
+        Fault("approve reads a field the DocType no longer declares",
+              True, [(TSE, AFZ_APPROVE_GATE,
+                      AFZ_APPROVE_GATE.replace("project.timesheet_approver",
+                                               "project.project_manager"))]),
+        Fault("reject reads a field the DocType no longer declares",
+              True, [(TSE, AFZ_REJECT_GATE,
+                      AFZ_REJECT_GATE.replace("project.timesheet_approver",
+                                              "project.project_manager"))]),
+        Fault("approve's gate deleted: anyone may approve", True,
+              [(TSE, AFZ_APPROVE_GATE, "")]),
+        Fault("reject's gate deleted: anyone may reject", True,
+              [(TSE, AFZ_REJECT_GATE, "")]),
+        Fault("approve's gate inverted: only people who are NOT the approver "
+              "may approve", True, [
+                  (TSE, AFZ_APPROVE_GATE,
+                   AFZ_APPROVE_GATE.replace(
+                       "project.timesheet_approver != frappe.session.user",
+                       "project.timesheet_approver == frappe.session.user"))]),
+        Fault("reject's gate inverted", True, [
+            (TSE, AFZ_REJECT_GATE,
+             AFZ_REJECT_GATE.replace(
+                 "project.timesheet_approver != frappe.session.user",
+                 "project.timesheet_approver == frappe.session.user"))]),
+        Fault("approve's write-permission hatch removed, so a Projects "
+              "Manager loses approval", True, [
+                  (TSE, AFZ_APPROVE_GATE,
+                   AFZ_APPROVE_GATE.replace(
+                       ' and not frappe.has_permission("Timesheet Entry", "write")',
+                       ''))]),
+        Fault("reject's write-permission hatch removed", True, [
+            (TSE, AFZ_REJECT_GATE,
+             AFZ_REJECT_GATE.replace(
+                 ' and not frappe.has_permission("Timesheet Entry", "write")',
+                 ''))]),
+        Fault("approve's gate warns instead of refusing, so the approval still "
+              "happens", True, [
+                  (TSE, AFZ_APPROVE_GATE,
+                   AFZ_APPROVE_GATE.replace("frappe.throw(_(",
+                                            "frappe.msgprint(_("))]),
+        Fault("reject's gate warns instead of refusing", True, [
+            (TSE, AFZ_REJECT_GATE,
+             AFZ_REJECT_GATE.replace("frappe.throw(_(",
+                                     "frappe.msgprint(_("))]),
+        Fault("approve stops requiring Submitted, so a Draft can be approved "
+              "straight past the employee", True,
+              [(TSE, AFZ_APPROVE_SUBMITTED, "")]),
+        Fault("reject stops requiring Submitted", True,
+              [(TSE, AFZ_REJECT_SUBMITTED, "")]),
+
+        # --- what approve and reject actually write ------------------------
+        Fault("approve leaves the entry Submitted", True, [
+            (TSE, '        timesheet.status = "Approved"\n',
+             '        timesheet.status = "Submitted"\n')]),
+        Fault("reject leaves the entry Submitted, so it stays in the queue",
+              True, [(TSE, '        timesheet.status = "Rejected"\n',
+                      '        timesheet.status = "Submitted"\n')]),
+        Fault("approve does not record who approved", True, [
+            (TSE, AFZ_APPROVE_WRITES,
+             AFZ_APPROVE_WRITES.replace(
+                 "        timesheet.approved_by = frappe.session.user\n", ""))]),
+        Fault("reject does not record who rejected", True, [
+            (TSE, AFZ_REJECT_WRITES,
+             AFZ_REJECT_WRITES.replace(
+                 "        timesheet.approved_by = frappe.session.user\n", ""))]),
+        Fault("approve discards the notes it was given", True, [
+            (TSE, AFZ_APPROVE_WRITES,
+             AFZ_APPROVE_WRITES.replace(
+                 "            timesheet.approval_notes = approval_notes\n",
+                 "            pass\n"))]),
+        Fault("a refused approval saves anyway before throwing", True, [
+            (TSE, AFZ_APPROVE_SUBMITTED,
+             '        timesheet.status = "Approved"\n'
+             '        timesheet.save()\n' + AFZ_APPROVE_SUBMITTED)]),
+
+        # --- negative controls ---------------------------------------------
+        # Real edits that change no behaviour. A control going red is a finding
+        # about the test file, not about the code: it means the file is pinning
+        # the way the controller is written rather than what it does.
+        Fault("CONTROL: the overlap query's local renamed (must stay green)",
+              False, [(TSE, AFZ_OVERLAP_BLOCK,
+                       AFZ_OVERLAP_BLOCK.replace("active_entries",
+                                                 "clashing_entries"))]),
+        Fault("CONTROL: check_out reads the session user through a local "
+              "(must stay green)", False, [
+                  (TSE, AFZ_CHECKOUT_OWNERSHIP,
+                   "        session_user = frappe.session.user\n"
+                   + AFZ_CHECKOUT_OWNERSHIP.replace(
+                       "frappe.session.user", "session_user"))]),
+        Fault("CONTROL: the two derived-field branches reordered into a "
+              "positive test (must stay green)", False, [
+                  (TSE, '        if self.check_in_time and self.check_out_time:\n'
+                        '            self.duration_hours = time_diff_in_hours('
+                        'self.check_out_time, self.check_in_time)\n'
+                        '            self.is_active = 0\n'
+                        '        elif self.check_in_time and not self.check_out_time:\n',
+                   '        if self.check_in_time and self.check_out_time is not None:\n'
+                   '            self.duration_hours = time_diff_in_hours('
+                   'self.check_out_time, self.check_in_time)\n'
+                   '            self.is_active = 0\n'
+                   '        elif self.check_in_time and not self.check_out_time:\n')]),
+    ],
+)
+
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -2666,4 +2996,5 @@ TARGETS = {
     "string_refs": STRING_REFS,
     "select_values": SELECT_VALUES,
     "todo_status_patch": TODO_STATUS_PATCH,
+    "afterz_workflow": AFTERZ_WORKFLOW,
 }
