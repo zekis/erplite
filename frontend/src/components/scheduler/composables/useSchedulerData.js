@@ -204,7 +204,7 @@ export function useSchedulerData() {
             project: project.name,
             projectName: project.project_name,
             activity: activity.name,
-            activityName: activity.subject,
+            activityName: activity.activity_name,
             resource: null,
             resourceName: null,
             role: null,

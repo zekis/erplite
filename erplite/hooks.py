@@ -32,7 +32,11 @@ website_route_rules = [
 # ------------------
 
 # include js, css files in header of desk.html
-app_include_css = "/assets/erplite/css/timesheet-calendar.css"
+# No global app_include_css: the timesheet-calendar stylesheet it used to name was deleted
+# along with the rest of that feature in 8126278, and a missing /assets path is served as a 404
+# on every desk page (twice -- once for the <link> tag and once for the rel=preload header that
+# frappe.utils.jinja_globals.include_style adds). Pages that need a stylesheet link it
+# themselves, as erplite/www/todo/index.html does with app_navigation.css.
 # app_include_js = "/assets/erplite/js/timesheet-calendar.js"  # Removed global include - now loaded only on timesheet calendar page
 
 # include js, css files in header of web template

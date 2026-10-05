@@ -344,11 +344,23 @@ class ScheduleRow(Document):
 
 
 @frappe.whitelist()
-def create_schedule_row(project: str, task: str = None, resource: str = None) -> str:
-    """Create a new schedule row"""
+def create_schedule_row(
+    project: str, activity: str = None, resource: str = None, task: str = None
+) -> str:
+    """Create a new schedule row.
+
+    `task` is the pre-rename name for `activity` and is still accepted, so a caller written
+    before the Task -> Activity rename keeps working. Prefer `activity`.
+    """
     doc = frappe.new_doc("Schedule Row")
     doc.project = project
-    doc.task = task
+    # This was `doc.task = task`. Schedule Row has no `task` field -- only `activity` -- and
+    # get_valid_dict() builds the INSERT from the DocType's declared fields, so an undeclared
+    # attribute is dropped without an error. The caller's task was silently discarded and the
+    # row was created with no work attached to it.
+    activity = activity or task
+    if activity:
+        doc.activity = activity
     doc.resource = resource
     doc.daily_entries = "{}"
     doc.insert()
@@ -383,14 +395,63 @@ def update_daily_entries(schedule_row: str, entries: str) -> Dict[str, Any]:
 
 
 @frappe.whitelist()
-def copy_schedule_row(source_row: str, target_project: str = None, target_task: str = None, target_resource: str = None) -> str:
-    """Copy a schedule row to create a new one"""
+def extend_entries(schedule_row: str, additional_days: int, hours_per_day: float = 0) -> Dict[str, Any]:
+    """Extend a schedule row's daily entries by a number of days.
+
+    The "Extend" dialog in schedule_row.js has always called
+    `erplite...schedule_row.extend_entries` as a dotted module path, but the only
+    `extend_entries` was the ScheduleRow method, which `frappe.get_attr` cannot reach
+    (`getattr(module, name)`), so the dialog could never have worked -- it raised "Failed to get
+    method for command ...". This is the missing module-level wrapper, in the same shape as
+    `update_daily_entries` above: load, mutate through the controller, save.
+
+    The method only calls `set_daily_entries_dict`, which mutates in memory, so the `save()`
+    here is what actually persists the new days.
+    """
+    try:
+        doc = frappe.get_doc("Schedule Row", schedule_row)
+        doc.extend_entries(int(additional_days), float(hours_per_day or 0))
+        doc.save()
+
+        return {
+            "success": True,
+            "message": "Entries extended successfully",
+            "total_hours": doc.total_hours,
+            "start_date": doc.start_date,
+            "end_date": doc.end_date,
+        }
+
+    except Exception as e:
+        frappe.log_error(f"Error extending entries: {str(e)}")
+        return {
+            "success": False,
+            "message": f"Error extending entries: {str(e)}",
+        }
+
+
+@frappe.whitelist()
+def copy_schedule_row(
+    source_row: str,
+    target_project: str = None,
+    target_activity: str = None,
+    target_resource: str = None,
+    target_task: str = None,
+) -> str:
+    """Copy a schedule row to create a new one.
+
+    `target_task` is the pre-rename name for `target_activity` and is still accepted.
+    """
     try:
         source_doc = frappe.get_doc("Schedule Row", source_row)
-        
+
         new_doc = frappe.new_doc("Schedule Row")
         new_doc.project = target_project or source_doc.project
-        new_doc.task = target_task or source_doc.task
+        # This was `new_doc.task = target_task or source_doc.task`, which was wrong twice over:
+        # `source_doc.task` reads an orphan column left behind by the Task -> Activity rename
+        # (a loaded document gets it from SELECT *, so it is a stale value rather than an
+        # error), and `new_doc.task` is then dropped by get_valid_dict() on insert because
+        # Schedule Row declares only `activity`. The copy silently lost its activity.
+        new_doc.activity = target_activity or target_task or source_doc.activity
         new_doc.resource = target_resource or source_doc.resource
         new_doc.daily_entries = source_doc.daily_entries
         new_doc.insert()

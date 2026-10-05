@@ -14,7 +14,7 @@ class ScheduleEntry(Document):
         self.validate_duration()
         self.validate_times()
         self.validate_resource_capacity()
-        self.validate_task_project_link()
+        self.validate_activity_project_link()
         self.calculate_end_time()
     
     def validate_duration(self):
@@ -91,16 +91,25 @@ class ScheduleEntry(Document):
                 self.duration
             ))
     
-    def validate_task_project_link(self):
-        """Validate that task belongs to the selected project"""
-        if self.task and self.project:
-            task_project = frappe.db.get_value("Task", self.task, "project")
-            if task_project != self.project:
-                frappe.throw(_("Task {0} does not belong to project {1}").format(self.task, self.project))
+    def validate_activity_project_link(self):
+        """Validate that the activity belongs to the selected project"""
+        if self.activity and self.project:
+            activity_project = frappe.db.get_value("Activity", self.activity, "project")
+            if activity_project != self.project:
+                frappe.throw(_("Activity {0} does not belong to project {1}").format(self.activity, self.project))
     
     def on_update(self):
         """Actions on update"""
-        self.update_task_progress()
+        # Progress used to be written back to the linked record from here, with
+        # frappe.db.set_value("Task", self.task, "progress_percent", ...). Both
+        # halves of that are gone: commit 98e9b04 renamed this DocType's "task"
+        # field to "activity" and pointed it at Activity, and "progress_percent"
+        # was removed from Activity by 8126278. The write therefore targeted a
+        # table that does not exist and took the whole save down with it, so
+        # on_update does nothing for now. The calculation is kept as
+        # get_activity_progress(); restore the write here once Activity has a
+        # field to hold it.
+        pass
     
     def on_submit(self):
         """Actions on submit"""
@@ -110,28 +119,31 @@ class ScheduleEntry(Document):
         """Actions on cancel"""
         pass
     
-    def update_task_progress(self):
-        """Update task progress based on schedule entries"""
-        if not self.task:
-            return
+    def get_activity_progress(self):
+        """Share of this activity's scheduled hours that are completed, 0-100.
+
+        Returns None when there is nothing to measure, so callers can tell
+        "no scheduled hours" apart from "scheduled but none done yet".
+        """
+        if not self.activity:
+            return None
         
-        # Get all schedule entries for this task
-        entries = frappe.get_all("Schedule Entry", 
-            filters={"task": self.task, "docstatus": ["!=", 2]},
+        # Every schedule entry for this activity, cancelled ones excluded
+        entries = frappe.get_all("Schedule Entry",
+            filters={"activity": self.activity, "docstatus": ["!=", 2]},
             fields=["status", "duration"])
         
         if not entries:
-            return
+            return None
         
-        # Calculate progress based on completed vs total scheduled hours
-        total_hours = sum(entry.duration for entry in entries)
-        completed_hours = sum(entry.duration for entry in entries if entry.status == "Completed")
+        total_hours = sum(entry.duration or 0 for entry in entries)
+        if not total_hours:
+            return None
         
-        if total_hours > 0:
-            progress_percent = (completed_hours / total_hours) * 100
-            
-            # Update task progress
-            frappe.db.set_value("Task", self.task, "progress_percent", min(100, progress_percent))
+        completed_hours = sum(
+            entry.duration or 0 for entry in entries if entry.status == "Completed")
+        
+        return min(100, (completed_hours / total_hours) * 100)
     
     def get_overlapping_entries(self):
         """Get overlapping schedule entries for the same resource"""
@@ -140,7 +152,7 @@ class ScheduleEntry(Document):
         
         # Find entries that overlap with this one
         overlapping = frappe.db.sql("""
-            SELECT name, start_time, end_time, project, task
+            SELECT name, start_time, end_time, project
             FROM `tabSchedule Entry`
             WHERE resource = %s 
             AND schedule_date = %s 

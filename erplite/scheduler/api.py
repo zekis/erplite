@@ -49,18 +49,11 @@ def get_scheduler_data(start_date=None, end_date=None, resource=None, project=No
 def get_projects_and_activities():
     """Get all projects with their activities"""
     
-    projects = frappe.db.sql("""
-        SELECT 
-            p.name,
-            p.project_name,
-            p.status,
-            p.project_manager,
-            p.division,
-            p.work_type
-        FROM `tabProject` p
-        WHERE p.status != 'Cancelled'
-        ORDER BY p.project_name
-    """, as_dict=True)
+    projects = frappe.get_all("Project",
+        fields=["name", "project_name", "status", "project_lead", "division"],
+        filters={"status": ["!=", "Archived"]},
+        order_by="project_name"
+    )
     
     # Get division details for each project
     for project in projects:
@@ -72,18 +65,17 @@ def get_projects_and_activities():
                 project['division_color'] = division_data.color
         
         # Get activities for each project
-        project['activities'] = frappe.db.sql("""
-            SELECT 
-                t.name,
-                t.subject,
-                t.status,
-                t.priority,
-                t.estimated_hours,
-                t.progress_percent
-            FROM `tabActivity` t
-            WHERE t.project = %s AND t.status != 'Cancelled'
-            ORDER BY t.subject
-        """, (project.name,), as_dict=True)
+        activities = frappe.get_all("Activity",
+            fields=["name", "activity_name", "status"],
+            filters={"project": project.name, "status": ["!=", "Cancelled"]},
+            order_by="activity_name"
+        )
+        for activity in activities:
+            # Compatibility alias: the built scheduler bundle under
+            # erplite/public/frontend/assets/ still reads `subject`. Remove this
+            # once the frontend has been rebuilt from frontend/src.
+            activity['subject'] = activity.activity_name
+        project['activities'] = activities
     
     return projects
 
@@ -416,6 +408,21 @@ def get_project_colors():
             colors[project.name] = color_palette[i % len(color_palette)]
     
     return colors
+
+@frappe.whitelist()
+def create_bulk_schedule_entries(entries=None, entries_data=None):
+    """Alias for `bulk_create_entries`, kept because the built Vue scheduler calls this name.
+
+    `erplite/public/frontend/assets/VueScheduler-*.js` -- the bundle that is actually deployed --
+    calls `erplite.scheduler.api.create_bulk_schedule_entries` and passes its payload as
+    `entries`. Neither the name nor the argument existed: the function is `bulk_create_entries`
+    and its parameter is `entries_data`, so the call failed in `frappe.handler.execute_cmd` with
+    "Failed to get method for command ...". Renaming the call in the Vue source alone would not
+    have fixed the deployed bundle, and correcting only the method name would have moved the
+    failure to a missing-argument TypeError, so this accepts either argument name and delegates.
+    """
+    return bulk_create_entries(entries_data if entries_data is not None else entries)
+
 
 @frappe.whitelist()
 def get_resource_capacity_report(resource, start_date, end_date):
