@@ -93,7 +93,6 @@ def save_timesheet_entries(entries, target_user=None):
                 timesheet_doc = frappe.get_doc("Timesheet Entry", entry_id)
                 timesheet_doc.project = project
                 timesheet_doc.activity = activity
-                timesheet_doc.date = date
                 timesheet_doc.check_in_time = start_datetime
                 timesheet_doc.check_out_time = end_datetime
                 timesheet_doc.duration_hours = duration
@@ -115,7 +114,6 @@ def save_timesheet_entries(entries, target_user=None):
                 timesheet_doc.employee = employee_user
                 timesheet_doc.project = project
                 timesheet_doc.activity = activity
-                timesheet_doc.date = date
                 timesheet_doc.check_in_time = start_datetime
                 timesheet_doc.check_out_time = end_datetime
                 timesheet_doc.duration_hours = duration
@@ -222,12 +220,12 @@ def get_week_timesheets(week_start, target_user=None):
         
         # Get timesheet entries for the week
         entries = frappe.get_all("Timesheet Entry",
-            fields=["name", "project", "activity", "date", "check_in_time", "duration_hours", "description"],
+            fields=["name", "project", "activity", "check_in_time", "duration_hours", "description"],
             filters={
-                "date": ["between", [start_date, end_date]],
+                "check_in_time": ["between", [start_date, end_date]],
                 "employee": user_to_filter
             },
-            order_by="date, check_in_time"
+            order_by="check_in_time"
         )
         
         # Format entries for frontend
@@ -242,7 +240,7 @@ def get_week_timesheets(week_start, target_user=None):
                 "id": entry.name,
                 "project": entry.project,
                 "activity": entry.activity,
-                "date": entry.date.strftime("%Y-%m-%d"),
+                "date": entry.check_in_time.strftime("%Y-%m-%d") if entry.check_in_time else "",
                 "start_time": start_time,
                 "duration": entry.duration_hours or 0,
                 "description": entry.description or ""
@@ -269,13 +267,13 @@ def export_timesheet_data(format='csv', week_start=None):
         if week_start:
             start_date = datetime.strptime(week_start, "%Y-%m-%d").date()
             end_date = start_date + timedelta(days=6)
-            filters["date"] = ["between", [start_date, end_date]]
+            filters["check_in_time"] = ["between", [start_date, end_date]]
         
         # Get timesheet entries
         entries = frappe.get_all("Timesheet Entry",
-            fields=["name", "project", "activity", "date", "check_in_time", "check_out_time", "duration_hours", "description"],
+            fields=["name", "project", "activity", "check_in_time", "check_out_time", "duration_hours", "description"],
             filters=filters,
-            order_by="date, check_in_time"
+            order_by="check_in_time"
         )
         
         if format == 'csv':
@@ -292,7 +290,7 @@ def export_timesheet_data(format='csv', week_start=None):
                 end_time = entry.check_out_time.strftime("%H:%M") if entry.check_out_time else ""
                 
                 writer.writerow([
-                    entry.date.strftime("%Y-%m-%d") if entry.date else "",
+                    entry.check_in_time.strftime("%Y-%m-%d") if entry.check_in_time else "",
                     entry.project or "",
                     entry.activity or "",
                     start_time,
@@ -308,7 +306,7 @@ def export_timesheet_data(format='csv', week_start=None):
             for entry in entries:
                 formatted_entries.append({
                     "id": entry.name,
-                    "date": entry.date.strftime("%Y-%m-%d") if entry.date else "",
+                    "date": entry.check_in_time.strftime("%Y-%m-%d") if entry.check_in_time else "",
                     "project": entry.project or "",
                     "activity": entry.activity or "",
                     "start_time": entry.check_in_time.strftime("%H:%M") if entry.check_in_time else "",

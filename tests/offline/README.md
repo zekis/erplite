@@ -72,24 +72,47 @@ them. Code that needs to be covered here queries through `get_all`.
 ## Whole-app guards
 
 `test_undeclared_attributes.py` does not test one module. It parses the whole
-app and fails if anything reads a field its DocType does not declare, in
-either of the two places that failure lives:
+app and fails if anything touches a field its DocType does not declare, in the
+three places that failure lives:
 
 - `self.<x>` in a DocType's own controller, with the call graph walked out
   from the new-document hooks (`validate`, `before_insert`, ...) so a helper
   that `validate()` calls is reported as the creation-breaking kind rather
   than the merely stale kind;
 - `doc = frappe.new_doc("X")` ... `doc.<y>` anywhere in the app, which is
-  where the whitelisted endpoints live.
+  where the whitelisted endpoints live;
+- `doc.<y> = v` anywhere in the app — the silent half, since nothing raises:
+  `get_valid_dict()` builds the INSERT or UPDATE from `meta.get_valid_columns()`
+  and drops the value, and the caller is told it succeeded.
 
-Both are deliberately conservative: a name is only reported if it is declared
+**The read and write sweeps have deliberately different scope, and getting that
+wrong hid a real bug.** The read sweep covers only documents built in memory: a
+document loaded by `get_doc("X", name)` is populated from `SELECT *`, so an
+orphan column is genuinely present and reading it returns a stale value instead
+of raising. The write sweep must include loaded documents, because the UPDATE is
+built from the same declared-field list as the INSERT. It originally copied the
+read sweep's scope, which left every load-then-modify endpoint — the commonest
+shape in the app — unguarded.
+
+The rule for deciding a variable's DocType is that **every** binding of the name
+resolves to the same one. The rule before it, bound exactly once, threw away the
+unambiguous case of a name assigned twice from the *same* DocType: that is how a
+dropped write to `Timesheet Entry.date` sat under this guard for several sweeps,
+its update branch and its insert branch each assigning `timesheet_doc` and
+agreeing. Anything unresolvable — a `for`, `with`, comprehension or `except`
+binding, an import, a call with no literal in it — drops the name, so a
+disagreement is still never reported. Note that `doc.field = v` rebinds nothing:
+walking an assignment target for every `ast.Name` inside it counts each field
+write as a reassignment and silently empties the sweep.
+
+All three are otherwise conservative: a name is only reported if it is declared
 nowhere in the DocType JSON, is never assigned on the object, and is not a
 Frappe `Document` attribute. A failure is therefore a real finding, and the
-right response is to fix the read rather than to add an exception for it.
+right response is to fix the code rather than to add an exception for it.
 
-Neither guard can see a DocType this app does not define, because the field
-list of a Frappe core DocType is not in this repo. The second one skips those
-rather than guessing at them.
+None of them can see a DocType this app does not define, because the field
+list of a Frappe core DocType is not in this repo; they skip those rather than
+guessing at them.
 
 `test_client_scripts.py` is the same idea on the browser side, and the failure
 there is louder. Frappe's `frm.set_value` ends its inner `_set` with
@@ -341,7 +364,10 @@ dropped. This says nothing about `order_by` / `group_by` / `having` passed to
 `get_all`, which Frappe sanitises - checked by hand on 6 Oct 2026, no
 whitelisted endpoint in this app passes caller input to any of them. And a
 literal query is not necessarily a correct one: whether its columns exist is
-`test_undeclared_attributes.py` and `test_doctype_metadata.py`.
+`test_query_fields.py`. (This used to credit `test_undeclared_attributes.py` and
+`test_doctype_metadata.py`, which cover attribute access and the DocType JSONs —
+neither has ever read a query's field names. Believing the surface was already
+covered is the likeliest reason nothing swept it until 7 Oct 2026.)
 
 `TheWalkerItself` holds 17 self-tests - every accepted shape and every rejected
 one, plus the two scope cases. Third guard in a row to ship with its own
@@ -595,3 +621,79 @@ It was dumped from the version-15 branch at 15.121.3 by
 `tools/dump_core_doctypes.py`; the live site runs 15.52.0, and Currency has been in
 `frappe/geo` since long before either. Re-run the tool when the Frappe version
 moves.
+
+
+## test_query_fields.py (7 Oct 2026) — the field names inside a query
+
+The surface every other sweep here left alone, and the one this app gets wrong
+most often: two instances had been fixed one at a time
+(`Activity.subject`/`assigned_to`, then `Timesheet Entry.date`) with nothing to
+stop a third. This parses the whole app and checks every field name a query
+names — `fields`, `pluck`, `filters` and `or_filters` in both the dict and the
+list form, `order_by`, `group_by`, and the positional fieldname of
+`get_value` / `get_values` / `set_value` / `get_single_value` — against the
+DocType's declared fields plus the standard columns.
+
+**The same mistake fails three different ways, and which one you get depends on
+the call rather than on the mistake.** This is worth knowing before concluding
+from a symptom that a query is fine:
+
+| the field | the call | what happens |
+|---|---|---|
+| removed from the DocType | anything | **silent**: the column is still there, so the SQL is valid and reads a stale orphan. `frappe.model.delete_fields` (`frappe/model/__init__.py:198-211`) is frappe's only `DROP COLUMN` and runs only from a hand-written patch; this app's `patches.txt` is empty |
+| never existed | `frappe.db.exists` | **silent, as None**: `exists` passes `ignore=True` (`database.py:1294`) and `get_values` turns a missing column into `out = None` when `ignore` is set (`:640-646`), which is indistinguishable from "no such record" |
+| never existed | anything else | **loud**: `get_values` re-raises (`:652`) and `frappe.get_all` has no missing-column handling at all, so the caller's `except Exception` usually turns it into `{"success": False}` with no stack |
+
+The second row is the nastiest, because a guard written as
+`if frappe.db.exists(...): frappe.throw(...)` is then permanently off and looks
+like it is working.
+
+A filter on a *removed* field has a second effect worth stating separately: new
+rows have NULL in the orphan column, because `get_valid_dict()` never writes a
+column the DocType does not declare. So `filters={"<orphan>": ["between", ...]}`
+silently excludes **every row written since the field was removed** — which is
+what made the week timesheet view and the CSV export come back empty while
+saving an entry reported success, since the endpoint echoes the date back out of
+its own input rather than out of the record.
+
+Fixing the filter without fixing the reads would have turned that empty list
+into an exception: rows with a NULL date start matching, and
+`entry.date.strftime(...)` was unguarded. The two halves of an orphan have to be
+fixed together.
+
+Conservative in the same way as the other sweeps: it judges only a bare
+identifier, so `count(name) as n`, `tabFoo.name`, `*`, `name as id` and
+`distinct status` are skipped rather than guessed at, and only DocTypes this app
+defines are judged. It also distinguishes the positional arguments per function,
+because they disagree — the second positional of `get_all` is `fields`
+(`DatabaseQuery.execute(fields, filters, ...)`), while the second positional of
+`get_value` is the name or filters and a **list** there is a list of names, not
+of fields. Reading that one as fields is how a sweep invents findings.
+
+Four findings are pinned open rather than fixed, because each needs a schema or
+product decision that is not a test's to make — either the field goes onto the
+DocType or the feature reading it comes out:
+
+- `Account.on_trash` (`account.py:82`) guards against deleting an Account linked
+  to a Xero Account via `db.exists("Xero Account", {"account": ...})`. `Xero
+  Account` has never had an `account` field — it has `xero_account_id` and
+  `xero_account_code` — and there is no field linking the two DocTypes at all.
+  Row two of the table above: the guard returns None and never fires.
+- `TermsandConditions.validate_disabled` (`terms_and_conditions.py:19`) and
+  `get_default_terms` (`:33`) both read `Company.default_terms`; Company has
+  `default_currency`, `default_letter_head`, `default_holiday_list` and
+  `is_default`, and has never had `default_terms`.
+- `FinanceBook.get_default_finance_book` (`finance_book.py:33`) reads
+  `Company.default_finance_book`, same again.
+
+Each is pinned twice: once in `KNOWN`, so a **new** finding fails, and once as a
+test of the schema fact it rests on, so adding the field fails too and says
+which list to edit. Both fixes that did ship this turn are pinned the same way
+(`Timesheet Entry` still has no `date`; `Account` declares `currency` and not
+`account_currency`).
+
+`TheSweepBites` holds 19 self-tests: every call shape and argument position that
+must be reported, every expression that must not be, and the two scope cases
+above. The four real bugs were each re-introduced and the guard required to
+fail with the right file, line, DocType and field before any of this was
+committed.
