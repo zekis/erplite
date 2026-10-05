@@ -5,3 +5,5 @@
 tags
 node_modules
 __pycache__
+erplite/public/frontend/
+erplite/www/erplite.html
