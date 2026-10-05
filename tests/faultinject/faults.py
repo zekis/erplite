@@ -1870,6 +1870,280 @@ POST_SAVE_WRITES = Target(
                      '        doc.status = "Open"\n')]),
     ])
 
+
+# --- the app's string references, whole-app (the second detector target) ----
+# `test_string_references.py` is the second *detector* in this tool, after
+# post_save_writes, and it is a detector with no self-tests at all: five
+# whole-app assertions and nothing synthetic. So the question is the one that
+# target taught -- not "is this rule pinned" but "what can real code do that
+# this cannot see?" -- and every fault here plants the real thing in real
+# source.
+#
+# Two verdicts beyond RED, as in post_save_writes. `CONTROL` is an edit that
+# changes no behaviour and must stay green. `KNOWN BLIND SPOT` is a real
+# regression this sweep deliberately cannot see: also green, for the opposite
+# reason, each one saying why it is not worth closing.
+
+HOOKS = "erplite/hooks.py"
+PATCHES = "erplite/patches.txt"
+TODO_HTML = "erplite/www/todo/index.html"
+TODO_JS = "erplite/www/todo/index.js"
+APP_VUE = "frontend/src/App.vue"
+CUSTOMER = "erplite/crm/doctype/customer/customer.py"
+CUSTOMER_JS = "erplite/crm/doctype/customer/customer.js"
+SQ = "erplite/accounts/doctype/supplier_quote/supplier_quote.py"
+SQ_JS = "erplite/accounts/doctype/supplier_quote/supplier_quote.js"
+ROLE_JS = "erplite/scheduler/doctype/scheduler_role/scheduler_role.js"
+SCHED_API = "erplite/scheduler/api.py"
+SCHED_API_JS = "frontend/src/components/scheduler/composables/useSchedulerAPI.js"
+APP_INIT = "erplite/__init__.py"
+
+# hooks.py's one live dotted path and its one live asset path sit in the same
+# dict, which makes it the single file where both of pass A and pass B can be
+# reached without touching a feature.
+HOOKS_LOGO = '\t\t"logo": "/assets/erplite/images/toolbox.png",\n'
+HOOKS_PERM = '\t\t"has_permission": "erplite.check_app_permission"\n'
+
+# The one real patch in the app. frappe resolves `<first token>.execute`
+# (frappe/modules/patch_handler.py:168) and aborts `bench migrate` if that
+# raises -- the loudest failure of any surface this file sweeps.
+PATCH_LINE = "erplite.patches.declare_todo_status_options\n"
+
+# customer.js indents with spaces; scheduler_role.js with tabs. Both are
+# written out here exactly as the file has them, because `nl` translates the
+# line ending and nothing translates the indent.
+C = " " * 20
+CUSTOMER_CALL = (
+    C + "method: 'erplite.crm.doctype.customer.customer.send_to_xero',\n"
+    + C + "args: {\n"
+    + C + "    'docname': frm.doc.name\n"
+    + C + "},\n")
+CUSTOMER_CALL_ARGS_FIRST = (
+    C + "args: {\n"
+    + C + "    'doc_name': frm.doc.name\n"
+    + C + "},\n"
+    + C + "method: 'erplite.crm.doctype.customer.customer.send_to_xero',\n")
+CUSTOMER_ARG = C + "    'docname': frm.doc.name\n"
+
+# Both of scheduler_role.js's two calls pass the same args block, so a fault
+# there has to be anchored on the method line to match once.
+ROLE_STATS_CALL = (
+    "\t\t\t\t\tmethod: 'erplite.scheduler.doctype.scheduler_role"
+    ".scheduler_role.get_role_statistics',\n"
+    "\t\t\t\t\targs: {\n"
+    "\t\t\t\t\t\trole: frm.doc.name\n"
+    "\t\t\t\t\t},\n")
+
+STRING_REFS = Target(
+    test="tests/offline/test_string_references.py",
+    faults=[
+        # -- Pass A: /assets/<app>/... names a file the app ships -------------
+        # Symptom: a 404 on every page that loads it, twice (the tag and the
+        # rel=preload header). No exception, nothing in the Error Log.
+        Fault("asset path in hooks.py names a file that is not shipped", True,
+              [(HOOKS, HOOKS_LOGO,
+                '\t\t"logo": "/assets/erplite/images/toolbox-v2.png",\n')]),
+        Fault("the todo page's stylesheet link names a file that is not "
+              "shipped", True,
+              [(TODO_HTML,
+                '<link rel="stylesheet" href="/assets/erplite/css/app_navigation.css">',
+                '<link rel="stylesheet" href="/assets/erplite/css/app-navigation.css">')]),
+        Fault("one of the todo page's seven script paths is wrong (template "
+              "literal)", True,
+              [(TODO_JS, "`/assets/erplite/js/todo/data/TodoDataManager.js`",
+                "`/assets/erplite/js/todo/data/TodoDatamanager.js`")]),
+        # The gap: pass B and pass C sweep frontend/src explicitly, pass A
+        # walks MODULE_ROOT only. The un-built Vue source is where the next
+        # asset reference would be written.
+        Fault("missing asset referenced from the un-built Vue source "
+              "(frontend/src)", True,
+              [(APP_VUE, "<template>\n  <div id=\"app\">\n",
+                "<template>\n  <div id=\"app\">\n"
+                "    <link rel=\"stylesheet\" href=\"/assets/erplite/css/ghost.css\">\n")]),
+        # The gap: os.path.exists is true for a directory, and a directory is
+        # not something the web server will serve.
+        Fault("asset path names a directory rather than a file", True,
+              [(HOOKS, HOOKS_LOGO, '\t\t"logo": "/assets/erplite/images",\n')]),
+        Fault("CONTROL: asset path carries a cache-busting query string",
+              False,
+              [(TODO_HTML,
+                'href="/assets/erplite/css/app_navigation.css"',
+                'href="/assets/erplite/css/app_navigation.css?v=2"')]),
+        Fault("CONTROL: a missing asset path inside a comment", False,
+              [(HOOKS, HOOKS_LOGO, HOOKS_LOGO +
+                '\t\t# "logo": "/assets/erplite/images/ghost.png",\n')]),
+        Fault("CONTROL: a missing asset path belonging to another app", False,
+              [(HOOKS, HOOKS_LOGO, HOOKS_LOGO +
+                '\t\t"ghost": "/assets/frappe/images/ghost.png",\n')]),
+
+        # -- Pass B: every erplite.* dotted path resolves ---------------------
+        # Symptom: frappe.handler.execute_cmd throws "Failed to get method for
+        # command ..." -- a modal error dialog.
+        Fault("hooks.py names a has_permission function that does not exist",
+              True,
+              [(HOOKS, HOOKS_PERM,
+                '\t\t"has_permission": "erplite.check_app_permissions"\n')]),
+        Fault("a DocType .js calls a method path that does not resolve", True,
+              [(CUSTOMER_JS,
+                "method: 'erplite.crm.doctype.customer.customer.send_to_xero',",
+                "method: 'erplite.crm.doctype.customer.customer.send_to_zero',")]),
+        Fault("the un-built Vue source calls a method path that does not "
+              "resolve", True,
+              [(SCHED_API_JS, "call('erplite.scheduler.api.bulk_create_entries'",
+                "call('erplite.scheduler.api.bulk_create_entry'")]),
+        Fault("the function a live call names is deleted", True,
+              [(APP_INIT, "def check_app_permission():",
+                "def check_app_permission_disabled():")]),
+        Fault("a called module-level function is demoted to a class method "
+              "(exists, but get_attr cannot reach it)", True,
+              [(CUSTOMER, "@frappe.whitelist()\ndef send_to_xero(docname):",
+                "class _Unreachable:\n    @frappe.whitelist()\n"
+                "    def send_to_xero(docname):")]),
+        Fault("CONTROL: a dotted path that resolves to nothing, in a Python "
+              "comment", False,
+              [(HOOKS, HOOKS_PERM, HOOKS_PERM +
+                '\t\t# "has_permission": "erplite.ghost.nothing"\n')]),
+        Fault("CONTROL: a dotted path that resolves to nothing, in a JS "
+              "comment", False,
+              [(CUSTOMER_JS,
+                "method: 'erplite.crm.doctype.customer.customer.send_to_xero',",
+                "// method: 'erplite.ghost.nothing',\n"
+                "                    method: 'erplite.crm.doctype.customer.customer.send_to_xero',")]),
+        Fault("CONTROL: a dotted path that resolves to nothing, in a README",
+              False,
+              [("erplite/projects/README.md",
+                "erplite.projects.doctype.timesheet_entry.timesheet_entry.check_in",
+                "erplite.projects.doctype.timesheet_entry.timesheet_entry.check_inn")]),
+        Fault("KNOWN BLIND SPOT: a method path assembled from a template "
+              "literal (invisible to all passes: it is not a literal string)",
+              False,
+              [(SCHED_API_JS, "call('erplite.scheduler.api.bulk_create_entries'",
+                "call(`erplite.scheduler.api.${'bulk_create_entry'}`"
+                " || 'erplite.scheduler.api.bulk_create_entries'")]),
+
+        # -- Pass B2: patches.txt (the surface that aborts `bench migrate`) ---
+        # frappe resolves `<first whitespace-delimited token>.execute` and
+        # re-raises, so a wrong entry here stops a deploy before anything runs.
+        Fault("patches.txt names a patch module that does not exist", True,
+              [(PATCHES, PATCH_LINE,
+                "erplite.patches.declare_todo_status_optoins\n")]),
+        Fault("patches.txt names a module that exists but has no execute()",
+              True, [(PATCHES, PATCH_LINE, "erplite.projects.utils\n")]),
+        Fault("the patch module's execute() is renamed", True,
+              [("erplite/patches/declare_todo_status_options.py",
+                "def execute():", "def run():")]),
+        Fault("patches.txt entry is one path element short", True,
+              [(PATCHES, PATCH_LINE, "erplite.declare_todo_status_options\n")]),
+        Fault("a misspelt patch entry carrying a trailing date, as frappe's "
+              "own patches.txt writes them", True,
+              [(PATCHES, PATCH_LINE,
+                "erplite.patches.declare_todo_status_optoins #2026-10-06\n")]),
+        Fault("CONTROL: the patch entry carries a trailing date (frappe splits "
+              "on whitespace and resolves the first token only)", False,
+              [(PATCHES, PATCH_LINE,
+                "erplite.patches.declare_todo_status_options #2026-10-06\n")]),
+        Fault("CONTROL: an execute: line, which frappe exec()s as python "
+              "rather than resolving as a path", False,
+              [(PATCHES, PATCH_LINE, PATCH_LINE +
+                'execute:frappe.ghost.nothing("x")\n')]),
+        Fault("CONTROL: a commented-out patch entry", False,
+              [(PATCHES, PATCH_LINE, PATCH_LINE +
+                "# erplite.patches.ghost_nothing\n")]),
+        # A real move: out of one section and into the other. Written as one
+        # edit and it was not a control -- it left the entry in place and added
+        # a second copy, which the baseline test caught. Right answer, and
+        # exactly what that test is for.
+        Fault("CONTROL: the patch moves to the pre_model_sync section (both "
+              "sections are swept; the move changes when it runs, not whether "
+              "it resolves)", False,
+              [(PATCHES, PATCH_LINE, ""),
+               (PATCHES,
+                "# Read docs to understand patches: https://frappeframework.com/docs/v14/user/en/database-migrations\n",
+                "# Read docs to understand patches: https://frappeframework.com/docs/v14/user/en/database-migrations\n"
+                + PATCH_LINE)]),
+
+        # -- Pass B3: whitelisting -------------------------------------------
+        # Symptom: frappe.is_whitelisted raises PermissionError, titled
+        # "Method Not Allowed".
+        Fault("@frappe.whitelist() removed from a function the front end "
+              "calls", True,
+              [(CUSTOMER, "@frappe.whitelist()\ndef send_to_xero(docname):",
+                "def send_to_xero(docname):")]),
+        # The carve-out itself -- a hooks.py path needs no whitelist -- is
+        # pinned by the green baseline: `erplite.check_app_permission` has no
+        # @frappe.whitelist() and hooks.py is its only caller. This is the
+        # other side of it: once the front end calls that same function, the
+        # absence of the decorator has to be reported.
+        Fault("the front end starts calling a function that hooks.py names "
+              "and that has no @frappe.whitelist()", True,
+              [(CUSTOMER_JS,
+                "method: 'erplite.crm.doctype.customer.customer.send_to_xero',",
+                "method: 'erplite.check_app_permission',")]),
+        Fault("CONTROL: the whitelist decorator takes an argument", False,
+              [(CUSTOMER, "@frappe.whitelist()\ndef send_to_xero(docname):",
+                "@frappe.whitelist(allow_guest=False)\ndef send_to_xero(docname):")]),
+
+        # -- Pass C: the arguments a readable call passes ---------------------
+        Fault("a called argument is renamed in the signature (the sent value "
+              "is dropped by get_newargs)", True,
+              [(CUSTOMER, "def send_to_xero(docname):",
+                "def send_to_xero(doc_name):")]),
+        Fault("a new required parameter is added to a front-end-called "
+              "function", True,
+              [(SCHED_API, "def bulk_create_entries(entries_data):",
+                "def bulk_create_entries(entries_data, project):")]),
+        # The gap: ARGS_OBJECT required `method` then `args`, in that order.
+        Fault("the same wrong argument, with args written before method in the "
+              "same frappe.call", True,
+              [(CUSTOMER_JS, CUSTOMER_CALL, CUSTOMER_CALL_ARGS_FIRST)]),
+        # The gap: ARGS_OBJECT's body was [^{}]*, so any nested object made the
+        # whole call unreadable -- and a nested `filters` object is the ordinary
+        # shape of a frappe.call.
+        Fault("a wrong argument in a call whose args object contains a nested "
+              "object", True,
+              [(ROLE_JS, ROLE_STATS_CALL,
+                ROLE_STATS_CALL
+                .replace("role: frm.doc.name",
+                         "role_name: frm.doc.name,\n\t\t\t\t\t\t"
+                         "filters: { enabled: 1 }"))]),
+        # The gap: posonlyargs were not read at all, so the surface described a
+        # permanently uncallable function as callable. Two faults, because the
+        # before-state differed between them and the difference is the whole
+        # point. Making the ONLY parameter positional-only emptied `args`, so
+        # the name the caller sends looked unknown and the old test went red --
+        # the right colour with the wrong reason ("it accepts (none)"). Leave a
+        # second parameter behind and the same bug is invisible.
+        Fault("the only parameter of a front-end-called function is made "
+              "positional-only (frappe.call passes by keyword, so it can "
+              "never be called again)", True,
+              [(SCHED_API, "def bulk_create_entries(entries_data):",
+                "def bulk_create_entries(entries_data, /):")]),
+        Fault("a positional-only parameter is added alongside a keyword one "
+              "(same bug, and the caller's own argument still looks fine)",
+              True,
+              [(SCHED_API, "def bulk_create_entries(entries_data):",
+                "def bulk_create_entries(project, /, entries_data):")]),
+        Fault("CONTROL: a required parameter is given a default (the caller "
+              "already sends it)", False,
+              [(SCHED_API, "def bulk_create_entries(entries_data):",
+                "def bulk_create_entries(entries_data=None):")]),
+        Fault("CONTROL: the function gains **kwargs, so no sent name can be "
+              "wrong", False,
+              [(CUSTOMER, "def send_to_xero(docname):",
+                "def send_to_xero(docname=None, **kwargs):")]),
+        Fault("KNOWN BLIND SPOT: a wrong argument in a call whose args object "
+              "cannot be read exactly (a spread). Reading it would mean "
+              "guessing what the spread holds, and every required parameter "
+              "would be reported missing.", False,
+              [(CUSTOMER_JS, CUSTOMER_ARG,
+                C + "    ...{'doc_name': frm.doc.name}\n")]),
+        Fault("KNOWN BLIND SPOT: ES2015 shorthand (`{ docname }`) is not read "
+              "as a key, so a call written that way is skipped rather than "
+              "guessed at.", False,
+              [(CUSTOMER_JS, CUSTOMER_ARG, C + "    doc_name\n")]),
+    ],
+)
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -1880,4 +2154,5 @@ TARGETS = {
     "todo_assignment": TODO_ASSIGNMENT,
     "trip_status": TRIP_STATUS,
     "post_save_writes": POST_SAVE_WRITES,
+    "string_refs": STRING_REFS,
 }
