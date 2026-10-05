@@ -661,3 +661,49 @@ stands and **fails the day it is fixed**, in the same spirit as
 
 Not claimed: who holds which role on the live site (the owner's data), and
 anything about the Xero wire format, which `test_xero_invoice_send.py` covers.
+
+## `test_whitelist_write_gate.py` — the rule, not the six endpoints
+
+`test_xero_permission_gate.py` above pins six named endpoints. This file pins the
+**rule** they are an instance of, over the whole app, so the next instance fails a
+test instead of waiting to be found by hand: a `@frappe.whitelist()` function
+reaching a write that consults no permission row (`frappe.db.set_value`,
+`db.delete`, `db.sql` with a writing verb…) must check for itself. The document
+path — `save`, `insert`, `delete_doc` — is checked inside frappe, which is why the
+guard reports so little.
+
+### `KNOWN_UNGATED` is empty, and that is the assertion
+
+The set is compared exactly, so it fails in both directions: a new ungated
+endpoint appears in it, and a gate landing on a listed one makes it go red until
+the entry is removed. Its one entry was `clear_old_logs` (the scheduler log's
+`DELETE`), filed for the owner as `rev_18a8f8826d` and approved: it now asks
+`frappe.has_permission("Scheduler Log", "delete", throw=True)`, which enforces the
+row the app already shipped — `delete` to System Manager alone, matching what
+`scheduler_log.js` offers the button to. No `doc=`, because it deletes many rows
+at once, so the question is the DocType and not one row's owner.
+
+### A green sweep is only evidence once you have made it go red
+
+Every claim here was measured by breaking the real module rather than re-reading
+it, because the first version of this guard stayed fully green with an unchecked
+`frappe.db.set_value` added to a live endpoint:
+
+* **gate deleted** → 9 red, including the sweep's exact-set assertion;
+* **gate moved inside the existing `try`** → 1 red, and *only* the AST test
+  `test_the_gate_is_not_inside_a_try` catches it. The classifier cannot: it is
+  still a call to `has_permission`. `PermissionError` is not a `ValidationError`
+  (`frappe/exceptions.py`: 403 vs 417, unrelated classes), so a handler catching
+  broadly could drop the refusal;
+* **`delete` changed to `read`** → 14 red, because the stand-in
+  `PermissionChecks` raises rather than answering a question it was not set up
+  for. A permissive stand-in would have returned True and said nothing.
+
+The last two of those run as tests in their own right: the real source with its
+one check deleted is loaded and driven (`test_without_the_gate_an_unprivileged_caller_wipes_the_log`)
+and classified (`test_the_whole_app_guard_reports_this_endpoint_without_the_gate`).
+
+Not claimed: anything about **reads**. `db.sql("SELECT …")` and `frappe.get_all`
+hand out rows without consulting a permission row too, and several endpoints here
+do exactly that; `TestReadsAreNotCountedAsWrites` pins that boundary deliberately.
+That half is filed separately as `rev_d4b6b6ed62`.

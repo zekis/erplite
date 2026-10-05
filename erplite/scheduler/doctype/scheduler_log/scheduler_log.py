@@ -30,6 +30,24 @@ def clear_old_logs(days=30):
 	before today", which is the worst available reading of a typo.
 	"""
 
+	# Whitelisted means any logged-in user can call this by name, so the Desk
+	# button is not the gate. The DELETE below goes through `frappe.db.sql`,
+	# which consults no permission row, runs no `validate` and fires no hook, so
+	# this endpoint is checked only if it checks here.
+	#
+	# This enforces the row the app already ships rather than inventing a
+	# policy: Scheduler Log's own permissions give `delete` to System Manager
+	# alone, and `scheduler_log.js` only offers the "Clear Old Logs" button
+	# `if (frappe.user.has_role('System Manager'))`. Review tray rev_18a8f8826d.
+	#
+	# No `doc=`: this acts on many rows at once, so the question is whether the
+	# caller may delete Scheduler Log at all, not whether they own one row.
+	# `throw=True` raises `frappe.PermissionError` (403), which is deliberately
+	# not a `ValidationError`, so nothing catching one can swallow it -- and it
+	# is checked before `days` is read, so a caller who may not delete learns
+	# nothing about the argument.
+	frappe.has_permission("Scheduler Log", "delete", throw=True)
+
 	try:
 		days = int(days)
 	except (TypeError, ValueError):
