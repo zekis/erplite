@@ -127,9 +127,19 @@ class TestEveryTargetIsWorthTrusting(unittest.TestCase):
 class TestTheLineEndingGuard(unittest.TestCase):
     """`nl` is the guard that six real faults needed and did not have.
 
-    erplite is CRLF. A pattern written with \\n matches zero times in every
-    file here, so without this translation a multi-line fault is reported as a
-    pass having measured nothing.
+    A pattern written with \\n matches zero times in a CRLF file, so without
+    this translation a multi-line fault is reported as a pass having measured
+    nothing. That is what happened to six of the first twelve faults here.
+
+    **This repo is mixed, not CRLF.** Measured 6 Oct 2026: 82 CRLF `.py` files
+    and 62 LF, 31 CRLF `.json` and 22 LF -- and the split runs *inside* a single
+    DocType folder, where `timesheet_entry.py` is CRLF and its
+    `timesheet_entry.json` is LF. So the ending is a property of each file and
+    never of the repo, which is why `harness.read` detects it per file and the
+    assertions below are per file too. An earlier version of this class asserted
+    every fault's file was CRLF; it was true of every file the first target
+    happened to name and false of the repo, and the second target failed it
+    immediately.
     """
 
     def test_a_pattern_is_translated_for_a_crlf_file(self):
@@ -141,21 +151,81 @@ class TestTheLineEndingGuard(unittest.TestCase):
     def test_an_already_translated_pattern_is_not_doubled(self):
         self.assertEqual(harness.nl("a\r\nb", "\r\n"), "a\r\nb")
 
-    def test_the_app_sources_the_faults_name_are_read_as_crlf(self):
-        """If this ever fails, the repo's line endings changed and the
-        translation above is no longer what the patterns need."""
+    def _files_the_faults_name(self):
         seen = set()
         for target in TARGETS.values():
             for fault in target.faults:
                 for path, _old, _new in fault.edits:
                     seen.add(path)
         self.assertTrue(seen)
-        for path in sorted(seen):
+        return sorted(seen)
+
+    def test_every_file_a_fault_names_has_one_consistent_ending(self):
+        """What `read` actually needs: one ending per file, not one per repo.
+
+        `read` decides by asking whether "\r\n" appears anywhere, so a file
+        with both endings would be translated as CRLF and the patterns written
+        for its LF half would silently match nothing. A mixed file is the one
+        shape no per-file detection can rescue, so it is refused here rather
+        than discovered as a fault that measures nothing.
+        """
+        for path in self._files_the_faults_name():
             with self.subTest(file=path):
-                self.assertEqual(
-                    harness.read(path)[1], "\r\n",
-                    "%s is no longer CRLF; the faults' line-ending "
-                    "translation assumes it is" % path)
+                with open(os.path.join(REPO, path), "rb") as handle:
+                    raw = handle.read()
+                crlf = raw.count(b"\r\n")
+                bare_lf = raw.count(b"\n") - crlf
+                self.assertFalse(
+                    crlf and bare_lf,
+                    "%s mixes %d CRLF and %d LF endings. harness.read would "
+                    "call the whole file CRLF, so any pattern spanning a line "
+                    "break in its LF part matches nothing." % (path, crlf, bare_lf))
+
+    def test_both_endings_really_occur_among_those_files(self):
+        """The reason this is per-file, pinned against the real tree.
+
+        If this ever fails, the repo has been normalised to one ending. The
+        translation stays correct either way -- but the *claim* in the docstring
+        above would have gone stale, and a stale explanation is how the
+        repo-wide version of this test got written in the first place.
+        """
+        endings = {path: harness.read(path)[1]
+                   for path in self._files_the_faults_name()}
+        self.assertEqual(
+            set(endings.values()), {"\r\n", "\n"},
+            "expected the faults to name both a CRLF and an LF file; got %r"
+            % (sorted(set(endings.values())),))
+        self.assertEqual(
+            endings["erplite/projects/doctype/timesheet_entry/timesheet_entry.py"],
+            "\r\n")
+        self.assertEqual(
+            endings["erplite/projects/doctype/timesheet_entry/timesheet_entry.json"],
+            "\n",
+            "the LF half of the demonstration is gone; the pair of files in one "
+            "DocType folder with different endings is the whole point")
+
+    def test_a_pattern_written_for_the_wrong_ending_matches_nothing(self):
+        """Both directions of the mistake, against the two real neighbours.
+
+        Not a unit test of `nl`: this is the actual failure, measured on the
+        actual files, in both directions -- a CRLF pattern against the LF file
+        as well as the LF pattern against the CRLF file.
+        """
+        py = "erplite/projects/doctype/timesheet_entry/timesheet_entry.py"
+        js = "erplite/projects/doctype/timesheet_entry/timesheet_entry.json"
+        py_text, _ = harness.read(py)
+        js_text, _ = harness.read(js)
+
+        two_lines_of_py = "        if not self.is_new():\n            return\n"
+        self.assertEqual(py_text.count(two_lines_of_py), 0,
+                         "an LF pattern matched the CRLF file")
+        self.assertEqual(py_text.count(harness.nl(two_lines_of_py, "\r\n")), 1)
+
+        two_lines_of_json = ('   "fieldname": "employee",\n'
+                             '   "fieldtype": "Link",\n')
+        self.assertEqual(js_text.count(harness.nl(two_lines_of_json, "\r\n")), 0,
+                         "a CRLF pattern matched the LF file")
+        self.assertEqual(js_text.count(two_lines_of_json), 1)
 
     def test_a_multi_line_pattern_misses_without_translation(self):
         """The mistake itself, pinned: this is what a false pass looked like."""
