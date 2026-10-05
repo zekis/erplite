@@ -101,7 +101,9 @@ SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "public"}
 #   * `Planned` has 17 real rows. The kanban's backlog column is real too
 #     (erplite/www/todo/index.py:299-305, erplite/public/js/todo/utils/TodoUtils.js:128-137).
 #
-# WHERE THOSE TWO EXTRA OPTIONS LIVE: they exist only in `tabDocField` on the live database.
+# WHERE THOSE TWO EXTRA OPTIONS LIVE: as of `erplite.patches.declare_todo_status_options`,
+# in a Property Setter this app declares. Before that patch they existed only in `tabDocField`
+# on the live database.
 # There is no Property Setter on ToDo (the only ones on this site are two on
 # `Project.naming_series`), erplite declares them nowhere (`fixtures = ["Workspace"]`, empty
 # patches.txt, no todo.json, no make_property_setter), and there is no frappe fork to hold
@@ -136,9 +138,15 @@ SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "public"}
 #     `doctype_or_field == "DocField"` it sets the property over the standard field. Those
 #     rows live in their own table and importing `todo.json` never touches them, and
 #     `_validate_selects` reads `self.meta.get_select_fields()`, so validation would accept
-#     all five. Whether erplite should declare one is a decision for the owner and is filed
-#     with him, not assumed here -- it would also give erplite its first patch, and
-#     patches.txt being empty is load-bearing for the auto-deploy rollback design.
+#     all five.
+#
+# DECIDED, 5 Oct 2026 (the owner, on review tray item rev_a007dfc7a8): "Declare them in code.
+# Backlog and Planned must stay supported." Built as `erplite.patches.declare_todo_status_options`
+# -- erplite's first patch, so `patches.txt` is no longer empty, which matters to the auto-deploy
+# rollback design and Alex has been told. The patch pins the options the site already has rather
+# than a constant, so it changed nothing on the day it landed. `tests/offline/
+# test_todo_status_property_setter.py` holds it, and compares its statuses against the mirror
+# below so these two hand-kept records cannot drift apart.
 #
 # A mirror can also go stale against a frappe upgrade. It fails safe in the same direction:
 # if frappe ADDS an option, this guard reports a violation that is no longer real, and someone
