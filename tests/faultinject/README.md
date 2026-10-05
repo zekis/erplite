@@ -233,8 +233,15 @@ breaking the code.
 
 ## Targets
 
-Nine so far. Ten test files in this repo describe having been
-fault-injected; these are the ones where that proof is reproducible.
+Ten so far, 282 injections: edits applied to the app's real source, with
+`run.py` watching one test file go red.
+
+Four other test files do fault injection of their own, inside the file —
+`test_query_fields.py`, `test_mandatory_fields_on_insert.py`,
+`test_afterz_timesheet_workflow.py` and `test_projects_api.py`. Those plant
+shapes in their own fixtures rather than editing the app, so `run.py` does not
+drive them, and what they prove is narrower: that the sweep reads what its
+author planted. `string_refs` below is what that distinction costs.
 
 ### `xero_gate` — `tests/offline/test_xero_permission_gate.py`
 
@@ -881,3 +888,127 @@ attached through `doc_events` in `hooks.py` is a **module-level function** takin
 is pinning the right thing only while `doc_events` is unused. It is commented
 out in `erplite/hooks.py` today. If it is ever filled in, this sweep stops
 covering the app and that test's name becomes wrong.
+
+### `string_refs` — `tests/offline/test_string_references.py`
+
+39 faults, 23 red, 11 controls green, 5 known blind spots green. The second
+**detector** target, and a detector with no self-tests at all: five whole-app
+assertions and nothing synthetic. That turned out to be the more interesting
+starting point than `post_save_writes`' fifteen self-tests, because the question
+is the same either way — *what can real code do that this cannot see?* — and
+with no fixtures to read, the only way to ask it is to plant the real thing in
+real source. **Ten of the thirty-nine faults were invisible to the file as it
+stood**, measured before anything was repaired.
+
+**The finding: one of the four surfaces was swept by nothing.** The file checked
+asset URLs, dotted method paths and whitelisting across `.py`, `.js`, `.vue` and
+`.html`. `erplite/patches.txt` is none of those, so the one patch this app ships
+— `erplite.patches.declare_todo_status_options`, which writes a Property Setter
+the live database depends on — was resolved by no test anywhere. Five faults in
+it were all green:
+
+| planted in `patches.txt` | noticed |
+| --- | --- |
+| a misspelt module (`..._optoins`) | **no** |
+| a module that exists but has no `execute()` | **no** |
+| the patch module's `execute` renamed | **no** |
+| a path one element short | **no** |
+| a misspelt module with frappe's usual trailing date | **no** |
+
+None of those is exotic; every one is a typo in a text file with no import to
+check it. And this is the surface with the **worst** symptom of the four:
+`execute_patch` (`frappe/modules/patch_handler.py:157`) does
+`get_attr(f"{entry.split()[0]}.execute")` *before it runs anything* and
+`migrate` lets the exception out, so **`bench migrate` stops** — part-way
+through the patch run, with the entries before it already committed. The other
+three surfaces are a dead button or a modal dialog. This one is a failed deploy.
+
+The general form: **a sweep's reach is its file-extension list, and a text
+file that is not source is where the extension list ends.** `patches.txt`,
+`hooks.py`-adjacent config, `.cfg`, a CSV of fixtures — each is a place a name
+is resolved at runtime and no import or editor will follow it. It is worth
+asking of any whole-app guard which files it opens, as a list, out loud.
+
+**Second: the two halves of one file disagreed about where the app's source
+lives.** Pass B and pass C both swept `erplite/` *and* `frontend/src` (the
+un-built Vue source). Pass A swept `erplite/` only. So a missing asset
+referenced from the Vue source was invisible, in a file whose passes look
+symmetric and sit forty lines apart — the same proximity-and-symmetry trap as
+`trip_status`' three consecutive `if/elif` arms, one level up: not three copies
+of a rule, but three copies of *where to look*. There is one `source_roots()`
+now, used by all of them, so the next root is added once.
+
+**Third: a positional-only parameter is not a style question, and skipping it
+was wrong in both directions.** The file said, reasonably: positional-only
+parameters and `*args` can never be filled by `frappe.call`, the app has none
+(measured, 0 of 114), so neither is handled rather than guessed at. The
+measurement was true and nothing asserted it. Underneath, `node.args.defaults`
+is right-aligned over `posonlyargs + args` *together*, while the code sliced it
+against `args` alone — so the moment a `/` appeared the arithmetic was computed
+off the wrong list:
+
+* `def f(project, /, entries_data)` — reported as callable, requiring
+  `entries_data`. In fact uncallable by `frappe.call` at all: Python answers a
+  keyword given for a positional-only parameter with `TypeError: f() got some
+  positional-only arguments passed as keyword arguments`. **Invisible.**
+* `def f(a="1", /, b="2", c="3")` — reported as requiring `b`, which has a
+  default. A **false positive** on correct code.
+* `def f(entries_data, /)` — went red, and for the wrong reason: making the only
+  parameter positional-only emptied `args`, so the name the caller sends looked
+  *unknown*. The right colour with a message that misdescribes the bug.
+
+Both faults are in the target, because the difference between them is the
+finding. The signature is now read in full and
+`test_no_called_function_has_a_positional_only_parameter` reports the real
+thing, so the blind spot and the false positive close with one change — and the
+measurement is a test rather than a sentence. A `*args` stays unreported: it is
+unfillable too, but harmlessly, because it is never required.
+
+**Fourth: order is not meaning.** Pass C matched `method: "..."` followed by
+`args: {...}`, in that order, with a body of `[^{}]*`. Two consequences, both
+measured: the identical wrong argument written `args` first was invisible, and
+so was a wrong argument in any call whose `args` holds a nested object — which
+is `filters: {...}`, the ordinary shape of a frappe.call. A regex that spells
+out the order of two keys is pinning the keystrokes, not the call. It now parses
+the object literal: string-aware, brace-balanced, reading only the object's own
+keys. Same net, cast at the object instead of at a character sequence — the
+seventeen call sites it reads and the keys it reads from them are unchanged.
+
+**Two corrections to the file's own prose, both of which read as evidence.**
+This is the `trip_status` lesson a second time, and it is the one I keep having
+to relearn:
+
+* The pass C docstring named `get_supplier_quotes_for_comparison(item_name,
+  project)` as its worked example of a missing required argument, in a paragraph
+  that says it was "confirmed by lifting that function out of the v15.52.0
+  source and running it". **That signature has never existed in this
+  repository** — it has been `(item_name=None, project=None)` since the file was
+  created in 98e9b04 — so against the real one, `{item_name: ...}` runs to
+  completion with `project` as `None`. Checked by running frappe's own
+  `get_newargs` against both. The general claim was right; the example was
+  invented.
+* The blind-spots list said pass B "does cover the bundles, because the bundle
+  is what is deployed — that is how the transposed name above was found".
+  `erplite/public/frontend/` is **gitignored** (b95a358, "Ignore generated
+  frontend build output"), so `BUNDLE_DIRS` matches nothing in any checkout and
+  `_is_bundle` never fires. The handling is kept, because it is correct on a
+  built bench, but offline the strength *and* the weakness that paragraph
+  describes are both empty. A sentence about coverage the tree cannot provide is
+  worse than no sentence: it reads as a reason to stop looking.
+
+**What this target does not reach**, listed in the test file rather than left
+for a green run to be over-read. A method path assembled at runtime has no
+string to read. An `args` object holding a spread, an ES2015 shorthand property
+or a computed key is skipped **whole** — reading it partly would report the
+entries it could not see as arguments the caller never sends, a false
+missing-required-argument finding against correct code, and a sweep that argues
+with correct code gets switched off. A dotted path inside a `.json` is not
+swept: frappe resolves one out of some DocType *records* (a Dashboard Chart's
+`method`, a Notification, a Server Script) and this app ships none of them,
+measured — and which JSON field in which doctype is a method path is knowledge
+that lives in frappe, not here.
+
+One shape worth naming because it is the cheap kind of wrong: pass A used
+`os.path.exists`, which is true for a **directory**. `/assets/erplite/images`
+passes that check and 404s on the live site exactly like a missing file. It is
+`os.path.isfile` now, and the finding says which of the two it is.
