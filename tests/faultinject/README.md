@@ -233,15 +233,23 @@ breaking the code.
 
 ## Targets
 
-Ten so far, 282 injections: edits applied to the app's real source, with
+Thirteen so far, 407 injections: edits applied to the app's real source, with
 `run.py` watching one test file go red.
 
-Four other test files do fault injection of their own, inside the file —
-`test_query_fields.py`, `test_mandatory_fields_on_insert.py`,
-`test_afterz_timesheet_workflow.py` and `test_projects_api.py`. Those plant
-shapes in their own fixtures rather than editing the app, so `run.py` does not
-drive them, and what they prove is narrower: that the sweep reads what its
-author planted. `string_refs` below is what that distinction costs.
+Three other test files do fault injection of their own, inside the file —
+`test_query_fields.py`, `test_mandatory_fields_on_insert.py` and
+`test_projects_api.py`. Those plant shapes in their own fixtures rather than
+editing the app, so `run.py` does not drive them, and what they prove is
+narrower: that the sweep reads what its author planted. `string_refs` below is
+what that distinction costs.
+
+`test_afterz_timesheet_workflow.py` was in that list until the thirteenth
+target. It had a test named "the fault-injection half, so a green run above
+means something" — one fault, planted in its own fixture. Driving the same file
+from here found **twelve regressions it did not notice**, which is the
+difference between a file that injects a fault and a file that has been
+injected into. If a file below says it tests itself, that is a reason to point
+`run.py` at it, not a reason to skip it.
 
 ### `xero_gate` — `tests/offline/test_xero_permission_gate.py`
 
@@ -1224,3 +1232,110 @@ staleness this file was already built to catch, now closed in the one place it
 was still open. And the stand-ins remain stand-ins: that frappe applies these
 rows the way the docstring says needs a bench, and the file says so rather than
 implying otherwise.
+
+### `afterz_workflow` — `tests/offline/test_afterz_timesheet_workflow.py`
+
+49 faults, 46 red, 3 controls green. Afterz
+(crew.tierneymorris.com.au/afterz) is the owner's daily timesheet UI; it never
+calls erplite code, but it creates and saves `Timesheet Entry` rows directly, so
+this controller's hooks and guards are the only ones its rows ever meet. The
+file existed because e585a5b put a check-out auto-submit in `before_save`, which
+runs on **every** save — so creation locked the entry, submit-week found
+nothing, and reject and un-approve landed back on `Submitted`: a rejection that
+silently re-queues the entry it just rejected.
+
+**The headline: twelve of the 49 were green, and five of the twelve belonged to
+one function.** `reject_timesheet` and `approve_timesheet` implement one rule
+from two copies of the same two lines — byte-identical except for the word
+"approve"/"reject" in the refusal, which is why every pattern in this target has
+to carry the message to match once. Approve had four tests. Reject had one, the
+happy path. So deleting reject's gate, inverting it, making it `msgprint`
+instead of `throw`, removing its write-permission hatch, and dropping its
+`!= "Submitted"` requirement were **all five green**: anyone at all could reject
+anyone's timesheet and the suite was satisfied.
+
+This is the `select_values` lesson — cover every instance, not a sample — in its
+sharpest form yet, because here the two instances are not in different files or
+different DocTypes. They are forty lines apart, in the same file, written by the
+same hand, and the test file had read one of them. **The second copy of a rule is
+free to be wrong for exactly as long as nobody asks it the questions the first
+one was asked.** The fix is six mirror tests, and the general habit: if you find
+yourself writing a pattern that needs the error message to match once, that is
+the code telling you there are two copies and you have tested one.
+
+**Second, and it is the worst defect of the twelve: an approval could have moved
+the hours.** `set_employee_default` only fills a blank `employee`. Change it to
+assign — one plausible tidy-up, `self.employee = frappe.session.user` instead of
+`if not self.employee:` — and every one of Afterz's four approval-side calls
+re-books the row against whoever clicked, because all four save an entry whose
+`employee` is somebody else. The approver's click silently transfers the time to
+themselves and the entry still reads `Approved`. All 22 tests passed. The reason
+they did is worth more than the fault: the file's `EMPLOYEE` and `APPROVER`
+constants are **the same string**, so no test above `TestTheApprovalGate` ever
+had two different people in it. A fixture where two roles are one value cannot
+fail a test that distinguishes them. `TestWhoseHoursTheseAre` now drives the
+approval and the week-submit as a different session user and asserts `employee`
+is untouched.
+
+**Third: four guards nothing had ever asked a question of.** `check_out`'s
+ownership check, `check_out`'s `is_active` check, the `validate_times()` call
+and the `check_overlapping_entries()` call could each be deleted outright with
+all 22 green. Every entry the file built was well-formed, owned by the session
+user and alone on the clock, so the guards against every other case were never
+reached. Two of the new tests are shaped by *which* guard they mean:
+
+* a second check-out must not rewrite `check_out_time` — a guard whose absence
+  does not throw, it silently inflates the hours on an already-submitted entry,
+  so the assertion has to be on the stored time and not on the refusal;
+* the overlap test inserts directly rather than calling `check_in()` twice,
+  because `check_in()` has an active-entry guard **of its own**. Going through
+  it measures that guard and leaves the controller's untested — and Afterz never
+  calls `check_in()`, so the controller's is the only one its rows meet. A test
+  that reaches a rule through the nearest convenient door may be testing the
+  door.
+
+**The two halves of this file cover each other, which is why both are faults
+here.** `TestNoSaveHookOwnsStatus` reads the source with `ast` and fails if any
+save hook assigns `self.status`; the behavioural tests drive frappe's real
+save ordering. Seven faults put the same submit in seven different hooks —
+`validate`, `before_validate`, `before_insert`, `on_update`, `on_change`,
+`after_insert`, `on_update_after_submit` — and the two halves catch different
+subsets: the driver only runs the hooks frappe's `_save()` runs, so
+`before_insert` and `after_insert` are caught by the AST test alone, while
+`on_update` is caught *only* by it (an assignment there is discarded, so the
+behaviour is correct by accident). Conversely two faults spell the assignment so
+the AST test cannot see it — `setattr(self, "status", ...)`, which it does not
+recognise, and `self.status += "ted"`, which it does — and the behavioural tests
+catch the first. Neither half is redundant; each is the other's blind spot.
+
+**A control that went red, and it was the control that was wrong.** The first
+version of "the overlap query's local renamed" renamed the two reads of
+`active_entries` and not the assignment, so the local was undefined and 18 tests
+raised `NameError`. That is not a control, it is a fault wearing a control's
+label, and this README already says why it matters: *a negative control that
+goes red is not a control.* The signal was the shape of the failure — a control
+that pins an internal goes red in one or two tests, not eighteen. **Read the
+count before you believe the verdict.** The pattern is now the whole span,
+assignment included, generated from the source rather than typed.
+
+**One claim corrected in the test file, not in the code.** Its docstring said
+Afterz "was last pushed 15 Aug 2025 (dd78fe0), so the deployed copy may differ"
+— a date read off GitHub when the file was written, and the stated reason for
+pinning behaviour rather than line numbers. Afterz is now an office repository
+that moves daily: `develop` is its default branch and its tip was `caa000d` on
+6 Oct 2026. Every line number in that docstring's table had moved (five of five,
+by as much as 83 lines). **Not one of the five behaviours had**, read from
+`origin/develop` at `caa000d`. So the choice the stale claim was used to justify
+was right for a better reason than the one given, and the reasoning is what gets
+corrected: the line numbers are a sketch of where to look and the part of the
+file to distrust; the five states are the claim.
+
+**What this target does not reach.** That frappe really runs these hooks in this
+order needs a bench; `WorkflowTestCase` is a port of `Document._save()` and
+`insert()` and says which lines it stands for, which is a claim about the port
+and not about frappe. `validate_employee_ownership` has its own target
+(`timesheet_ownership`) and this file deliberately does not duplicate it — one
+fault here measures only that Afterz's own paths still survive it. And the
+approval gate's `or not frappe.has_permission(...)` hatch is pinned as it
+stands, in both copies now, so changing it is a decision rather than an
+accident.
