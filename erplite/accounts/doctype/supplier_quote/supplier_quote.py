@@ -24,8 +24,15 @@ class SupplierQuote(Document):
 		self.total_tax = 0
 		
 		for item in self.items:
-			if item.amount:
-				self.total += flt(item.amount)
+			# Derive the line amount here rather than reading it. Frappe never runs a
+			# child DocType's controller hooks, so Supplier Quote Item.validate() --
+			# the only other place amount was computed -- never fired, and amount was
+			# in practice set only by supplier_quote.js in the browser. A quote built
+			# server-side or over the REST API therefore totalled zero in silence,
+			# because `if item.amount:` skipped every line. sales_invoice.py and
+			# purchase_invoice.py already derive their line amounts this way.
+			item.amount = flt(item.qty) * flt(item.rate)
+			self.total += item.amount
 		
 		self.grand_total = self.total + self.total_tax
 	

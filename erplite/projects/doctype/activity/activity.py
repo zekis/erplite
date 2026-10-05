@@ -22,19 +22,19 @@ def get_project_activities(project):
 @frappe.whitelist()
 def get_activity_summary(project=None):
 	"""Get activity summary statistics"""
-	filters = {}
+	filters = {"docstatus": ["<", 2]}
 	if project:
 		filters["project"] = project
-	
-	# Get activity counts by status
-	status_counts = frappe.db.sql("""
-		SELECT status, COUNT(*) as count
-		FROM `tabActivity`
-		WHERE docstatus < 2 {project_filter}
-		GROUP BY status
-	""".format(
-		project_filter=f"AND project = '{project}'" if project else ""
-	), as_dict=True)
+
+	# Count activities by status. The project name travels as a value, never as SQL
+	# text: interpolating it into the query string broke on any name containing an
+	# apostrophe, and let a caller append SQL of their own.
+	status_counts = frappe.get_all(
+		"Activity",
+		filters=filters,
+		fields=["status", "count(*) as count"],
+		group_by="status",
+	)
 	
 	return {
 		"status_counts": status_counts

@@ -381,6 +381,54 @@ same class of mistake as any walker that confuses `ast.walk`'s "every node
 below here" with "every node in this scope". **A walker that decides what
 counts as "this scope" needs a test for the scope boundary itself.**
 
+## `test_child_doctype_hooks.py` — a hook on a child DocType never runs
+
+A child DocType's controller must not define document hooks, because Frappe never
+runs them. `Document._validate()` gives children frappe's own `_validate_*` helpers
+and nothing more -- `d.validate()` and `d.run_method(...)` appear nowhere in that
+loop -- and every `run_method("...")` in `document.py` is called on `self`, the
+parent being saved.
+
+So a `validate()` on an `istable: 1` DocType is syntactically fine, imports fine,
+reads exactly like a `validate()` on its parent, and never executes. No error, and
+nothing in the Error Log.
+
+Three of the app's eight child DocTypes had one. The one that mattered:
+
+`Supplier Quote Item.validate()` called `calculate_amount()`, which was the only
+server-side code that set `amount`. `Supplier Quote.calculate_totals()` then read it
+back with `if item.amount:`. `amount` is `read_only: 1`, so a user cannot type it
+either, and an unsupplied field is `None` after `init_valid_columns()` -- so the
+guard was simply falsy and every line was skipped. **A Supplier Quote created
+anywhere but the Desk UI saved with a `grand_total` of zero**, silently.
+`supplier_quote.js:88` sets `row.amount = row.qty * row.rate` in the browser, which
+is the only reason any quote has a total at all. Fixed by deriving the line amount
+in the parent's `calculate_totals()`, which `sales_invoice.py` and
+`purchase_invoice.py` already do.
+
+`Sales Invoice Item` and `Purchase Invoice Item` had the same dead `validate()`, but
+both parents already derive `amount` and `tax_amount`, so removing them changed no
+behaviour. They are gone anyway, because they are what made the Supplier Quote
+parent look covered.
+
+Note which half was the defensive half. The invoice controllers have no `flt()` and
+no `if`, so a bad value raises -- `self.total += item.amount` on a string is a
+`TypeError` and somebody finds out. Supplier Quote had both, and `if item.amount:`
+is exactly what turned a missing value into a silently wrong total. The careful code
+is why this one was quiet.
+
+`HOOKS` was read out of Frappe 15's `run_method("...")` call sites
+(`model/document.py`, `model/naming.py`, `model/delete_doc.py`,
+`desk/form/load.py`), not recalled: a hook name Frappe does not call would make this
+guard report code that is fine. `test_every_hook_name_is_one_frappe_calls` pins
+that, and `ALLOWED` is empty -- every child controller in the app is hook-free, so
+strictness costs nothing here.
+
+Besides the whole-app pass there are 10 walker self-tests (including the scope
+boundary: a `def validate` nested in another method, and one at module level, are
+not hooks), 6 regression tests that drive the real `Supplier Quote` controller so a
+revert fails rather than just going unnoticed, and 3 premises tests reading the
+DocType JSON.
 ## `test_select_values.py` — a value the Select cannot hold
 
 A Select field carries its whole permitted set in its own `options`, so this is
