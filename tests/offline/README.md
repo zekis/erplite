@@ -141,6 +141,106 @@ These tests drive the real controller through the stand-in's save ordering over 
 five Afterz paths plus the full Draft → Submitted → Approved round trip. They are
 written against the **workflow** rather than against line numbers, because Afterz
 has its own release cycle and the deployed copy may differ from GitHub's.
+## Whole-app guards
+
+`test_undeclared_attributes.py` does not test one module. It parses the whole
+app and fails if anything reads a field its DocType does not declare, in
+either of the two places that failure lives:
+
+- `self.<x>` in a DocType's own controller, with the call graph walked out
+  from the new-document hooks (`validate`, `before_insert`, ...) so a helper
+  that `validate()` calls is reported as the creation-breaking kind rather
+  than the merely stale kind;
+- `doc = frappe.new_doc("X")` ... `doc.<y>` anywhere in the app, which is
+  where the whitelisted endpoints live.
+
+Both are deliberately conservative: a name is only reported if it is declared
+nowhere in the DocType JSON, is never assigned on the object, and is not a
+Frappe `Document` attribute. A failure is therefore a real finding, and the
+right response is to fix the read rather than to add an exception for it.
+
+Neither guard can see a DocType this app does not define, because the field
+list of a Frappe core DocType is not in this repo. The second one skips those
+rather than guessing at them.
+
+`test_client_scripts.py` is the same idea on the browser side, and the failure
+there is louder. Frappe's `frm.set_value` ends its inner `_set` with
+
+    frappe.msgprint(__("Field {0} not found.", [f]));
+    throw "frm.set_value";
+
+for a fieldname the form does not know, so setting a field the DocType no
+longer declares is a modal error dialog plus an aborted handler - not the
+silent stale read that a query gives you. Note that only the string form is
+dangerous: `frm.set_value({x: 1})` is guarded by `me.get_field(f)` and skips
+quietly, while `frm.set_value('x', 1)` goes straight through.
+
+A client script's DocType is taken from where it lives -
+`erplite/<module>/doctype/<x>/<x>.js` belongs to the DocType defined by
+`<x>.json` beside it - which is what makes the check exact rather than a grep.
+
+Its own blind spots are listed in the module docstring and are worth reading
+before concluding this class is gone: `frm.doc.<field>` reads (inert, and a
+product question on Activity), `frappe.model.set_value(cdt, cdn, ...)` on
+child tables (the DocType is a runtime variable), and JS outside the doctype
+folders - `public/js`, `www`, and the Vue app - which uses the REST API
+instead and is not covered here at all.
+
+## Shadowing an import: Python's own scoping, not Frappe's
+
+`test_shadowed_imports.py` is the sixth surface and the first that is about
+**Python's rules rather than Frappe's**. A name assigned anywhere in a function
+body is local for the *whole* body, so a function that imports a name at module
+level, uses it, and only later assigns it raises `UnboundLocalError: cannot
+access local variable 'x' where it is not associated with a value`. Nothing is
+undefined: the name exists at module level and locally, and only the order is
+wrong.
+
+In a Frappe app the name this happens to is `_`. Every module does
+`from frappe import _`, and `mime_type, _ = mimetypes.guess_type(x)` is ordinary
+Python for throwing a value away.
+
+    @frappe.whitelist()
+    def download_file(file_path=None):
+        try:
+            ...
+            if not file_path:
+                frappe.throw(_("File path is required"))   # line 274: UnboundLocalError
+            ...
+            mime_type, _ = mimetypes.guess_type(filename)  # line 298: makes _ local
+        except Exception as e:
+            return {"success": False, "error": f"Download failed: {str(e)}"}
+
+The blanket `except Exception` then reports it, so a download requested with no
+path answered `Download failed: cannot access local variable '_' where it is
+not associated with a value` instead of the message that was written and
+translated for exactly that case. **The symptom misdirects: it reads like a
+bug in the error handling rather than in the line that throws.**
+
+Two passes. Pass A fails on a module-level import *used before* being assigned
+locally, app-wide. Pass B is stricter and fails on **any** shadowing of `_`,
+reachable or not, because the gap between latent and live is one added line
+that nobody would think to check - the app had one of each, in neighbouring
+functions of the same file.
+
+Both are fixed by naming the discarded value (`_encoding`), which reads better
+anyway.
+
+Blind spots, as always stated as places to look: pass A compares line numbers,
+not control flow, so a use reached first at runtime but written after the
+assignment (a loop re-entry) is not flagged; only module-level *imports* are
+considered, not module-level constants; and a nested `def _()` binds the name
+without being flagged, since the nested scope is skipped.
+
+`TestTheSweepItselfWorks` carries the two real shapes reduced to their smallest
+source, plus the cases that must *not* be findings. That class earned its keep
+immediately: `test_a_nested_function_is_its_own_scope` failed on the first run
+and the bug was in the walker, not the app - it skipped nested functions when
+expanding children but not when a nested `def` was a direct statement of the
+body, so the inner function's assignment was attributed to the outer one. The
+same class of mistake as any walker that confuses `ast.walk`'s "every node
+below here" with "every node in this scope". **A walker that decides what
+counts as "this scope" needs a test for the scope boundary itself.**
 
 ## `test_child_doctype_hooks.py` — a hook on a child DocType never runs
 

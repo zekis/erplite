@@ -3,10 +3,11 @@
 
 frappe.ui.form.on('Project', {
     refresh: function(frm) {
-        // Set default project manager to current user if not set
-        if (frm.is_new() && !frm.doc.project_manager) {
-            frm.set_value('project_manager', frappe.session.user);
-        }
+        // The project_manager field was removed from the Project DocType, so the default
+        // that used to be set here cannot be written: frm.set_value on an undeclared
+        // field raises "Field project_manager not found." and aborts refresh. Restore
+        // this in one line once the replacement field is chosen (timesheet_approver or
+        // project_lead).
         
         // Add custom buttons
         if (!frm.is_new()) {

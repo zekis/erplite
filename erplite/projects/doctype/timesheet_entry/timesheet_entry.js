@@ -149,13 +149,11 @@ frappe.ui.form.on('Timesheet Entry', {
         }
     },
     
-    check_in_time: function(frm) {
-        // Set date from check_in_time
-        if (frm.doc.check_in_time && !frm.doc.date) {
-            let check_in_date = frappe.datetime.get_date_obj(frm.doc.check_in_time);
-            frm.set_value('date', frappe.datetime.obj_to_str(check_in_date));
-        }
-    },
+    // The date field was removed from the Timesheet Entry DocType; the entry's date is
+    // now derived from check_in_time wherever it is needed (see dashboard_widgets.py,
+    // which selects `check_in_time as date`). The handler that used to populate it
+    // raised "Field date not found." on every check-in, so it is gone rather than
+    // repointed.
     
     check_out_time: function(frm) {
         // Auto-submit when check-out is completed
