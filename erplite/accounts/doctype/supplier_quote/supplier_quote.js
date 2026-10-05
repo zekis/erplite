@@ -16,22 +16,10 @@ frappe.ui.form.on('Supplier Quote', {
 			}, __('Actions'));
 		}
 		
-		if (frm.doc.status === "Accepted") {
-			frm.add_custom_button(__('Create Purchase Order'), function() {
-				frappe.call({
-					method: 'erplite.accounts.doctype.supplier_quote.supplier_quote.create_purchase_order_from_quote',
-					args: {
-						quote_name: frm.doc.name
-					},
-					callback: function(r) {
-						if (r.message) {
-							frappe.msgprint(__('Purchase Order {0} created successfully', [r.message]));
-							frm.reload_doc();
-						}
-					}
-				});
-			}, __('Create'));
-		}
+		// There is no "Create Purchase Order" button on an Accepted quote. There is
+		// no Purchase Order DocType in this app, so the endpoint it called could
+		// only ever raise DoesNotExistError; the owner decided to remove both rather
+		// than build one (review item rev_0ee5b675ce).
 		
 		// Add quote comparison button
 		frm.add_custom_button(__('Compare Quotes'), function() {

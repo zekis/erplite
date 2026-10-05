@@ -102,34 +102,10 @@ def get_supplier_quotes_for_comparison(item_name=None, project=None):
 	
 	return quotes
 
-@frappe.whitelist()
-def create_purchase_order_from_quote(quote_name):
-	"""Create Purchase Order from Supplier Quote"""
-	quote = frappe.get_doc("Supplier Quote", quote_name)
-	
-	# Create Purchase Order (this would need the Purchase Order doctype to exist)
-	po_doc = frappe.new_doc("Purchase Order")
-	po_doc.supplier = quote.supplier
-	po_doc.supplier_name = quote.supplier_name
-	po_doc.company = quote.company
-	po_doc.currency = quote.currency
-	po_doc.project = quote.project
-	
-	# Add items
-	for item in quote.items:
-		po_doc.append("items", {
-			"item_name": item.item_name,
-			"description": item.description,
-			"qty": item.qty,
-			"rate": item.rate,
-			"amount": item.amount,
-			"delivery_date": item.delivery_date
-		})
-	
-	po_doc.save()
-	
-	# Update quote status
-	quote.status = "Accepted"
-	quote.save()
-	
-	return po_doc.name
+# create_purchase_order_from_quote was removed here. It called
+# frappe.new_doc() for a "Purchase Order" DocType, and no app on this bench
+# declares one, so every call raised DoesNotExistError before it reached the
+# first assignment -- a whitelisted endpoint that could not succeed for any
+# input. Its own comment said the DocType "would need to exist". The owner's
+# decision on review item rev_0ee5b675ce was to remove the endpoint and its
+# button rather than add the DocType.
