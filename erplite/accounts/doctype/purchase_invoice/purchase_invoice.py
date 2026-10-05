@@ -67,6 +67,25 @@ def send_to_xero(docname):
     """Send purchase invoice to Xero"""
     from erplite.xero.accounts import create_purchase_invoice
     
+    # Whitelisted means any logged-in user can call this by name, so the Desk
+    # button is not the gate -- and until this line there was no gate at all.
+    # Nothing below checks either: frappe.get_doc does no permission
+    # check (frappe/__init__.py:1308 delegates to model/document.py, where
+    # check_permission is called only from insert, save, submit/cancel and
+    # delete -- loading a document is not one of them), and the result is
+    # recorded with frappe.db.set_value, which checks no permission and runs
+    # no validate. So a Projects User -- no read and no write on
+    # Purchase Invoice -- could push a real invoice into the real Xero ledger.
+    #
+    # This sits OUTSIDE the try on purpose. frappe.PermissionError is a plain
+    # Exception (frappe/exceptions.py:34), not a ValidationError, so inside the
+    # try the `except Exception` below would catch a refusal and re-raise it as
+    # "Failed to send invoice to Xero: {0}" -- turning a 403 refusal into a 417
+    # validation failure and telling the user a send failed when nothing was
+    # sent. That is the same mislabelling the comment in that handler warns
+    # about.
+    frappe.has_permission("Purchase Invoice", "write", doc=docname, throw=True)
+
     try:
         # Get purchase invoice
         purchase_invoice = frappe.get_doc("Purchase Invoice", docname)

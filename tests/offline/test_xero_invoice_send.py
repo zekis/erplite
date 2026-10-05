@@ -80,6 +80,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from fake_frappe import (  # noqa: E402
     FakeDocumentBase, FakeFrappe, ValidationError, _dict, doctype_fields,
+    doctype_permissions,
 )
 
 APP_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -270,6 +271,11 @@ def world(doctype, module, doctype_dir, row):
     """A FakeFrappe holding one invoice, its settings and no attachments."""
     frappe = FakeFrappe(session_user="zeke@tierneymorris.com.au", roles=["System Manager"])
     frappe.fields[doctype] = doctype_fields(module, doctype_dir)
+    # send_to_xero checks write permission before it posts (owner's decision
+    # rev_c3343b2cf3), so the rows have to be here or the gate cannot answer.
+    # System Manager holds write on all four, so nothing in this file is gated
+    # out -- the refusal path is test_xero_permission_gate.py's subject.
+    frappe.permissions[doctype] = doctype_permissions(module, doctype_dir)
     frappe.fields["File"] = FILE_FIELDS
     frappe.tables[doctype] = [row]
     frappe.tables["File"] = []

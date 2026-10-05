@@ -79,6 +79,25 @@ class ValidationError(Exception):
     """What frappe.throw raises."""
 
 
+class PermissionError(Exception):
+    """frappe.PermissionError, raised by has_permission(throw=True).
+
+    Deliberately NOT a subclass of ValidationError, because frappe's is not:
+    `frappe/exceptions.py:34` declares `class PermissionError(Exception)` with
+    `http_status_code = 403`, while `ValidationError` (`:18`) is a separate
+    `Exception` subclass carrying 417.
+
+    That distinction is load-bearing rather than cosmetic. Four of the six Xero
+    endpoints wrap their body in `except Exception` and re-raise through
+    `frappe.throw`, which raises ValidationError. A permission gate placed
+    *inside* one of those try blocks would therefore be caught and relabelled
+    "Failed to send invoice to Xero" -- reporting a refusal, which sent nothing,
+    as a failed send, which may have sent something. If this class inherited
+    from ValidationError the tests could not tell the two apart and the gate
+    could be moved inside the try without anything going red.
+    """
+
+
 class _dict(dict):
     """dict with attribute access, like frappe._dict."""
 
@@ -132,6 +151,35 @@ def doctype_select_options(module, doctype_dir):
         if allowed:
             options[name] = allowed
     return options
+
+
+def doctype_permissions(module, doctype_dir):
+    """role -> {ptype: True} for a DocType, from the `permissions` rows in its JSON.
+
+    Read from the JSON for the same reason as the field list: the gate under test
+    enforces the rows this repo ships, so the test must follow them rather than
+    restate them. If someone grants a new role write on Sales Invoice, these
+    tests move with it instead of going stale.
+    """
+    path = os.path.join(
+        APP_ROOT, "erplite", module, "doctype", doctype_dir, doctype_dir + ".json"
+    )
+    with open(path, "rb") as handle:
+        definition = json.loads(handle.read().decode("utf-8"))
+
+    rows = {}
+    for row in definition.get("permissions", []):
+        role = row.get("role")
+        if not role:
+            continue
+        granted = {p for p in ("read", "write", "create", "delete", "submit",
+                               "cancel", "amend", "report", "export", "share")
+                   if row.get(p)}
+        entry = rows.setdefault(role, {"granted": set(), "if_owner": False})
+        entry["granted"] |= granted
+        if row.get("if_owner"):
+            entry["if_owner"] = True
+    return rows
 
 
 # ToDo is a Frappe DocType, not one of ours, so its fields are listed here.
@@ -245,6 +293,8 @@ class FakeFrappe(object):
             "Schedule Entry": doctype_select_options("scheduler", "schedule_entry"),
             "Resource": doctype_select_options("scheduler", "resource"),
         }
+        self.permissions = {}  # doctype -> doctype_permissions(...) rows
+        self.permission_checks = []  # every has_permission asked, for assertions
         self.errors = []
         self.messages = []
         self.commits = 0
@@ -270,6 +320,82 @@ class FakeFrappe(object):
     def _(self, message, *args, **kwargs):
         """frappe._ is gettext; the stand-in passes the string through."""
         return message
+
+    def has_permission(self, doctype=None, ptype="read", doc=None, user=None,
+                       throw=False, **kwargs):
+        """frappe.has_permission, enforcing the permission rows this repo ships.
+
+        Mirrors frappe 15.52.0 in the behaviours these tests rest on, each read
+        from the source rather than assumed:
+
+          * `Administrator` is allowed everything, before any row is consulted
+            (`frappe/permissions.py:106-108`).
+          * A `doc` given as a **name** is loaded and the check is done against
+            the document (`permissions.py:125-127`). So a name that does not
+            exist raises `DoesNotExistError` -- it is not a refusal, and the
+            difference matters: a gate must not turn a typo into "no permission".
+          * With `throw=True` a refusal raises `frappe.PermissionError`
+            (`frappe/__init__.py:1045-1048`); with `throw=False` it returns
+            False and raises nothing.
+          * `doctype` may be omitted when `doc` is a document, in which case the
+            DocType comes off the doc (`__init__.py:1032-1033`).
+
+        The permission rows come from `self.permissions`, loaded out of the
+        DocType JSON by `doctype_permissions`. A DocType with no entry there is
+        refused for every non-Administrator rather than allowed, so a test that
+        forgot to load its rows fails loudly instead of passing vacuously.
+
+        Blind spots, stated so they are places to look rather than places to
+        stop: real frappe also applies User Permissions, document sharing,
+        `has_permission` hooks and the submittable docstatus rules in
+        `get_doc_permissions`. None of the four DocTypes gated here declares a
+        share rule or a hook, and none is submittable, so the role rows and
+        `if_owner` are the whole of the real answer for them -- but this is not
+        a general-purpose permission engine and should not be used as one.
+        """
+        if doctype is None and doc is not None and hasattr(doc, "doctype"):
+            doctype = doc.doctype
+
+        if user is None:
+            user = self.session.user
+
+        if user == "Administrator":
+            return True
+
+        rows = self.permissions.get(doctype)
+        if rows is None:
+            raise AssertionError(
+                "has_permission asked about %r, whose permission rows were never "
+                "loaded into this FakeFrappe. Load them with "
+                "doctype_permissions(module, dir) so the answer comes from the "
+                "DocType JSON rather than from this stand-in's silence." % (doctype,)
+            )
+
+        # A name resolves to the document, as frappe does, so a missing record
+        # raises rather than being refused.
+        if doc is not None and isinstance(doc, (str, int)):
+            doc = self.get_doc(doctype, doc)
+
+        allowed = False
+        for role in self.get_roles(user):
+            entry = rows.get(role)
+            if not entry or ptype not in entry["granted"]:
+                continue
+            if entry["if_owner"] and doc is not None:
+                owner = doc.get("owner") if hasattr(doc, "get") else None
+                if owner != user:
+                    continue
+            allowed = True
+            break
+
+        self.permission_checks.append(
+            _dict(doctype=doctype, ptype=ptype,
+                  doc=(doc.get("name") if doc is not None and hasattr(doc, "get") else doc),
+                  user=user, allowed=allowed, threw=bool(throw) and not allowed))
+
+        if not allowed and throw:
+            raise PermissionError("No permission for %s" % (doctype,))
+        return allowed
 
     def get_roles(self, user=None):
         return list(self._roles)
