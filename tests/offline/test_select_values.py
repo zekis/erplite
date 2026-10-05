@@ -101,13 +101,44 @@ SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "public"}
 #   * `Planned` has 17 real rows. The kanban's backlog column is real too
 #     (erplite/www/todo/index.py:299-305, erplite/public/js/todo/utils/TodoUtils.js:128-137).
 #
-# WHERE THOSE TWO EXTRA OPTIONS LIVE IS UNRESOLVED, and it is a deploy risk rather than a
-# test problem. There is no Property Setter on ToDo (the only ones on this site are two on
+# WHERE THOSE TWO EXTRA OPTIONS LIVE: they exist only in `tabDocField` on the live database.
+# There is no Property Setter on ToDo (the only ones on this site are two on
 # `Project.naming_series`), erplite declares them nowhere (`fixtures = ["Workspace"]`, empty
 # patches.txt, no todo.json, no make_property_setter), and there is no frappe fork to hold
-# them. So as far as anyone has been able to check they exist only in `tabDocField` on the
-# live database, which a `bench migrate` would reset to frappe's three -- taking the 17
-# Planned ToDos off-list and emptying two kanban columns, quietly, on a routine deploy.
+# them.
+#
+# CORRECTION, 6 Oct 2026 (Ellis). The paragraph above used to end "which a `bench migrate`
+# would reset to frappe's three". That was the wrong trigger and it is worth being exact
+# about, because the wrong trigger makes a routine deploy look dangerous and a frappe upgrade
+# look safe. It is the other way round. Traced read-only through frappe's own source at the
+# installed tag v15.52.0:
+#
+#   * A routine `bench migrate` does NOT touch ToDo. `migrate.py:120` calls
+#     `frappe.model.sync.sync_all()` with no arguments, so `force=0`. In
+#     `import_file.py:130-144` the only skip gate that applies to a DocType is
+#     `stored_hash == calculated_hash` (`migration_hash` against the hash of the JSON on
+#     disk); the timestamp gate beside it is explicitly `and doc["doctype"] != "DocType"`,
+#     so a newer DB timestamp does NOT save a DocType. An unchanged frappe means an
+#     unchanged todo.json means an equal hash, so the import is skipped.
+#   * The 17 `Planned` rows are themselves the evidence of that, not an inference. If the
+#     hash gate were not holding, ToDo would be reimported on EVERY migrate, the five
+#     options would already be gone, and no ToDo could be sitting on `Planned`. They have
+#     survived many migrates.
+#   * A FRAPPE UPGRADE is the trigger, and it is silent. Any frappe version bump changes
+#     `todo.json`, so the hash differs and `import_doc` runs (`import_file.py:145`). That
+#     calls `delete_old_doc` (258-276), which deletes the ToDo DocType and its DocField
+#     children -- `ignore_doctypes = [""]` spares nothing and `ignore_values` has no DocType
+#     entry -- and reinserts from the JSON. ToDo/status goes back to `Open\nClosed\nCancelled`
+#     with default `Open`: the 17 Planned rows go off-list, `Backlog` stops being the default,
+#     and two of the kanban's three columns empty. Nothing errors and nothing is logged.
+#   * A Property Setter would survive, which is the point of them. `meta.py:138` calls
+#     `apply_property_setters` (360-387) on every meta load, and for
+#     `doctype_or_field == "DocField"` it sets the property over the standard field. Those
+#     rows live in their own table and importing `todo.json` never touches them, and
+#     `_validate_selects` reads `self.meta.get_select_fields()`, so validation would accept
+#     all five. Whether erplite should declare one is a decision for the owner and is filed
+#     with him, not assumed here -- it would also give erplite its first patch, and
+#     patches.txt being empty is load-bearing for the auto-deploy rollback design.
 #
 # A mirror can also go stale against a frappe upgrade. It fails safe in the same direction:
 # if frappe ADDS an option, this guard reports a violation that is no longer real, and someone
