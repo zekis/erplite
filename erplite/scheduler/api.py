@@ -168,7 +168,7 @@ def get_schedule_entries(start_date, end_date, resource=None, project=None):
         if entry.project:
             entry['project_name'] = frappe.db.get_value("Project", entry.project, "project_name")
         if entry.activity:
-            entry['activity_name'] = frappe.db.get_value("Activity", entry.activity, "subject")
+            entry['activity_name'] = frappe.db.get_value("Activity", entry.activity, "activity_name")
         if entry.resource:
             entry['resource_name'] = frappe.db.get_value("Resource", entry.resource, "resource_name")
         
@@ -506,7 +506,7 @@ def get_unassigned_entries(start_date=None, end_date=None, project=None):
         if entry.project:
             entry['project_name'] = frappe.db.get_value("Project", entry.project, "project_name")
         if entry.activity:
-            entry['activity_name'] = frappe.db.get_value("Activity", entry.activity, "subject")
+            entry['activity_name'] = frappe.db.get_value("Activity", entry.activity, "activity_name")
     
     return entries
 
