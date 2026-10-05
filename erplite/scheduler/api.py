@@ -49,7 +49,7 @@ def get_scheduler_data(start_date=None, end_date=None, resource=None, project=No
 def get_projects_and_activities():
     """Get all projects with their activities"""
     
-    projects = frappe.get_all("Project",
+    projects = frappe.get_list("Project",
         fields=["name", "project_name", "status", "project_lead", "division"],
         filters={"status": ["!=", "Archived"]},
         order_by="project_name"
@@ -65,7 +65,7 @@ def get_projects_and_activities():
                 project['division_color'] = division_data.color
         
         # Get activities for each project
-        activities = frappe.get_all("Activity",
+        activities = frappe.get_list("Activity",
             fields=["name", "activity_name", "status"],
             filters={"project": project.name, "status": ["!=", "Cancelled"]},
             order_by="activity_name"
@@ -87,7 +87,7 @@ def get_resources(resource_type=None, status="Active"):
     if resource_type:
         filters["resource_type"] = resource_type
     
-    resources = frappe.get_all("Resource",
+    resources = frappe.get_list("Resource",
         filters=filters,
         fields=["name", "resource_name", "resource_type", "status", "capacity"],
         order_by="resource_name"
@@ -115,7 +115,7 @@ def get_roles(status="Active"):
     elif status == "Inactive":
         filters["is_active"] = 0
     
-    roles = frappe.get_all("Scheduler Role",
+    roles = frappe.get_list("Scheduler Role",
         filters=filters,
         fields=["name", "role_name", "role_code", "description", "is_active", "color", "hourly_rate"],
         order_by="role_name"
@@ -144,7 +144,7 @@ def get_schedule_entries(start_date, end_date, resource=None, project=None):
     if project:
         filters["project"] = project
     
-    entries = frappe.get_all("Schedule Entry",
+    entries = frappe.get_list("Schedule Entry",
         filters=filters,
         fields=[
             "name", "project", "activity", "resource", "schedule_date", 
@@ -432,7 +432,7 @@ def get_resource_capacity_report(resource, start_date, end_date):
     resource_doc = frappe.get_doc("Resource", resource)
     
     # Get schedule entries for the period
-    entries = frappe.get_all("Schedule Entry",
+    entries = frappe.get_list("Schedule Entry",
         filters={
             "resource": resource,
             "schedule_date": ["between", [start_date, end_date]],
@@ -499,7 +499,7 @@ def get_unassigned_entries(start_date=None, end_date=None, project=None):
     if project:
         filters["project"] = project
     
-    entries = frappe.get_all("Schedule Entry",
+    entries = frappe.get_list("Schedule Entry",
         filters=filters,
         fields=[
             "name", "project", "activity", "schedule_date", "duration", 
@@ -534,7 +534,7 @@ def get_schedule_rows(start_date=None, end_date=None, project=None):
         filters["project"] = project
     
     # Get all schedule rows
-    schedule_rows = frappe.get_all("Schedule Row",
+    schedule_rows = frappe.get_list("Schedule Row",
         filters=filters,
         fields=[
             "name", "project", "activity", "resource", "role", "project_name", 
