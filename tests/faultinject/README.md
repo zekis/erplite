@@ -107,6 +107,13 @@ each turns a false pass into a hard stop.
    misreading needs bytecode writing to be on, which is why switching it off is
    the first of the three.
 
+Indentation is the same kind of property as the line ending, and it bit while
+`whitelist_write_gate` was being written: `scheduler_log.py` is indented with
+**tabs** and `scheduler/api.py` in the same module uses four spaces. A pattern
+copied from one file to its neighbour matches nothing — silently, exactly like a
+pass, and caught only by the match-count assertion. Never infer a file's shape
+from a file beside it.
+
 A fifth, which no guard can catch for you: **a negative control that goes red
 is not a control.** It must change the source genuinely and change behaviour not
 at all — a local variable rename, not a comment.
@@ -120,6 +127,15 @@ parameters, and the same fault produced different labels on different runs.
 unittest's own result object is the authority:
 `{str(test) for test, _ in result.failures + result.errors}`.
 
+A seventh, and the one this harness is best placed to find: **a test's data has
+to straddle the boundary the test names, or it pins a range and not a number.**
+`test_the_default_is_still_thirty_days` chose two dates 65 days apart and
+asserted one of them went. That is true of a default anywhere from 1 to 64 days,
+so the test passed with the default changed to 60 while claiming to pin 30. The
+fix is the pair of dates immediately either side of the cutoff — and then a fault
+on *each* side of 30, because a fault on one side only shows the test rejects
+something.
+
 ## Adding a target
 
 For each claim the test file makes, ask: *what edit to the real source would
@@ -132,6 +148,14 @@ Three habits earn their keep:
 * **Include a negative control.** Without one, "every fault went red" can just
   mean the test file fails at the slightest touch, which is not the same thing
   as biting.
+* **A guard that reports a list needs a second kind of control: one that
+  changes behaviour and must still not be reported.** `whitelist_write_gate`
+  sweeps the whole app for whitelisted endpoints reaching ungated writes, and
+  five faults add such a write and must turn it red. All five would also pass
+  against a sweep that reported *every* new write, so the same write is added to
+  an endpoint that **is** gated and must stay green. That is not a no-op edit —
+  it is a control for the classifier's discrimination rather than for the test's
+  sensitivity, and the two are different claims. Say which kind each one is.
 * **Cover every instance of the rule, not a sample.** A gate on four DocTypes
   needs four faults. A test that notices two of them is guarding two — and you
   cannot find that out from a sample of two that both went red. Doing this for
@@ -152,7 +176,7 @@ breaking the code.
 
 ## Targets
 
-Four so far. Ten test files in this repo describe having been
+Five so far. Ten test files in this repo describe having been
 fault-injected; these are the ones where that proof is reproducible.
 
 ### `xero_gate` — `tests/offline/test_xero_permission_gate.py`
@@ -349,3 +373,108 @@ The six/six split above is itself a measurement made *after* the bytecode guard
 in point 4 was in place. Before it, the same sweep reported two and ten — and
 that wrong number was written into this README before being caught. Three
 independent runs of the attribution now give byte-identical results.
+
+### `whitelist_write_gate` — `tests/offline/test_whitelist_write_gate.py`
+
+The owner's decision on rev_18a8f8826d, and the whole-app generalisation of
+rev_c3343b2cf3 that it belongs to. `clear_old_logs` is `@frappe.whitelist()` and
+deletes through `frappe.db.sql`, which consults no permission row, runs no
+`validate` and fires no hook — so until the gate landed, any logged-in user
+could wipe the scheduler log by calling the method by name. It now asks whether
+the caller may `delete` Scheduler Log, which the DocType's own rows give to
+System Manager alone.
+
+The test file has **two halves, and both are injected here**, because they fail
+in different ways:
+
+* `clear_old_logs` itself — the gate, and the argument handling around it;
+* **a sweep of all 134 app modules** for whitelisted endpoints that reach a
+  permission-bypassing write. `KNOWN_UNGATED` is empty, so that half passing is a
+  claim about the whole app: no whitelisted endpoint anywhere reaches such a
+  write ungated. A claim that strong is worth nothing unless adding one turns it
+  red, and the sweep is also the part that would silently stop working.
+
+28 faults, 26 expected red and two controls of two different kinds:
+
+* **the gate, broken eight ways.** Deleted; asking about `read` instead of
+  `delete` (which every Scheduler User holds); asking about the wrong DocType;
+  `throw` dropped, so a `False` answer is ignored; a `doc=` added, which asks
+  about one row and lets `if_owner` answer for the whole table; moved inside the
+  `try`, where a handler could drop the refusal; moved *after* `days` is read,
+  which turns the endpoint into an argument oracle for callers who may not
+  delete; and nested in `if days:`, where `days=0` skips it.
+
+  The red sets here are the interesting part, and they say something about the
+  **stand-in** rather than the tests. Deleting the gate turns 9 tests red;
+  asking the *wrong question* turns **14** red — every behavioural test in the
+  file — because `PermissionChecks` refuses to answer anything other than
+  `delete` on `Scheduler Log` and raises instead. A stand-in that had returned
+  `True` for an unfamiliar question would have left all 14 green, and only the
+  one test that inspects the recorded call would have noticed. That design is
+  doing more work than any assertion in the file.
+
+  Two of the nine are worth knowing about before they confuse someone: the gate
+  deleted, or nested in a branch, makes `_without_the_gate()` raise instead of
+  running, because it asserts the file contains exactly one `has_permission(`
+  line. That is the helper correctly refusing to perform an injection it cannot
+  perform — a red from an error rather than a finding, and the right answer;
+* **`days`, which the caller chooses and which carries no type annotation**, so
+  frappe coerces nothing and a JSON body can send a negative int. A negative
+  `days` accepted (the cutoff goes into the future and every row matches);
+  `days=0` refused, which is a meaning a caller can legitimately have; a
+  non-numeric `days` read as 0 rather than refused, which is `cint()`'s reading
+  of a typo and the worst one available; the cutoff computed forwards; and the
+  default retention changed, **on both sides of 30** — see the seventh trap
+  above, because that pair started as one fault that came back green;
+* **what it reports, and whether the work lands.** The count read off the
+  DELETE's own result — the bug the endpoint shipped with, since `frappe.db.sql`
+  returns `()` when the cursor has no description, so it reported 0 however many
+  rows it removed; counting after deleting, which has the same effect by a
+  different route; and the commit removed;
+* **the rows the gate rests on.** The endpoint invents no policy — it asks
+  frappe, and frappe answers from `scheduler_log.json` — so the rows are part of
+  the behaviour. System Manager losing `delete`; Scheduler User granted
+  `delete`; Scheduler User granted `write`;
+* **the author's own intent, in the client script.** `scheduler_log.js` offers
+  the "Clear Old Logs" button only `if (frappe.user.has_role('System Manager'))`.
+  The button is not the gate and never was, but it is the evidence that
+  enforcing `delete` narrows the endpoint to who was meant to have it, so the
+  fault widens the button to Scheduler User. First fault in this harness to edit
+  a `.js` file;
+* **the sweep — five faults, each of which must turn it red on its own.** An
+  unchecked `db.set_value` added to an ungated whitelisted endpoint; a raw
+  `DELETE`; a write **one level down**, in a helper that an ungated endpoint
+  calls; a statement built as a Python string, which cannot be read and so must
+  be *reported* rather than excused; and one of the six Xero endpoints losing
+  its gate, seen through the sweep instead of through its own test file.
+
+  The host matters for two of those. `get_scheduler_data` is a read endpoint
+  with no gate — 73 of the app's 88 whitelisted endpoints have none, which is
+  fine while they do not write, and is exactly where such a write turns up. And
+  the one-level fault goes into `get_resource_utilization`, which is **not**
+  whitelisted, so the only way the sweep can see it is by following the call
+  from `get_resources`; checked by reading what the classifier reports under the
+  fault, which names `get_resources` with no write of its own and the helper in
+  `via`. Had the helper been whitelisted too, the red would have proved nothing
+  about the follow;
+* **control 1**, the ordinary kind: the locals in `clear_old_logs` renamed. Real
+  edit, no behaviour change;
+* **control 2**, the discrimination kind: the same unchecked write the five
+  sweep faults add, added instead to an endpoint that **is** gated
+  (`approve_timesheet`). It must not be reported. This one does change
+  behaviour, deliberately — see "Adding a target" above.
+
+All 26 go red and both controls stay green, against `main` at `ec17e3d`.
+
+**One fault came back green, and the test was what needed fixing** — the second
+time that has happened, and in the same direction as `scheduler_read_gate`'s. See
+the seventh trap: `test_the_default_is_still_thirty_days` was pinning a range.
+Fixed in the same commit, with a fault on each side of 30 to show the fix bites
+both ways.
+
+**What this target does not reach.** The sweep's own machinery — `classify`,
+`_resolve_helper`, the module scoping — is tested against synthetic source inside
+the file, and those tests cannot be fault-injected from here: there is no
+real-source edit that makes "a gate is not inherited across modules on a name
+match" false. The five faults above measure the sweep end to end against the real
+app, which is the half that can rot without anyone noticing.
