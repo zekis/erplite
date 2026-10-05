@@ -44,7 +44,7 @@ nothing wrong. `run.py` runs the target's own test file and only that, which is
 the question being asked. If you want to check that a control is inert across
 the app, run the suite under it with this one file ignored.
 
-## The three ways this goes wrong silently
+## The four ways this goes wrong silently
 
 Each guard exists because the mistake has actually been made in this repo, and
 each turns a false pass into a hard stop.
@@ -75,10 +75,50 @@ each turns a false pass into a hard stop.
 2. **The edit matches more than once**, lands somewhere unintended, and the red
    you get is not the red you asked for.
 3. **Restoring destroys uncommitted work.** Hence the clean-tree refusal.
+4. **Python serves the previous fault's bytecode.** A cached `.pyc` is reused
+   when the source's size *and its mtime in whole seconds* both match what was
+   cached. Faults are small, same-shaped edits to one file applied a fraction of
+   a second apart, so that coincidence is the normal case, not a freak one: all
+   twelve `frappe.get_list(` → `frappe.get_all(` edits in `scheduler_read_gate`
+   leave `erplite/scheduler/api.py` at exactly 32531 bytes, and every target in
+   here has at least one such pair.
 
-A fourth, which no guard can catch for you: **a negative control that goes red
+   Found by running one fault twice with another between it and itself and
+   getting two different answers: `test_the_refusal_is_loud` and friends went red
+   the first time and green the second, because the second run was executing the
+   neighbour's code.
+
+   **What that did and did not cost, measured rather than assumed.** It corrupted
+   *which tests* each fault turns red: the six/six split reported below first came
+   out as two and ten, and that wrong number was written into this README before
+   being caught. It did **not** change any `run.py` verdict — the pre-guard
+   harness still reports 60 of 60 as expected across all four targets, three runs
+   in a row — because every fault in every target here is also caught by an AST
+   test that reads the source text, which no bytecode cache can affect. That is a
+   fact about the current target set and not a property of this tool: **a fault
+   guarded only by a behavioural test would have been reported GREEN**, and that
+   is the dangerous direction, because a false GREEN reads as "the test does not
+   notice this regression" and sends somebody to fix a test that is fine.
+
+   So `apply_fault` deletes the cached bytecode for every file it touches and
+   **stops** if any survives, `restore` purges too, and the test subprocess runs
+   with `PYTHONDONTWRITEBYTECODE=1`. The three guards are complementary and were
+   each checked by removing it and watching a test go red; the end-to-end
+   misreading needs bytecode writing to be on, which is why switching it off is
+   the first of the three.
+
+A fifth, which no guard can catch for you: **a negative control that goes red
 is not a control.** It must change the source genuinely and change behaviour not
 at all — a local variable rename, not a comment.
+
+And a sixth, the same shape as all of them: **a count of red tests is not a
+measurement — the set is.** "6 failed" is equally consistent with a test file
+guarding the one role the defect affected and with one that refuses everybody.
+Read the names. `pytest -rf` is not the place to read them from: its
+short-summary lines mis-attribute both the test method and the subtest
+parameters, and the same fault produced different labels on different runs.
+unittest's own result object is the authority:
+`{str(test) for test, _ in result.failures + result.errors}`.
 
 ## Adding a target
 
@@ -94,7 +134,13 @@ Three habits earn their keep:
   as biting.
 * **Cover every instance of the rule, not a sample.** A gate on four DocTypes
   needs four faults. A test that notices two of them is guarding two — and you
-  cannot find that out from a sample of two that both went red.
+  cannot find that out from a sample of two that both went red. Doing this for
+  all twelve call sites in `scheduler_read_gate` is what showed that half of them
+  are guarded by the AST sweep *alone*, which no smaller sample would have told
+  anyone.
+* **Expect a fault to come back green, and treat it as a finding about the
+  test, not a mistake in the fault.** One did here, and fixing the test was the
+  right answer — see `scheduler_read_gate` below.
 
 And one more, learned from adding the second target: **a fault on a DocType JSON
 is worth as much as a fault on the code.** The rule in both targets asks frappe
@@ -106,7 +152,7 @@ breaking the code.
 
 ## Targets
 
-Three so far. Ten test files in this repo describe having been
+Four so far. Ten test files in this repo describe having been
 fault-injected; these are the ones where that proof is reproducible.
 
 ### `xero_gate` — `tests/offline/test_xero_permission_gate.py`
@@ -220,3 +266,86 @@ passes `target_user` through and the controller's rule above is the only rule
 
 All 11 go red and the control stays green, against `main` at `03709ac`.
 
+
+### `scheduler_read_gate` — `tests/offline/test_scheduler_read_gate.py`
+
+Every `@frappe.whitelist()` function is callable by name over HTTP by any
+logged-in user, so the Desk page is not the gate. The scheduler's read
+endpoints used `frappe.get_all`, whose own docstring says it "will not check
+for permissions", and never called `get_list` at all — so no scheduler read
+consulted a permission row and `get_roles()` handed out every Scheduler Role
+including `hourly_rate` to anyone with a login. The change is `get_all` →
+`get_list` at the whitelisted read call sites (rev_d4b6b6ed62, PR #26).
+
+This target has **two halves pulling in opposite directions**, which is what
+makes it worth more than a sweep for one function name: the whitelisted reads
+must apply the rows, and three internal integrity checks must keep *bypassing*
+them, or a user with no read rows could delete a division that is still in use.
+
+22 faults, 21 expected red and one control:
+
+* **each of the twelve whitelisted read call sites reverted to `get_all`**, one
+  fault apiece, across `scheduler/api.py` and three DocType controllers. The red
+  sets are the result worth having, and they split the twelve exactly in half.
+
+  **Six are covered both behaviourally and by the sweep:** `Project` in
+  `get_projects_and_activities`, `Resource`, `Scheduler Role` (the charge rates,
+  the headline of the whole finding — three tests), `Schedule Entry` in
+  `get_schedule_entries` and in `get_unassigned_entries`, and `Schedule Row`.
+
+  **Six are guarded by `test_every_whitelisted_scheduler_read_uses_get_list` and
+  nothing else:** `Activity`; `Schedule Entry` in
+  `get_resource_capacity_report`; and all four whitelisted reads in the DocType
+  controllers (`division.get_active_divisions`,
+  `division.get_division_projects`, `scheduler_role.get_active_roles`,
+  `schedule_template.get_active_templates`). The reasons are plain once looked
+  for: no test in the file calls any of those five endpoints — it loads
+  `scheduler/api.py` and only that — and the `Activity` read is unreachable
+  behaviourally because no shipped role can read `Project` but not `Activity`, so
+  whoever is refused one is refused the other first.
+
+  So that one AST test is carrying half of this file. Deleting it, or narrowing
+  its `scheduler_sources()` walk to `api.py`, would leave six call sites with no
+  guard at all — which is the kind of thing that looks like a tidy-up;
+* **the three internal reads made to run as the caller** — `Division.on_trash`,
+  `Scheduler Role.on_trash` (both of its reads) and
+  `Schedule Entry.get_activity_progress`;
+* **`Division.on_trash` whitelisted**, which turns a delete guard into an HTTP
+  endpoint while leaving its `get_all` in place. The AST sweep for call sites is
+  satisfied by it; only the internal-reads sweep notices. That fault is there to
+  show the two sweeps are not the same sweep;
+* **the premises, in the shipped rows** — an unrelated role (`Blogger`) granted
+  read on `Project`; `Projects User` losing read on `Project`; `Scheduler User`
+  losing read on `Scheduler Role`. These span `project.json` (**LF**) and
+  `scheduler_role.json` (**CRLF**), in two different modules;
+* **the recorded inconsistency made consistent, from both sides.** The shipped
+  rows split the scheduler's DocTypes across two role families, so neither a
+  Scheduler User nor a Projects User can load the scheduler. PR #26 pinned that
+  as a position rather than widening the rows, and these two faults are how
+  anyone finds out if it is ever revisited;
+* **the control**: the local variable in `get_roles` renamed at all three of its
+  occurrences.
+
+**One fault came back green, and the test was what needed fixing.** Granting
+`Scheduler User` read on `Project` left `test_a_scheduler_user_is_refused_project`
+passing — because that user is refused `Activity` half a line later, and
+`assertRaises(PermissionError)` cannot tell the two refusals apart. The test
+named `Project` and was satisfied by anything at all refusing, so the class
+docstring's promise that it would "go red if the rows are made consistent" was
+false. `first_refusal()` now asserts *which* DocType did the refusing, and the
+same assertion was added to the Projects User half, which was correct but for
+no stated reason.
+
+**One claim in this file cannot be fault-injected with the current machinery.**
+`test_resource_role_really_is_undefined` checks that the DocType
+`get_role_resources` is exempted for genuinely does not exist, and every fault
+here is a content edit to a tracked file — a claim about a file's *absence*
+would need the harness to create one, and restoring that means `rm`, not
+`git checkout --`. Left out deliberately rather than faked.
+
+All 21 go red and the control stays green, against `main` at `18c898c`.
+
+The six/six split above is itself a measurement made *after* the bytecode guard
+in point 4 was in place. Before it, the same sweep reported two and ten — and
+that wrong number was written into this README before being caught. Three
+independent runs of the attribution now give byte-identical results.

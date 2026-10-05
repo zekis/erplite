@@ -361,8 +361,209 @@ TIMESHEET_TARGET_USER = Target(
     ])
 
 
+# --- erplite/scheduler read permissions ------------------------------------
+# rev_d4b6b6ed62, option 1 (PR #26): the scheduler's whitelisted reads used
+# `frappe.get_all`, whose own docstring says it "will not check for
+# permissions", so any logged-in user could read the whole schedule and every
+# Scheduler Role's `hourly_rate`. The change is `get_all` -> `get_list` at the
+# whitelisted read call sites -- and deliberately nowhere else: three internal
+# integrity checks must keep bypassing permissions, or a user with no read rows
+# could delete a division that is still in use.
+#
+# So this target has two halves pulling in opposite directions, and it needs a
+# fault for each instance of both. Reverting one call site is one fault, twelve
+# times over. The AST sweep notices all twelve, but only some are reached by a
+# test that actually calls the endpoint, and breaking them one at a time is the
+# only way to learn which -- a sample of two that both go red says nothing
+# about the other ten.
+#
+# It spans two modules and both line endings: `scheduler/api.py` is CRLF and
+# `projects/doctype/project/project.json` is LF, which is the per-file rule from
+# the TIMESHEET_OWNERSHIP target showing up again across module boundaries.
+# Three of the four controllers indent with TABS, not spaces.
+
+SCH_API = "erplite/scheduler/api.py"
+DIVISION = "erplite/scheduler/doctype/division/division.py"
+SCHED_ROLE = "erplite/scheduler/doctype/scheduler_role/scheduler_role.py"
+SCHED_TEMPLATE = "erplite/scheduler/doctype/schedule_template/schedule_template.py"
+SCHED_ENTRY = "erplite/scheduler/doctype/schedule_entry/schedule_entry.py"
+PROJECT_JSON = "erplite/projects/doctype/project/project.json"
+SCHED_ROLE_JSON = "erplite/scheduler/doctype/scheduler_role/scheduler_role.json"
+
+
+def _back_to_get_all(path, call_site):
+    """One call site reverted to `frappe.get_all`: the regression, once.
+
+    The replacement is derived from the pattern rather than written out, so the
+    two cannot drift apart and a fault can only ever change the one thing it
+    names.
+    """
+    assert "frappe.get_list(" in call_site, call_site
+    return (path, call_site, call_site.replace("frappe.get_list(", "frappe.get_all("))
+
+
+def _forward_to_get_list(path, call_site):
+    """The opposite mistake: an internal integrity check made to run as the caller."""
+    assert "frappe.get_all(" in call_site, call_site
+    return (path, call_site, call_site.replace("frappe.get_all(", "frappe.get_list("))
+
+
+# The twelve whitelisted read call sites, each with just enough context to be
+# unique. `Schedule Entry` is read from three different endpoints, so those
+# three carry their surrounding filters with them.
+READS = [
+    ("Project, in get_projects_and_activities", SCH_API,
+     '    projects = frappe.get_list("Project",\n'),
+    ("Activity, in get_projects_and_activities", SCH_API,
+     '        activities = frappe.get_list("Activity",\n'),
+    ("Resource, in get_resources", SCH_API,
+     '    resources = frappe.get_list("Resource",\n'),
+    ("Scheduler Role (the charge rates), in get_roles", SCH_API,
+     '    roles = frappe.get_list("Scheduler Role",\n'),
+    ("Schedule Entry, in get_schedule_entries", SCH_API,
+     '    if resource:\n        filters["resource"] = resource\n'
+     '    if project:\n        filters["project"] = project\n    \n'
+     '    entries = frappe.get_list("Schedule Entry",\n'),
+    ("Schedule Entry, in get_resource_capacity_report", SCH_API,
+     '    # Get schedule entries for the period\n'
+     '    entries = frappe.get_list("Schedule Entry",\n'),
+    ("Schedule Entry, in get_unassigned_entries", SCH_API,
+     '        "resource": ["is", "not set"],\n'
+     '        "schedule_date": ["between", [start_date, end_date]],\n'
+     '        "docstatus": ["!=", 2]\n    }\n    \n'
+     '    if project:\n        filters["project"] = project\n    \n'
+     '    entries = frappe.get_list("Schedule Entry",\n'),
+    ("Schedule Row, in get_schedule_rows", SCH_API,
+     '    schedule_rows = frappe.get_list("Schedule Row",\n'),
+    ("Division, in division.get_active_divisions", DIVISION,
+     '\tdivisions = frappe.get_list("Division",\n'),
+    ("Project, in division.get_division_projects", DIVISION,
+     '\tprojects = frappe.get_list("Project",\n'),
+    ("Scheduler Role, in scheduler_role.get_active_roles", SCHED_ROLE,
+     '\troles = frappe.get_list("Scheduler Role",\n'),
+    ("Schedule Template, in schedule_template.get_active_templates", SCHED_TEMPLATE,
+     '\ttemplates = frappe.get_list("Schedule Template",\n'),
+]
+
+# The internal reads that must keep bypassing permissions. Tabs, and
+# `on_trash` in scheduler_role.py reads twice.
+DIV_ON_TRASH = '\t\tprojects_using_division = frappe.get_all("Project", \n'
+ROLE_ON_TRASH_RESOURCES = '\t\tresources_using_role = frappe.get_all("Resource Role", \n'
+ROLE_ON_TRASH_ROWS = '\t\tschedule_rows_using_role = frappe.get_all("Schedule Row", \n'
+ENTRY_PROGRESS = '        entries = frappe.get_all("Schedule Entry",\n'
+
+# A permission row, as the DocType JSONs spell one. `read` is the whole point.
+def _row(role, read):
+    return (
+        '  {\n'
+        '   "create": 1,\n'
+        '   "email": 1,\n'
+        '   "export": 1,\n'
+        '   "print": 1,\n'
+        '   "read": %d,\n'
+        '   "report": 1,\n'
+        '   "role": "%s",\n'
+        '   "share": 1,\n'
+        '   "write": 1\n'
+        '  },\n' % (read, role))
+
+
+PROJECT_PERMS_OPEN = ' "permissions": [\n'
+SCHED_ROLE_PERMS_OPEN = ' "permissions": [\n'
+# The two rows the recorded inconsistency rests on.
+PROJECT_USER_READ = ('   "read": 1,\n   "report": 1,\n'
+                     '   "role": "Projects User",\n')
+SCHEDULER_USER_READ = ('   "read": 1,\n   "report": 1,\n'
+                       '   "role": "Scheduler User",\n')
+
+# The local variable in get_roles, at all three of its occurrences.
+ROLES_VAR = [
+    ('    roles = frappe.get_list("Scheduler Role",\n',
+     '    role_rows = frappe.get_list("Scheduler Role",\n'),
+    ('    for role in roles:\n', '    for role in role_rows:\n'),
+    ('    return roles\n', '    return role_rows\n'),
+]
+
+
+SCHEDULER_READ_GATE = Target(
+    test="tests/offline/test_scheduler_read_gate.py",
+    faults=[
+        # --- the rule, reverted at each of its twelve instances -----------
+        # One fault per call site, not a sample. Which tests each one turns red
+        # is the interesting part: the AST sweep sees all twelve, while only the
+        # endpoints a test actually calls are covered behaviourally too.
+        Fault("read reverted to get_all: " + name, True,
+              [_back_to_get_all(path, site)])
+        for name, path, site in READS
+    ] + [
+        # --- the other half: internal checks must NOT run as the caller ----
+        Fault("Division.on_trash made to read as the caller, so a user without "
+              "read rows can delete a division that is still in use", True,
+              [_forward_to_get_list(DIVISION, DIV_ON_TRASH)]),
+        Fault("Scheduler Role.on_trash made to read as the caller, both of its "
+              "reads", True,
+              [_forward_to_get_list(SCHED_ROLE, ROLE_ON_TRASH_RESOURCES),
+               _forward_to_get_list(SCHED_ROLE, ROLE_ON_TRASH_ROWS)]),
+        Fault("Schedule Entry.get_activity_progress made to read as the "
+              "caller, so progress is measured over the rows the caller may "
+              "see instead of the activity", True,
+              [_forward_to_get_list(SCHED_ENTRY, ENTRY_PROGRESS)]),
+
+        # The same mistake in the other direction: a delete guard exposed over
+        # HTTP. It keeps its `get_all`, so the AST sweep is satisfied -- this is
+        # the fault that shows the two sweeps are not the same sweep.
+        Fault("Division.on_trash whitelisted, so the delete guard becomes an "
+              "HTTP endpoint that reads with permissions bypassed", True,
+              [(DIVISION, '\tdef on_trash(self):\n',
+                '\t@frappe.whitelist()\n\tdef on_trash(self):\n')]),
+
+        # --- the premises, in the shipped rows ----------------------------
+        # These are what prove the test enforces the DocType's own permissions
+        # rather than a role list of its own: if it were hardcoded, changing the
+        # rows would change nothing.
+        Fault("rows grant an unrelated role (Blogger) read on Project, so the "
+              "refusals the finding is about stop happening", True,
+              [(PROJECT_JSON, PROJECT_PERMS_OPEN,
+                PROJECT_PERMS_OPEN + _row("Blogger", 1))]),
+        Fault("Projects User loses read on Project", True,
+              [(PROJECT_JSON, PROJECT_USER_READ,
+                PROJECT_USER_READ.replace('"read": 1', '"read": 0'))]),
+        Fault("Scheduler User loses read on Scheduler Role", True,
+              [(SCHED_ROLE_JSON, SCHEDULER_USER_READ,
+                SCHEDULER_USER_READ.replace('"read": 1', '"read": 0'))]),
+        # The recorded inconsistency, made consistent -- from each side, because
+        # the split has two halves and a test that notices one may not notice
+        # the other. TestWhoTheRowsActuallyAdmit pins a position, and these two
+        # faults are how anyone finds out if the rows are later widened.
+        #
+        # The first of them is why `first_refusal` exists in that test file: it
+        # came back GREEN the first time it was run. A Scheduler User granted
+        # read on Project is still refused Activity half a line later, and
+        # `assertRaises(PermissionError)` cannot tell those two refusals apart,
+        # so the test went on passing against exactly the change it was written
+        # to catch. The test now asserts which DocType refused.
+        Fault("rows grant Scheduler User read on Project, resolving the split "
+              "the test deliberately pins", True,
+              [(PROJECT_JSON, PROJECT_PERMS_OPEN,
+                PROJECT_PERMS_OPEN + _row("Scheduler User", 1))]),
+        Fault("rows grant Projects User read on Scheduler Role, the other half "
+              "of the same split", True,
+              [(SCHED_ROLE_JSON, SCHED_ROLE_PERMS_OPEN,
+                SCHED_ROLE_PERMS_OPEN + _row("Projects User", 1))]),
+
+        # --- negative control ---------------------------------------------
+        # The local variable in get_roles renamed at all three of its
+        # occurrences: a real edit to the source, no change in behaviour. If it
+        # goes red, the test file is matching the endpoint's internal spelling
+        # and the test is what needs fixing.
+        Fault("CONTROL: the local variable in get_roles renamed (must stay "
+              "green)", False,
+              [(SCH_API, old, new) for old, new in ROLES_VAR]),
+    ])
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
     "timesheet_target_user": TIMESHEET_TARGET_USER,
+    "scheduler_read_gate": SCHEDULER_READ_GATE,
 }
