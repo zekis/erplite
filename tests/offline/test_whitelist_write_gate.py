@@ -140,18 +140,19 @@ GATE_CALLS = FRAPPE_GATE_CALLS | APP_GATE_CALLS
 #   * a new entry is a new instance of the rev_c3343b2cf3 class -- gate it;
 #   * an entry disappearing means a gate landed -- tighten this set.
 #
-# `clear_old_logs` is here as a known, filed gap, not an accepted one. It runs
-# `DELETE FROM tabScheduler Log` with no check, while Scheduler Log's own rows
-# give `delete` to System Manager alone and its client script only offers the
-# button to System Manager (`scheduler_log.js`: `frappe.user.has_role`). So the
-# author's intent and the DocType's rows agree, and nothing enforces either.
-# Adding the gate changes who may call a live endpoint, so it is the owner's
-# decision rather than a tidy-up, and is filed for him. What is pinned here
-# meanwhile is the hazard and the rows a gate would rest on
-# (`TestSchedulerLogRowsAreWhatAGateWouldRestOn`).
-KNOWN_UNGATED = {
-    ("erplite/scheduler/doctype/scheduler_log/scheduler_log.py", "clear_old_logs"),
-}
+# It is **empty**, and that is the point rather than an oversight. The one
+# entry it ever held was `clear_old_logs`, filed for the owner as review tray
+# item rev_18a8f8826d and approved: it now calls
+# `frappe.has_permission("Scheduler Log", "delete", throw=True)`, so the
+# classifier scores it gated and this set has nothing left in it.
+#
+# An empty set makes the assertion strictly stronger, because every direction
+# still fails: any new ungated endpoint is a new instance of the class, and a
+# gate disappearing from `clear_old_logs` puts it straight back here.
+# `TestClearOldLogsChecksDeletePermission` holds the gate itself -- including
+# by deleting it from the real source and watching this classifier report the
+# endpoint again, so a green sweep means the sweep still works.
+KNOWN_UNGATED = set()
 
 
 # --------------------------------------------------------------------------
@@ -715,11 +716,13 @@ class TestAGateIsAShapeNotAName(unittest.TestCase):
         self.assertNotIn((rel, "clear_old_logs"), self.found)
 
 
-class TestSchedulerLogRowsAreWhatAGateWouldRestOn(unittest.TestCase):
-    """What Scheduler Log's own permission rows say, while the gate is pending.
+class TestSchedulerLogRowsAreWhatTheGateRestsOn(unittest.TestCase):
+    """What Scheduler Log's own permission rows say -- which is now enforced.
 
-    No policy is invented here; this reads the JSON the repo ships. It is
-    pinned so that the day the rows change, the decision in the owner's tray
+    No policy is invented here or in the endpoint; both read the JSON the repo
+    ships. `clear_old_logs` asks `has_permission` and frappe answers from these
+    rows, so changing them changes who may clear the log. They are pinned so
+    that the day they change, the decision in the owner's tray (rev_18a8f8826d)
     is re-read rather than quietly outdated.
     """
 
@@ -734,9 +737,10 @@ class TestSchedulerLogRowsAreWhatAGateWouldRestOn(unittest.TestCase):
         may_delete = sorted(r["role"] for r in self.rows if r.get("delete"))
         self.assertEqual(
             may_delete, ["System Manager"],
-            "clear_old_logs deletes Scheduler Log rows with no permission check, "
-            "so these rows are documentation rather than enforcement. If the set "
-            "of roles allowed to delete has changed, re-read the filed decision.")
+            "clear_old_logs is gated on `delete` for this DocType, so this row "
+            "is the whole policy: these are the roles that may clear the "
+            "scheduler log. If the set has changed, re-read the filed decision "
+            "(rev_18a8f8826d) rather than taking the new rows as intended.")
 
     def test_scheduler_user_has_no_write_of_any_kind(self):
         scheduler_user = [r for r in self.rows if r["role"] == "Scheduler User"]
@@ -748,7 +752,14 @@ class TestSchedulerLogRowsAreWhatAGateWouldRestOn(unittest.TestCase):
                 "Scheduler User is a read-only role on Scheduler Log (%s)" % ptype)
 
     def test_the_client_script_offers_the_button_to_system_manager_only(self):
-        """The author's intent, in their own code, next to the unenforced rows."""
+        """The author's intent, in their own code, agreeing with the rows.
+
+        The button check is not the gate -- a whitelisted method is callable by
+        name whatever the Desk shows -- but it is the evidence that enforcing
+        `delete` on Scheduler Log narrows this endpoint to who was meant to
+        have it. If the script starts offering the button more widely, the
+        rows, not this endpoint, are where that belongs.
+        """
         path = os.path.join(MODULE_ROOT, "scheduler", "doctype", "scheduler_log",
                             "scheduler_log.js")
         with io.open(path, "r", encoding="utf-8") as fh:
@@ -798,12 +809,64 @@ class FakeValidationError(Exception):
     pass
 
 
-def load_scheduler_log(table, today="2026-10-05"):
-    """Load the real scheduler_log.py on top of a stand-in frappe."""
+class FakePermissionError(Exception):
+    """Stands in for `frappe.PermissionError`, which is **not** a ValidationError.
+
+    In frappe 15.52.0 `PermissionError` subclasses `Exception` directly
+    (`frappe/exceptions.py:34`, http_status_code 403) while `ValidationError`
+    is its own branch (line 18). Keeping them unrelated here is what lets
+    these tests tell "refused for permissions" apart from "refused for a bad
+    argument", and it is why the gate must not sit inside the `try` that
+    catches a bad `days`.
+    """
+
+
+class PermissionChecks(object):
+    """Stands in for `frappe.has_permission`, and refuses to guess.
+
+    It records what was asked and answers `allowed`. What it will not do is
+    answer a question it was not set up for: anything other than `delete` on
+    `Scheduler Log` is an `AssertionError` naming what was asked. A stand-in
+    that cheerfully returned True for some other doctype would let every
+    behaviour test below pass over an endpoint checking the wrong thing, which
+    is the failure mode this whole file exists to catch.
+    """
+
+    def __init__(self, allowed=True):
+        self.allowed = allowed
+        self.calls = []
+
+    def __call__(self, doctype=None, ptype="read", doc=None, user=None,
+                 throw=False, **kwargs):
+        self.calls.append({"doctype": doctype, "ptype": ptype, "doc": doc,
+                           "user": user, "throw": throw})
+        if (doctype, ptype) != ("Scheduler Log", "delete"):
+            raise AssertionError(
+                "PermissionChecks was asked about %r %r, which it has no answer "
+                "for. clear_old_logs is meant to ask whether the caller may "
+                "delete Scheduler Log; re-read the endpoint." % (doctype, ptype))
+        if not self.allowed:
+            if throw:
+                raise FakePermissionError("No permission for Scheduler Log")
+            return False
+        return True
+
+
+def load_scheduler_log(table, today="2026-10-05", allowed=True, source=None):
+    """Load the real scheduler_log.py on top of a stand-in frappe.
+
+    `allowed` is the answer the stand-in `has_permission` gives: the behaviour
+    tests run as a caller who may delete, and the gate's own tests set it
+    False. `source` replaces the file's text, which is how the gate is
+    fault-injected -- loading the module with the check deleted must make
+    tests fail, or they are not holding it.
+    """
     frappe = types.ModuleType("frappe")
     frappe.db = table
     frappe._ = lambda message, *a, **k: message
     frappe.ValidationError = FakeValidationError
+    frappe.PermissionError = FakePermissionError
+    frappe.has_permission = PermissionChecks(allowed=allowed)
 
     def throw(message, exc=None, **kwargs):
         raise (exc or FakeValidationError)(message)
@@ -843,8 +906,11 @@ def load_scheduler_log(table, today="2026-10-05"):
         path = os.path.join(MODULE_ROOT, "scheduler", "doctype", "scheduler_log",
                             "scheduler_log.py")
         module = types.ModuleType("scheduler_log_under_test")
-        with io.open(path, "r", encoding="utf-8") as fh:
-            exec(compile(fh.read(), path, "exec"), module.__dict__)
+        if source is None:
+            with io.open(path, "r", encoding="utf-8") as fh:
+                source = fh.read()
+        exec(compile(source, path, "exec"), module.__dict__)
+        module.frappe = frappe
         return module
     finally:
         for name, mod in saved.items():
@@ -941,6 +1007,183 @@ class TestClearOldLogsRefusesADaysItCannotMean(unittest.TestCase):
         table = FakeLogTable(["2026-08-01", "2026-10-04"])
         module = load_scheduler_log(table)
         self.assertEqual(module.clear_old_logs()["deleted_count"], 1)
+
+
+# --------------------------------------------------------------------------
+# clear_old_logs: who is allowed to run it at all (rev_18a8f8826d)
+# --------------------------------------------------------------------------
+
+SCHEDULER_LOG_REL = "erplite/scheduler/doctype/scheduler_log/scheduler_log.py"
+
+
+def _scheduler_log_source():
+    with io.open(os.path.join(APP_ROOT, SCHEDULER_LOG_REL), encoding="utf-8") as fh:
+        return fh.read()
+
+
+def _without_the_gate(source):
+    """The real module with its permission check deleted, for fault injection.
+
+    Every test below that claims to hold the gate is also run against this,
+    because a test that passes with the gate removed was never holding it.
+    """
+    lines = source.splitlines(True)
+    kept = [ln for ln in lines if "has_permission(" not in ln]
+    if len(kept) != len(lines) - 1:
+        raise AssertionError(
+            "expected exactly one has_permission( line in %s, found %d -- the "
+            "injection below would not be removing what it thinks it is"
+            % (SCHEDULER_LOG_REL, len(lines) - len(kept)))
+    return "".join(kept)
+
+
+class TestClearOldLogsChecksDeletePermission(unittest.TestCase):
+    """The owner's decision on rev_18a8f8826d: enforce Scheduler Log's own rows.
+
+    `clear_old_logs` is `@frappe.whitelist()`, so any logged-in user can call
+    it by name, and it deletes through `frappe.db.sql`, which consults no
+    permission row. The DocType's rows give `delete` to System Manager alone
+    (`TestSchedulerLogRowsAreWhatTheGateRestsOn`); until the gate landed,
+    nothing enforced them.
+    """
+
+    def test_a_caller_who_may_not_delete_gets_nowhere(self):
+        table = FakeLogTable(["2026-01-01", "2026-02-01", "2026-10-04"])
+        module = load_scheduler_log(table, allowed=False)
+
+        with self.assertRaises(FakePermissionError):
+            module.clear_old_logs(days=30)
+
+        self.assertEqual(table.statements, [],
+                         "it must refuse before touching the table")
+        self.assertEqual(len(table.rows), 3)
+        self.assertEqual(table.commits, 0)
+
+    def test_it_asks_whether_the_caller_may_delete_scheduler_log(self):
+        table = FakeLogTable(["2026-01-01"])
+        module = load_scheduler_log(table)
+
+        module.clear_old_logs(days=30)
+
+        calls = module.frappe.has_permission.calls
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["doctype"], "Scheduler Log")
+        self.assertEqual(calls[0]["ptype"], "delete")
+        self.assertTrue(calls[0]["throw"],
+                        "without throw=True a False answer is just ignored")
+        self.assertIsNone(
+            calls[0]["doc"],
+            "this deletes many rows at once, so the question is whether the "
+            "caller may delete Scheduler Log at all; passing a doc would ask "
+            "about one row and let `if_owner` answer for the whole table")
+
+    def test_the_check_comes_before_days_is_read(self):
+        """An unprivileged caller learns nothing about the argument.
+
+        `days="abc"` is refused with a ValidationError once you are allowed in.
+        Reaching that message without delete permission would turn this
+        endpoint into a free argument oracle, and would also mean the delete
+        path had already been entered on an unchecked caller's behalf.
+        """
+        table = FakeLogTable(["2026-01-01"])
+        module = load_scheduler_log(table, allowed=False)
+
+        with self.assertRaises(FakePermissionError):
+            module.clear_old_logs(days="abc")
+        self.assertEqual(table.statements, [])
+
+    def test_the_refusal_is_not_a_validation_error(self):
+        """So nothing catching a ValidationError can swallow it.
+
+        In frappe 15.52.0 `PermissionError` subclasses `Exception` directly
+        (`frappe/exceptions.py:34`) and carries 403, while `ValidationError`
+        (line 18) carries 417. The stand-ins keep them unrelated for the same
+        reason, and this holds the endpoint's refusal to the permission branch.
+        """
+        table = FakeLogTable(["2026-01-01"])
+        module = load_scheduler_log(table, allowed=False)
+
+        with self.assertRaises(module.frappe.PermissionError) as caught:
+            module.clear_old_logs(days=30)
+        self.assertNotIsInstance(caught.exception, FakeValidationError)
+        self.assertFalse(issubclass(FakePermissionError, FakeValidationError))
+
+    def test_the_gate_is_not_inside_a_try(self):
+        """Read off the source, because `try` is how this would quietly rot.
+
+        The function already catches `(TypeError, ValueError)` around
+        `int(days)`. A check moved inside that block, or into any other
+        handler, would still be a call to `has_permission` -- so the classifier
+        and every test above would stay green -- while a handler catching
+        broadly could drop the refusal on the floor.
+        """
+        tree = ast.parse(_scheduler_log_source())
+        func = [n for n in ast.walk(tree)
+                if isinstance(n, ast.FunctionDef) and n.name == "clear_old_logs"][0]
+
+        in_a_try = set()
+        for node in ast.walk(func):
+            if isinstance(node, ast.Try):
+                for inner in ast.walk(node):
+                    in_a_try.add(id(inner))
+
+        gates = [c for c in ast.walk(func)
+                 if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                 and c.func.attr == "has_permission"]
+        self.assertEqual(len(gates), 1)
+        self.assertNotIn(id(gates[0]), in_a_try)
+
+        # and it is a statement of the function body itself, not nested in a
+        # branch that some argument could skip
+        top_level = [n.value for n in func.body if isinstance(n, ast.Expr)]
+        self.assertIn(gates[0], top_level)
+
+    # -- fault injection: the gate removed from the real module ------------
+
+    def test_without_the_gate_an_unprivileged_caller_wipes_the_log(self):
+        """What these tests are worth, measured by breaking the thing.
+
+        Same stand-in, same refusing answer, the real module with its one
+        check deleted: the rows go. If this ever stops deleting them, the
+        tests above have stopped depending on the gate.
+        """
+        table = FakeLogTable(["2026-01-01", "2026-02-01", "2026-10-04"])
+        module = load_scheduler_log(
+            table, allowed=False, source=_without_the_gate(_scheduler_log_source()))
+
+        result = module.clear_old_logs(days=30)
+
+        self.assertEqual(result["deleted_count"], 2)
+        self.assertEqual(table.rows, ["2026-10-04"])
+        self.assertEqual(module.frappe.has_permission.calls, [],
+                         "nothing was asked, which is the whole finding")
+
+    def test_the_whole_app_guard_reports_this_endpoint_without_the_gate(self):
+        """The sweep's side of the same injection.
+
+        `KNOWN_UNGATED` is empty, so `TestEveryUncheckedWriteIsGated` passing
+        has to mean the classifier still sees this endpoint and still sees it
+        gated -- not that it has gone blind to the file.
+        """
+        trees = []
+        for rel, tree in _app_trees():
+            if rel == SCHEDULER_LOG_REL:
+                tree = ast.parse(_without_the_gate(_scheduler_log_source()))
+            trees.append((rel, tree))
+
+        key = (SCHEDULER_LOG_REL, "clear_old_logs")
+        injected = classify(trees)
+        self.assertIn(key, injected)
+        self.assertEqual(injected[key]["gates"], set())
+        self.assertTrue(any("DELETE" in label for _, label in injected[key]["writes"]))
+
+    def test_as_shipped_the_sweep_sees_the_endpoint_and_scores_it_gated(self):
+        real = classify(_app_trees())
+        key = (SCHEDULER_LOG_REL, "clear_old_logs")
+        self.assertIn(key, real,
+                      "the sweep no longer sees clear_old_logs at all, so it is "
+                      "not the reason KNOWN_UNGATED is empty")
+        self.assertEqual(real[key]["gates"], {"has_permission"})
 
 
 if __name__ == "__main__":
