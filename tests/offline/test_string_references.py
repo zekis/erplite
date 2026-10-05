@@ -674,6 +674,34 @@ class PatchPathsResolve(unittest.TestCase):
             "`bench migrate` stops -- the deploy fails, part-way through the patch run.",
         )
 
+    def test_no_entry_uses_the_finally_prefix_v15_cannot_resolve(self):
+        """`patch_module_paths` strips `finally:`, so this is the tripwire for it.
+
+        Stripping is what the entry *means* -- the prefix only defers the run to
+        the end of the patch list -- and that is why the parser strips it. But at
+        the installed v15.52.0 `execute_patch` resolves the path **before** it
+        looks for the prefix: `patch = f"{patchmodule.split(maxsplit=1)[0]}.execute"`
+        and `get_attr(patch)` at `patch_handler.py:166-167`, against the prefix
+        check at `:182`. And `get_attr` reads the app name as
+        `method_string.split(".", 1)[0]`, which for such an entry is
+        `"finally:erplite"` -- not an installed app, so it throws
+        `AppNotInstalledError` and `bench migrate` stops.
+
+        So a `finally:` entry in this app's patches.txt is a failed deploy that
+        the parser above would call resolvable. Rather than make the parser
+        argue with what the entry means, the measurement that makes its
+        stripping safe is asserted: we do not write one.
+        """
+        prefixed = [(section, lineno, entry) for section, lineno, entry in patch_entries()
+                    if entry.startswith("finally:")]
+        self.assertEqual(
+            [], prefixed,
+            "a finally: entry is resolved before the prefix is stripped at v15.52.0 "
+            "(patch_handler.py:166), so frappe.get_attr throws AppNotInstalledError on "
+            "app 'finally:%s' and the migrate stops. Put the patch last in the section "
+            "instead." % APP,
+        )
+
     def test_the_patch_entries_this_app_ships_are_the_ones_expected(self):
         """What the test above is actually chewing on.
 
