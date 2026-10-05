@@ -186,6 +186,51 @@ child tables (the DocType is a runtime variable), and JS outside the doctype
 folders - `public/js`, `www`, and the Vue app - which uses the REST API
 instead and is not covered here at all.
 
+## The DocType JSONs themselves
+
+`test_doctype_metadata.py` is the fourth surface: the DocType JSONs
+themselves. Same cause as the three above - a name that outlived the field it
+pointed at - and a fourth distinct symptom. A `fetch_from: "<link>.<src>"`
+whose source no longer exists reaches `BaseDocument.set_fetch_from_value`,
+which on a Data/Text/Small Text target does
+
+    get_default_df(src) or frappe.get_meta(doctype).get_field(src)
+
+and, finding neither, calls `frappe.throw(title="Wrong Fetch From value")`.
+That runs inside `_validate_links` during save, so every save of a document
+whose link field is set fails. Mind the fieldtype gate: on any other fieldtype
+the stale value is assigned quietly instead, so the same broken reference is
+loud or silent depending on the field it lands in.
+
+The five passes check that every `fetch_from` resolves, that `Table` options
+name an `istable` DocType, that `sort_field`/`title_field`/`search_fields`
+exist, that `field_order` and `fields[]` agree in both directions, and that
+`depends_on` expressions name real fields. These are exact rather than
+grep-like, because a DocType JSON's references resolve against that same JSON.
+
+Its blind spot is references to DocTypes this app does not define (18 of them:
+User, Country, Communication, Contact, Letter Head, ToDo), since a core
+DocType's field list is not in this repo. That is a place to look, not a place
+to stop - the four `fetch_from` references among them were checked by hand
+against frappe/frappe version-15 and all resolve (Contact.email_id,
+Contact.phone, Communication.sender, Communication.subject). Re-check them when
+the Frappe version moves.
+
+`test_undeclared_attributes.py` now has a third pass, and the reason is worth
+recording. Its first two both filter on `ast.Load`, because the symptom being
+hunted was `AttributeError`. WRITING an undeclared attribute has no symptom at
+all: `doc.<x> = v` is an ordinary setattr, and `get_valid_dict()` then builds
+the INSERT from `meta.get_valid_columns()` - the DocType's declared fields - so
+the value is dropped with no error, no log line and no failed save, and the
+caller is told it worked. Two whitelisted endpoints had been doing exactly that
+in `schedule_row.py` for as long as the rename has existed, and they survived
+three sweeps because every sweep filtered on the symptom rather than the cause.
+The `ast.Store` twin found the second of them on its first run.
+
+A loaded document is deliberately still out of scope: `frappe.get_doc(...)`
+genuinely does carry orphan columns through `SELECT *`, so reading one there is
+a stale value rather than a bug the DocType JSON can prove.
+
 ## Shadowing an import: Python's own scoping, not Frappe's
 
 `test_shadowed_imports.py` is the sixth surface and the first that is about
