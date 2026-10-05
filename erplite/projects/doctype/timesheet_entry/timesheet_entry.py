@@ -60,14 +60,39 @@ class TimesheetEntry(Document):
                 self.employee, entry.name, entry.project, entry.activity
             ))
     
-    def on_update(self):
-        """Actions on update"""
-        # Auto-submit when check-out is completed
-        if self.check_in_time and self.check_out_time and self.status == "Draft":
-            self.status = "Submitted"
-    
     def before_save(self):
-        """Actions before save"""
+        """Actions before save.
+
+        Deliberately does NOT derive `status`, and must stay that way.
+
+        Auto-submitting here looks right -- a pre-save hook is where a derived
+        field belongs, because an assignment in on_update() happens after
+        db_update() has written the row and is discarded. But `status` is not a
+        derived field: it is a workflow state that other apps set explicitly, and
+        a hook here runs on *every* save of the document, not only on check-out.
+
+        Afterz (crew.tierneymorris.com.au/afterz, repo zekis/afterz) never calls
+        erplite code, but it creates and saves Timesheet Entry rows directly, so
+        this hook reaches it. Every one of its five timesheet calls hands this
+        hook a Draft row that already has both times:
+
+          * create_timesheet_entry  -- drag an activity onto the calendar and the
+            row is inserted Draft with check_in_time AND check_out_time;
+          * update_timesheet_entry  -- moving or resizing that block saves it;
+          * submit_week_entries     -- filters status == "Draft";
+          * reject_entry_with_reason -- sets status = "Draft", then save();
+          * unapprove_entry          -- sets status = "Draft", then save().
+
+        So a rule here does not merely submit early. It makes the first two lock
+        the entry on creation, leaves the third with nothing to find, and turns
+        the last two into no-ops that land back on "Submitted" in the same save --
+        a reject that silently re-queues the entry it just rejected.
+
+        erplite's own check-out is the one place that genuinely means "submit
+        this now", and it says so itself in check_out() below, before it saves.
+
+        tests/offline/test_afterz_timesheet_workflow.py pins all five paths.
+        """
         # Date field has been removed - no longer needed
         pass
 
@@ -132,6 +157,22 @@ def check_out(timesheet_id, description=None):
         timesheet.check_out_time = now_datetime()
         if description:
             timesheet.description = description
+        
+        # Auto-submit: checking out is the explicit "I have finished this entry"
+        # action, so it is the one place that may move the entry on by itself.
+        #
+        # Set before save(), not in an on_update() hook: frappe's Document._save()
+        # runs run_before_save_methods(), then db_update(), then
+        # run_post_save_methods(), so a status assigned in on_update() lands on the
+        # in-memory document after its row has been written and is discarded. That
+        # is why a checked-out timesheet stayed "Draft" and approve_timesheet()
+        # then refused it with "Only submitted timesheets can be approved".
+        #
+        # Here rather than in before_save() because before_save() runs on every
+        # save by anyone, including Afterz's reject and un-approve -- see the note
+        # on before_save() above.
+        if timesheet.status == "Draft":
+            timesheet.status = "Submitted"
         
         timesheet.save()
         
