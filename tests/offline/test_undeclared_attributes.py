@@ -173,6 +173,152 @@ def _literal_doctype(call):
                     return v.value
     return None
 
+def _loaded_doctype(call):
+    """The DocType name if this call LOADS an existing record: get_doc("X", name)."""
+    f = call.func
+    fname = f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else None)
+    if fname in ("get_doc", "get_cached_doc", "get_last_doc") and call.args:
+        a = call.args[0]
+        if isinstance(a, ast.Constant) and isinstance(a.value, str):
+            return a.value
+    return None
+
+
+def _rebound_names(target):
+    """The names an assignment target REBINDS.
+
+    `doc.field = v` and `d[key] = v` rebind nothing -- they mutate the object the name
+    already refers to. Walking a target for every ast.Name inside it gets this wrong and
+    treats each field write as a reassignment, which silently empties the sweep.
+    """
+    if isinstance(target, ast.Name):
+        return [target.id]
+    if isinstance(target, (ast.Tuple, ast.List)):
+        out = []
+        for element in target.elts:
+            out.extend(_rebound_names(element))
+        return out
+    if isinstance(target, ast.Starred):
+        return _rebound_names(target.value)
+    return []
+
+
+_UNRESOLVED = object()
+
+
+def _doc_vars(fn, doctypes, include_loaded):
+    """Locals in `fn` that hold one known app DocType on every path through it.
+
+    The rule is that EVERY binding of the name resolves to the same DocType. The rule
+    before it -- bound exactly once -- threw away the unambiguous case of a name assigned
+    twice from the SAME DocType, which is how a dropped write to `Timesheet Entry.date`
+    sat under this guard for several sweeps: the update branch and the insert branch of
+    one function each assigned `timesheet_doc`, agreeing on the DocType, and the count
+    rule skipped the variable entirely.
+
+    Anything unresolvable -- a `for`, `with`, comprehension or `except` binding, an
+    import, an augmented assignment, a call this module cannot read a literal out of --
+    marks the name unresolved and drops it. So a disagreement is still never reported.
+
+    `include_loaded` is the one difference between the read and the write sweep, and it
+    is not symmetric:
+
+      * READ: False. A document loaded by get_doc("X", name) is populated from SELECT *,
+        so it really does carry an orphan column, and reading one returns a stale value
+        rather than raising. There is nothing to report.
+      * WRITE: True. get_valid_dict() builds the INSERT or UPDATE from
+        meta.get_valid_columns() no matter how the document arrived, so a write to an
+        undeclared field is dropped on a loaded document exactly as on a new one.
+    """
+    seen = {}
+
+    def note(name, value):
+        seen.setdefault(name, set()).add(value)
+
+    def resolve(call):
+        dt = _literal_doctype(call)
+        if dt is None and include_loaded:
+            dt = _loaded_doctype(call)
+        return dt
+
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Assign):
+            dt = resolve(node.value) if isinstance(node.value, ast.Call) else None
+            for target in node.targets:
+                resolved = dt if (dt and isinstance(target, ast.Name)) else _UNRESOLVED
+                for name in _rebound_names(target):
+                    note(name, resolved)
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            for name in _rebound_names(node.target):
+                note(name, _UNRESOLVED)
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            for name in _rebound_names(node.target):
+                note(name, _UNRESOLVED)
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None:
+                    for name in _rebound_names(item.optional_vars):
+                        note(name, _UNRESOLVED)
+        elif isinstance(node, ast.comprehension):
+            for name in _rebound_names(node.target):
+                note(name, _UNRESOLVED)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            note(node.name, _UNRESOLVED)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                note((alias.asname or alias.name).split(".")[0], _UNRESOLVED)
+
+    out = {}
+    for name, values in seen.items():
+        if _UNRESOLVED in values or len(values) != 1:
+            continue
+        doctype = next(iter(values))
+        if doctype in doctypes:
+            out[name] = doctype
+    return out
+
+
+def _undeclared_doc_attrs(doctypes, ctx, include_loaded):
+    """Sweep the app for `<doc>.<attr>` in context `ctx` where attr is not a field of <doc>."""
+    findings, parsed = [], 0
+    for dirpath, _dirs, names in os.walk(MODULE_ROOT):
+        for n in sorted(names):
+            if not n.endswith(".py"):
+                continue
+            path = os.path.join(dirpath, n)
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    tree = ast.parse(fh.read(), filename=path)
+            except (SyntaxError, OSError):
+                continue
+            parsed += 1
+            rel = os.path.relpath(path, APP_ROOT)
+            for fn in ast.walk(tree):
+                if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                for var, doctype in _doc_vars(fn, doctypes, include_loaded).items():
+                    for node in ast.walk(fn):
+                        if not (
+                            isinstance(node, ast.Attribute)
+                            and isinstance(node.value, ast.Name)
+                            and node.value.id == var
+                            and isinstance(node.ctx, ctx)
+                        ):
+                            continue
+                        if (
+                            node.attr in doctypes[doctype]
+                            or node.attr in FRAPPE_ATTRS
+                            or node.attr.startswith("__")
+                        ):
+                            continue
+                        findings.append(
+                            "{}:{}  {} is {!r}, then {}.{}  (in {}())".format(
+                                rel, node.lineno, var, doctype, var, node.attr, fn.name
+                            )
+                        )
+    return sorted(set(findings)), parsed
+
+
 
 class TestControllersDoNotReadUndeclaredFields(unittest.TestCase):
     """`self.<x>` in a DocType's own controller, where <x> is not a field of that DocType.
@@ -228,154 +374,52 @@ class TestControllersDoNotReadUndeclaredFields(unittest.TestCase):
 class TestInMemoryDocumentsAreNotReadByUndeclaredField(unittest.TestCase):
     """`doc = frappe.new_doc("X")` ... `doc.<y>`, anywhere in the app, where <y> is not on X.
 
-    Same failure as above but outside a controller, which is where the whitelisted endpoints live.
-    Scoped tightly on purpose: only locals assigned exactly once from a literal new_doc/get_doc,
-    and only DocTypes this app defines, since a core DocType's field list is not in this repo and
-    guessing it would produce noise.
+    Same failure as the controller sweep above but outside a controller, which is where the
+    whitelisted endpoints live. Documents LOADED from the database are deliberately out of
+    scope here: they are populated from SELECT *, so an orphan column is present and reading
+    it returns a stale value instead of raising. Only documents built in memory raise.
     """
 
     def test_no_new_document_is_read_by_a_field_it_does_not_have(self):
         doctypes = _app_doctypes()
         doctypes.pop("__paths__", None)
-        findings, parsed = [], 0
-
-        for dirpath, _dirs, names in os.walk(MODULE_ROOT):
-            for n in sorted(names):
-                if not n.endswith(".py"):
-                    continue
-                p = os.path.join(dirpath, n)
-                try:
-                    with open(p, encoding="utf-8") as fh:
-                        tree = ast.parse(fh.read(), filename=p)
-                except (SyntaxError, OSError):
-                    continue
-                parsed += 1
-                rel = os.path.relpath(p, APP_ROOT)
-                for fn in ast.walk(tree):
-                    if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        continue
-                    origin, count = {}, {}
-                    for node in ast.walk(fn):
-                        targets = []
-                        if isinstance(node, ast.Assign):
-                            targets = node.targets
-                        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
-                            targets = [node.target]
-                        for t in targets:
-                            if not isinstance(t, ast.Name):
-                                continue
-                            count[t.id] = count.get(t.id, 0) + 1
-                            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
-                                dt = _literal_doctype(node.value)
-                                if dt:
-                                    origin[t.id] = dt
-                    for var, dt in origin.items():
-                        if count.get(var) != 1 or dt not in doctypes:
-                            continue
-                        for node in ast.walk(fn):
-                            if not (
-                                isinstance(node, ast.Attribute)
-                                and isinstance(node.value, ast.Name)
-                                and node.value.id == var
-                                and isinstance(node.ctx, ast.Load)
-                            ):
-                                continue
-                            if (
-                                node.attr in doctypes[dt]
-                                or node.attr in FRAPPE_ATTRS
-                                or node.attr.startswith("__")
-                            ):
-                                continue
-                            findings.append(
-                                "{}:{}  {} = new {!r}, then {}.{}  (in {}())".format(
-                                    rel, node.lineno, var, dt, var, node.attr, fn.name
-                                )
-                            )
+        findings, parsed = _undeclared_doc_attrs(doctypes, ast.Load, include_loaded=False)
 
         self.assertGreater(parsed, 50, "sweep parsed almost nothing; the walk is wrong")
         self.assertEqual(
             [],
-            sorted(set(findings)),
+            findings,
             "These read a field off a document built in memory that the DocType does not have, so "
-            "they raise AttributeError:\n  " + "\n  ".join(sorted(set(findings))),
+            "they raise AttributeError:\n  " + "\n  ".join(findings),
         )
 
 
-class TestInMemoryDocumentsAreNotWrittenByUndeclaredField(unittest.TestCase):
-    """`doc = frappe.new_doc("X")` ... `doc.<y> = v`, where <y> is not a field of X.
+class TestDocumentsAreNotWrittenByUndeclaredField(unittest.TestCase):
+    """`doc.<y> = v` where <y> is not a field of the DocType, however the doc was obtained.
 
-    The silent twin of the test above. Nothing raises: the attribute is set on the object and
-    then dropped by `get_valid_dict()`, which reads `meta.get_valid_columns()` -- the DocType's
-    declared fields, not the table's columns. So the write is accepted, discarded, and reported
-    as a success. Scoped exactly as the read test is: only locals assigned once from a literal
-    new_doc/get_doc, and only DocTypes this app defines.
+    The silent twin of the test above, and the wider of the two. Nothing raises: the attribute
+    is set on the object and then dropped by `get_valid_dict()`, which reads
+    `meta.get_valid_columns()` -- the DocType's declared fields, not the table's columns. The
+    write is accepted, discarded, and reported to the caller as a success.
+
+    Unlike the read sweep this one includes documents loaded by `get_doc("X", name)`, because
+    the UPDATE is built from the same declared-field list as the INSERT. Scoping the write
+    sweep to in-memory documents, which is what it did at first, left every
+    load-then-modify endpoint in the app unguarded -- the commonest shape there is.
     """
 
-    def test_no_new_document_is_written_by_a_field_it_does_not_have(self):
+    def test_no_document_is_written_by_a_field_it_does_not_have(self):
         doctypes = _app_doctypes()
         doctypes.pop("__paths__", None)
-        findings, parsed = [], 0
-
-        for dirpath, _dirs, names in os.walk(MODULE_ROOT):
-            for n in sorted(names):
-                if not n.endswith(".py"):
-                    continue
-                p = os.path.join(dirpath, n)
-                try:
-                    with open(p, encoding="utf-8") as fh:
-                        tree = ast.parse(fh.read(), filename=p)
-                except (SyntaxError, OSError):
-                    continue
-                parsed += 1
-                rel = os.path.relpath(p, APP_ROOT)
-                for fn in ast.walk(tree):
-                    if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        continue
-                    origin, count = {}, {}
-                    for node in ast.walk(fn):
-                        targets = []
-                        if isinstance(node, ast.Assign):
-                            targets = node.targets
-                        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
-                            targets = [node.target]
-                        for t in targets:
-                            if not isinstance(t, ast.Name):
-                                continue
-                            count[t.id] = count.get(t.id, 0) + 1
-                            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
-                                dt = _literal_doctype(node.value)
-                                if dt:
-                                    origin[t.id] = dt
-                    for var, dt in origin.items():
-                        if count.get(var) != 1 or dt not in doctypes:
-                            continue
-                        for node in ast.walk(fn):
-                            if not (
-                                isinstance(node, ast.Attribute)
-                                and isinstance(node.value, ast.Name)
-                                and node.value.id == var
-                                and isinstance(node.ctx, ast.Store)
-                            ):
-                                continue
-                            if (
-                                node.attr in doctypes[dt]
-                                or node.attr in FRAPPE_ATTRS
-                                or node.attr.startswith("__")
-                            ):
-                                continue
-                            findings.append(
-                                "{}:{}  {} = new {!r}, then {}.{} = ...  (in {}())".format(
-                                    rel, node.lineno, var, dt, var, node.attr, fn.name
-                                )
-                            )
+        findings, parsed = _undeclared_doc_attrs(doctypes, ast.Store, include_loaded=True)
 
         self.assertGreater(parsed, 50, "sweep parsed almost nothing; the walk is wrong")
         self.assertEqual(
             [],
-            sorted(set(findings)),
-            "These write a field the DocType does not have onto a document built in memory. "
-            "Nothing raises; get_valid_dict() drops the value on insert and the caller is told "
-            "it succeeded:\n  " + "\n  ".join(sorted(set(findings))),
+            findings,
+            "These write a field the DocType does not have. Nothing raises; get_valid_dict() "
+            "drops the value on save and the caller is told it succeeded:\n  "
+            + "\n  ".join(findings),
         )
 
 

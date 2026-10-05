@@ -34,18 +34,18 @@ class PaymentEntry(Document):
         # Validate paid from account
         if self.paid_from:
             account_details = frappe.db.get_value("Account", self.paid_from, 
-                ["account_type", "account_currency"], as_dict=1)
+                ["account_type", "currency"], as_dict=1)
             if account_details:
                 self.paid_from_account_type = account_details.account_type
-                self.paid_from_account_currency = account_details.account_currency
+                self.paid_from_account_currency = account_details.currency
         
         # Validate paid to account
         if self.paid_to:
             account_details = frappe.db.get_value("Account", self.paid_to, 
-                ["account_type", "account_currency"], as_dict=1)
+                ["account_type", "currency"], as_dict=1)
             if account_details:
                 self.paid_to_account_type = account_details.account_type
-                self.paid_to_account_currency = account_details.account_currency
+                self.paid_to_account_currency = account_details.currency
         
         # Validate account types based on payment type
         if self.payment_type == "Receive":
