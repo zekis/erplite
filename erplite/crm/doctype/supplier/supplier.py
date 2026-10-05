@@ -22,6 +22,25 @@ class Supplier(Document):
 @frappe.whitelist()
 def send_to_xero(docname):
     """Send supplier to Xero"""
+    # Whitelisted means any logged-in user can call this by name, so the Desk
+    # button is not the gate -- and until this line there was no gate at all.
+    # frappe.get_doc does no permission check
+    # (frappe/__init__.py:1308; check_permission runs only from insert, save,
+    # submit/cancel and delete), and the save() below -- which does check --
+    # happens only AFTER the contact has been created in Xero. So a refused
+    # user used to leave a real Xero contact behind with its id unstored,
+    # which also defeated the xero_contact_id guard above and duplicated the
+    # contact on the next attempt. Checking here sends nothing instead.
+    #
+    # This sits OUTSIDE the try on purpose. frappe.PermissionError is a plain
+    # Exception (frappe/exceptions.py:34), not a ValidationError, so inside the
+    # try the `except Exception` below would catch a refusal and re-raise it as
+    # "Failed to send supplier to Xero: {0}" -- turning a 403 refusal into a 417
+    # validation failure and telling the user a send failed when nothing was
+    # sent. That is the same mislabelling the comment in that handler warns
+    # about.
+    frappe.has_permission("Supplier", "write", doc=docname, throw=True)
+
     try:
         # Get supplier
         supplier = frappe.get_doc("Supplier", docname)
@@ -59,6 +78,15 @@ def get_xero_suppliers():
 @frappe.whitelist()
 def import_from_xero(xero_contact_id):
     """Import supplier from Xero"""
+    # Same gate as send_to_xero, with "create" rather than "write" because this
+    # endpoint inserts a new Supplier: that is the permission the operation
+    # actually needs. On Supplier every role granted write is also granted
+    # create (System Manager, Accounts Manager, Accounts User), so this refuses
+    # and permits exactly the same people -- it is the precise spelling of the
+    # owner's rule, not a different rule. Outside the try for the reason given
+    # in send_to_xero.
+    frappe.has_permission("Supplier", "create", throw=True)
+
     try:
         return import_supplier_from_xero(xero_contact_id)
     except Exception as e:

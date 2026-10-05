@@ -575,3 +575,89 @@ could not be saved at all).
 
 `TheSweepBites` holds 18 self-tests: every call shape and argument position that
 must be reported, and every expression that must not be.
+
+## `test_xero_permission_gate.py` — who may write to the real Xero ledger
+
+The first surface in this folder that is about **permissions rather than
+correctness**, and the only one where the thing being prevented is not a wrong
+answer but an unauthorised write to the owner's real accounts. Owner's decision
+`rev_c3343b2cf3`: *enforce the DocType's own permissions.*
+
+Six `@frappe.whitelist()` endpoints had no permission check at all — `send_to_xero`
+on Sales Invoice, Purchase Invoice, Customer and Supplier, and `import_from_xero`
+on Customer and Supplier. Whitelisted means the method is callable by name, so the
+Desk button is not the gate. All four DocTypes are restricted to System Manager,
+Accounts Manager and Accounts User, so **a Projects User — no read and no write on
+any of them — could send one of the owner's real invoices to his real Xero ledger.**
+
+Three facts from frappe 15.52.0 make the exposure complete, and they are worth
+separating because only the first is widely known:
+
+1. **`frappe.get_doc` does no permission check** (`frappe/__init__.py:1308` →
+   `model/document.py`, where `check_permission` is reached only from `insert`,
+   `save`, `submit`/`cancel` and `delete`). **Loading is free; only writing is
+   checked.** This is also why the other ~50 whitelisted endpoints in the app are
+   fine: they all write through `get_doc`+`save`/`insert`/`delete_doc`.
+2. **`frappe.db.set_value` checks nothing** — no permission, no `validate`, no
+   hooks. The invoice endpoints record their result that way, so the invoice path
+   contained **no checked write anywhere**.
+3. **`frappe.get_all` ignores permissions** by its own docstring (`:2043`), unlike
+   `get_list` (`:2020`). Not exploited here, but it is why "reads are not covered,
+   writes are" is the right way round to remember this.
+
+### The gate's position is the subtle half
+
+    frappe.has_permission("Sales Invoice", "write", doc=docname, throw=True)
+
+immediately **before** the function's `try`, never inside it.
+`frappe.PermissionError` is `class PermissionError(Exception)` with a 403
+(`frappe/exceptions.py:34`); it is **not** a `ValidationError` (`:18`, 417). Four
+of these endpoints wrap their body in `except Exception` and re-raise through
+`frappe.throw`. A gate one line lower is therefore caught and relabelled *"Failed
+to send invoice to Xero"* — **a refusal, which sent nothing, reported as a
+failure, which may have sent something**, and the user's answer to a failure is to
+try again. So `TestTheGateIsBeforeTheTry` asserts the gate's *line number* against
+the `try`'s, and asserts the blanket handler still exists, so that if someone
+removes it they are told the position rule has stopped being load-bearing rather
+than discovering it later.
+
+Fault injection proved both halves: moving one gate inside its `try` turns five
+tests red, two structural and three behavioural, and the behavioural ones fail
+because the refusal arrives as the wrong exception class.
+
+### `write` to send, `create` to import
+
+The import endpoints insert rather than modify, so `create` is the permission the
+operation needs and there is no `doc=` to pass. On all four DocTypes every role
+granted `write` is also granted `create`, so this permits and refuses exactly the
+same people — `test_write_and_create_are_the_same_set_of_roles` pins that, so the
+day the rows diverge the choice stops being free and a test says so.
+
+### The stand-in had to learn the question first
+
+There was no `has_permission` in `fake_frappe.py`, and the last sweep's lesson was
+that **a stand-in that cannot express the question answers it wrongly instead of
+erroring** (`db.exists` with a dict compared a name to a dict, returned False, and
+27 of 29 tests passed anyway). So `has_permission` was added reading the real
+`permissions` rows out of the DocType JSON via `doctype_permissions()`, and a
+DocType whose rows were never loaded raises `AssertionError` rather than answering.
+
+That strictness earned itself immediately: it turned **16 tests in
+`test_xero_invoice_send.py` red**, because that file drives `send_to_xero` and had
+no rows loaded. A permissive stand-in would have returned True and said nothing,
+and the gate would have been tested only by the file written to test it.
+
+### What this does not fix, pinned as a test rather than a comment
+
+The contact path is still **not idempotent**. It posts to Xero first and `save()`s
+second, so a permitted user whose save fails for any other reason leaves a contact
+in Xero with its `xero_contact_id` unstored — which defeats the already-sent guard
+and duplicates the contact next time. The gate removes the *permission* reason for
+that save to fail, which is what was approved; the rest changes behaviour for
+users who are allowed to be there, so it is the owner's call.
+`test_a_permitted_save_failure_still_strands_the_contact` holds the hazard as it
+stands and **fails the day it is fixed**, in the same spirit as
+`AWAITING_OWNER_DECISION` above: a waiver must not outlive what it waives.
+
+Not claimed: who holds which role on the live site (the owner's data), and
+anything about the Xero wire format, which `test_xero_invoice_send.py` covers.
