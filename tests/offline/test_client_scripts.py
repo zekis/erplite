@@ -27,6 +27,8 @@ the string form is checked here; the object form cannot fail this way.
 Three live instances of this were found and removed on 5 Oct 2026, all on ordinary actions:
 
   * Project, `refresh`        -> "Field project_manager not found." when opening a NEW Project
+                                 (restored on `timesheet_approver` once the owner chose it,
+                                  review tray rev_e73092bfb5; the guard below covers it)
   * Activity, `status`        -> "Field progress_percent not found." when setting status Completed
   * Timesheet Entry, check_in -> "Field date not found." on every check-in time entered
 
@@ -133,6 +135,41 @@ class ClientScriptFieldsTest(unittest.TestCase):
             "client scripts set fields their DocType does not declare. Frappe's frm.set_value "
             "raises 'Field <x> not found.' and aborts the handler for an unknown fieldname, so "
             "each of these is a modal error dialog on a real user action -- not dead code.\n  "
+            + "\n  ".join(offenders),
+        )
+
+    def test_no_client_script_names_the_removed_project_manager(self):
+        """The regression net for the four client-side query sites.
+
+        The structural check above keys a script to the DocType of the folder it
+        lives in, which is exactly right for `frm.set_value` and no use at all
+        for a script that queries a *different* DocType by name --
+        `frappe.db.get_value('Project', ...)` in timesheet_entry.js,
+        `frappe.db.get_list('Project', {filters})` in timesheet_entry_list.js,
+        and `add_fields` / `route_options` in project_list.js. All four named
+        `project_manager`, removed from Project by 8126278, and all four moved
+        to `timesheet_approver` (review tray rev_e73092bfb5).
+
+        Those four cannot be checked structurally without parsing JS, so this
+        pins the one field instead. It is narrow on purpose: it cannot report a
+        pre-existing violation it was not written for, and it fails the moment
+        the removed field comes back anywhere in a client script.
+        """
+        offenders = []
+        for path, _doctype, _declared in _client_scripts():
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                for lineno, line in enumerate(fh, 1):
+                    if "project_manager" in line:
+                        offenders.append(
+                            "%s:%d  %s"
+                            % (os.path.relpath(path, APP_ROOT), lineno, line.strip())
+                        )
+        self.assertEqual(
+            [], offenders,
+            "`project_manager` is not a field on Project. A client script that "
+            "filters or fetches it reads an orphaned column -- `bench migrate` "
+            "drops no columns -- so it matches stale values nothing maintains, "
+            "or nothing at all. Use `timesheet_approver`.\n  "
             + "\n  ".join(offenders),
         )
 

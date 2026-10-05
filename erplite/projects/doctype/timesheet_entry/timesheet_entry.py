@@ -209,10 +209,10 @@ def approve_timesheet(timesheet_id, approval_notes=None):
     try:
         timesheet = frappe.get_doc("Timesheet Entry", timesheet_id)
         
-        # Check if user is project manager
+        # Check if user is the project's timesheet approver
         project = frappe.get_doc("Project", timesheet.project)
-        if project.project_manager != frappe.session.user and not frappe.has_permission("Timesheet Entry", "write"):
-            frappe.throw(_("Only the project manager can approve timesheets for this project"))
+        if project.timesheet_approver != frappe.session.user and not frappe.has_permission("Timesheet Entry", "write"):
+            frappe.throw(_("Only the timesheet approver can approve timesheets for this project"))
         
         if timesheet.status != "Submitted":
             frappe.throw(_("Only submitted timesheets can be approved"))
@@ -244,10 +244,10 @@ def reject_timesheet(timesheet_id, approval_notes=None):
     try:
         timesheet = frappe.get_doc("Timesheet Entry", timesheet_id)
         
-        # Check if user is project manager
+        # Check if user is the project's timesheet approver
         project = frappe.get_doc("Project", timesheet.project)
-        if project.project_manager != frappe.session.user and not frappe.has_permission("Timesheet Entry", "write"):
-            frappe.throw(_("Only the project manager can reject timesheets for this project"))
+        if project.timesheet_approver != frappe.session.user and not frappe.has_permission("Timesheet Entry", "write"):
+            frappe.throw(_("Only the timesheet approver can reject timesheets for this project"))
         
         if timesheet.status != "Submitted":
             frappe.throw(_("Only submitted timesheets can be rejected"))

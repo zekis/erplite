@@ -2,7 +2,7 @@
 // For license information, please see license.txt
 
 frappe.listview_settings['Project'] = {
-    add_fields: ["status", "project_manager", "customer"],
+    add_fields: ["status", "timesheet_approver", "customer"],
     
     get_indicator: function(doc) {
         if (doc.status === "Active") {
@@ -17,9 +17,9 @@ frappe.listview_settings['Project'] = {
     },
     
     onload: function(listview) {
-        // Add filter for projects managed by current user
+        // Add filter for the projects this user approves timesheets for
         listview.page.add_menu_item(__("My Projects"), function() {
-            frappe.route_options = {"project_manager": frappe.session.user};
+            frappe.route_options = {"timesheet_approver": frappe.session.user};
             frappe.set_route("List", "Project");
         });
         

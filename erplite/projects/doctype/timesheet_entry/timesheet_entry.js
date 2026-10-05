@@ -39,12 +39,12 @@ frappe.ui.form.on('Timesheet Entry', {
                 }, __('Actions')).addClass('btn-primary');
             }
             
-            // Approval buttons for project managers
+            // Approval buttons for the project's timesheet approver
             if (frm.doc.status === 'Submitted') {
-                // Check if current user is project manager
-                frappe.db.get_value('Project', frm.doc.project, 'project_manager')
+                // Check if current user is the timesheet approver
+                frappe.db.get_value('Project', frm.doc.project, 'timesheet_approver')
                     .then(r => {
-                        if (r.message && r.message.project_manager === frappe.session.user) {
+                        if (r.message && r.message.timesheet_approver === frappe.session.user) {
                             frm.add_custom_button(__('Approve'), function() {
                                 frappe.prompt({
                                     label: 'Approval Notes',
