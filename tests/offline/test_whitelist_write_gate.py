@@ -51,9 +51,24 @@ starts reporting ordinary reporting queries as security findings.
 It follows calls **one level** into the app's own helpers, which is what the
 Xero endpoints need (they write via `erplite/xero/accounts.py`). Two levels
 deep and it would see nothing, so a deeper chain is a hole in this guard rather
-than a guarantee; `TestTheSweepCatchesANewInstance` runs the classifier against
-source built for the purpose so a passing run means the sweep still works, not
-merely that it found nothing.
+than a guarantee.
+
+A bare `helper()` is resolved to an explicit `from erplite.x import helper`
+first, then to a definition in the **same module**, and otherwise not at all.
+That matters more than it sounds: 21 function names in this app are defined in
+more than one module (`validate` in 28 of them), so resolving by bare name
+alone made one module's gate excuse another module's unchecked write. An
+unresolved helper contributes neither writes nor gates -- a known blind spot,
+and the safe direction for one, since inheriting a gate on a name match is how
+a finding disappears.
+
+Because a guard that reports nothing looks identical to a guard that sees
+nothing, two test classes attack it rather than trust it:
+`TestTheSweepCatchesANewInstance` runs the classifier over source built for the
+purpose, and `TestAGateIsAShapeNotAName` pins the two name-match holes that
+fault injection found in the first version of this file -- both of which left
+it fully green with an unchecked `frappe.db.set_value` added to a live
+whitelisted endpoint.
 """
 
 import ast
@@ -81,13 +96,43 @@ WRITING_VERBS = {
 }
 READING_VERBS = {"SELECT", "SHOW", "DESC", "DESCRIBE", "EXPLAIN", "WITH"}
 
-# Anything that consults who the caller is. Deliberately generous: a false
-# "gated" is a quieter failure than this guard crying wolf over good code, and
-# test_xero_permission_gate.py is what pins the *shape* of a real gate.
-GATE_CALLS = {
+# Anything that consults who the caller is.
+#
+# This is split by **call shape**, and the split is load-bearing rather than
+# tidiness. The first version of this guard matched these names either bare or
+# as an attribute, and that silently blinded it: `erplite/scheduler/api.py`
+# defines its own `get_roles(status="Active")`, which returns Scheduler Role
+# rows and consults nobody, and `get_scheduler_data` calls it bare on line 28.
+# So every whitelisted endpoint in that file calling `get_roles()` was scored
+# "gated" on the strength of a name collision with `frappe.get_roles`. An
+# unchecked `frappe.db.set_value` added to `get_scheduler_data` left this file
+# wholly green -- the exact class of bug it exists to catch.
+# `TestAGateIsAShapeNotAName` fault-injects that case.
+#
+# frappe's own checks are only ever reached as an attribute -- `frappe.x(...)`
+# or `doc.x(...)` -- so requiring that form costs nothing and closes the
+# collision.
+FRAPPE_GATE_CALLS = {
     "has_permission", "only_for", "check_permission", "get_roles",
-    "is_timesheet_admin", "has_timesheet_permission",
+    "get_permitted_documents",
 }
+
+# App-defined helpers that are legitimately called bare, as
+# `if not is_timesheet_admin(): return`.
+#
+# Membership here is a claim that the helper consults the caller, and
+# `TestEveryListedAppGateReallyChecks` holds each one to it. That test is why
+# `has_timesheet_permission` is **not** in this set: it is
+# `@frappe.whitelist()`-ed, it is named exactly like a gate, and its whole body
+# is `return True` (erplite/projects/api.py:8-12). The original set listed it.
+# Nothing calls it today, so it masked nothing -- but the first
+# `if not has_timesheet_permission(): return` would have scored an endpoint
+# gated while leaving it open to every logged-in user.
+APP_GATE_CALLS = {
+    "is_timesheet_admin",
+}
+
+GATE_CALLS = FRAPPE_GATE_CALLS | APP_GATE_CALLS
 
 # The endpoints that reach an unchecked write with no gate of their own.
 #
@@ -169,18 +214,23 @@ def _unchecked_writes(node):
 
 
 def _gates(node):
-    """Names of permission-ish calls inside `node`, attribute or bare."""
+    """Names of permission-ish calls inside `node`, by call shape.
+
+    frappe's checks count only as an attribute (`frappe.get_roles(...)`,
+    `doc.has_permission(...)`); app helpers count only bare. A bare call to a
+    name frappe happens to share -- the app's own `get_roles()` -- is not a
+    gate, which is the whole point of the split.
+    """
     found = set()
     for call in ast.walk(node):
         if not isinstance(call, ast.Call):
             continue
-        name = None
         if isinstance(call.func, ast.Attribute):
-            name = call.func.attr
+            if call.func.attr in FRAPPE_GATE_CALLS:
+                found.add(call.func.attr)
         elif isinstance(call.func, ast.Name):
-            name = call.func.id
-        if name in GATE_CALLS:
-            found.add(name)
+            if call.func.id in APP_GATE_CALLS:
+                found.add(call.func.id)
     return found
 
 
@@ -190,13 +240,57 @@ def _called_bare_names(node):
 
 
 def _index_functions(trees):
-    """name -> [(relpath, node)] for every function defined in the app."""
+    """(relpath, name) -> [node] for every function defined in the app.
+
+    Keyed by **module and name**, not by name alone. Keying by name alone is
+    what the first version of this guard did, and in a Frappe app that is
+    disastrous: 21 names here are defined in more than one module, including
+    `validate` in 28 of them and `on_update` in 17, because every DocType
+    controller defines them. `TestAGateIsAShapeNotAName` fault-injects the case
+    that mattered.
+    """
     index = {}
     for rel, tree in trees:
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                index.setdefault(node.name, []).append((rel, node))
+                index.setdefault((rel, node.name), []).append(node)
     return index
+
+
+def _imported_from_app(scope):
+    """local name -> (relpath, original name) for `from erplite.x import y`.
+
+    Collected from anywhere inside `scope`, because this app imports its
+    helpers both at module level (`customer.py:10`) and inside the function
+    that uses them (`sales_invoice.py:68`).
+    """
+    out = {}
+    for node in ast.walk(scope):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if not node.module or node.module.split(".")[0] != "erplite":
+            continue
+        rel = node.module.replace(".", "/") + ".py"
+        for alias in node.names:
+            out[alias.asname or alias.name] = (rel, alias.name)
+    return out
+
+
+def _resolve_helper(name, rel, node, module_imports, index):
+    """Where a bare `name()` inside `node` actually goes, or None.
+
+    An explicit import wins, then a definition in the same module. A name that
+    resolves to neither is **unresolved**: it contributes no writes and, more
+    importantly, no gates. Inheriting a gate across modules on a name match is
+    how an unchecked write gets excused by an unrelated function that merely
+    shares a name.
+    """
+    visible = dict(module_imports)
+    visible.update(_imported_from_app(node))
+    if name in visible:
+        target_rel, target_name = visible[name]
+        return index.get((target_rel, target_name)) or None
+    return index.get((rel, name)) or None
 
 
 def classify(trees):
@@ -207,6 +301,7 @@ def classify(trees):
     index = _index_functions(trees)
     found = {}
     for rel, tree in trees:
+        module_imports = _imported_from_app(tree)
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -215,16 +310,32 @@ def classify(trees):
             writes = [("%s:%d" % (rel, ln), label) for ln, label in _unchecked_writes(node)]
             gates = set(_gates(node))
             via = []
+            unresolved = []
             for helper in sorted(_called_bare_names(node)):
-                for rel2, node2 in index.get(helper, []):
+                targets = _resolve_helper(helper, rel, node, module_imports, index)
+                if targets is None:
+                    unresolved.append(helper)
+                    continue
+                for node2 in targets:
                     if node2 is node:
                         continue
+                    rel2 = _defining_module(node2, index)
                     for ln, label in _unchecked_writes(node2):
                         via.append(("%s() at %s:%d" % (helper, rel2, ln), label))
                     gates |= _gates(node2)
             if writes or via:
-                found[(rel, node.name)] = {"writes": writes, "gates": gates, "via": via}
+                found[(rel, node.name)] = {
+                    "writes": writes, "gates": gates, "via": via,
+                    "unresolved": sorted(unresolved),
+                }
     return found
+
+
+def _defining_module(node, index):
+    for (rel, name), nodes in index.items():
+        if node in nodes:
+            return rel
+    return "?"
 
 
 def _app_trees():
@@ -394,6 +505,214 @@ class TestTheSweepCatchesANewInstance(unittest.TestCase):
             "    doc.title = title\n"
             "    doc.save()\n"
         ), {})
+
+
+class TestAGateIsAShapeNotAName(unittest.TestCase):
+    """A gate has to be the function you think it is.
+
+    Both holes this class pins were found by fault-injecting the shipped guard:
+    an unchecked `frappe.db.set_value` added to `get_scheduler_data` left the
+    whole file green. Two separate name matches excused it.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.trees = _app_trees()
+        cls.found = classify(cls.trees)
+        cls.index = _index_functions(cls.trees)
+
+    def _classify(self, modules):
+        return classify([(rel, ast.parse(src)) for rel, src in modules])
+
+    # -- hole 1: the app defines a function named like one of frappe's -----
+
+    def test_the_apps_own_get_roles_is_still_there_to_be_confused(self):
+        """The collision is real, so the guard against it is not theoretical."""
+        self.assertIn(("erplite/scheduler/api.py", "get_roles"), self.index,
+                      "scheduler/api.py no longer defines get_roles; this "
+                      "class pins a collision that no longer exists, so "
+                      "re-check what it is protecting.")
+        source = [src for rel, src in
+                  [(r, io.open(os.path.join(APP_ROOT, r), encoding="utf-8").read())
+                   for r in ["erplite/scheduler/api.py"]]][0]
+        self.assertIn("roles_data = get_roles()", source,
+                      "get_scheduler_data no longer calls get_roles() bare.")
+        # and it consults nobody: it returns Scheduler Role rows
+        node = self.index[("erplite/scheduler/api.py", "get_roles")][0]
+        self.assertEqual(_gates(node), set())
+
+    def test_a_bare_call_to_a_frappe_gate_name_is_not_a_gate(self):
+        found = self._classify([("erplite/scheduler/api.py",
+            "import frappe\n"
+            "def get_roles(status='Active'):\n"
+            "    return frappe.get_all('Scheduler Role')\n"
+            "@frappe.whitelist()\n"
+            "def get_scheduler_data():\n"
+            "    roles_data = get_roles()\n"
+            "    frappe.db.set_value('Project', 'x', 'status', 'Open')\n"
+            "    return roles_data\n")])
+        key = ("erplite/scheduler/api.py", "get_scheduler_data")
+        self.assertIn(key, found)
+        self.assertEqual(found[key]["gates"], set(),
+                         "a bare get_roles() was counted as frappe.get_roles")
+
+    def test_frappes_own_get_roles_still_counts_as_a_gate(self):
+        """Closing the hole must not stop the real check being recognised."""
+        found = self._classify([("erplite/x.py",
+            "import frappe\n"
+            "@frappe.whitelist()\n"
+            "def touch():\n"
+            "    if 'System Manager' not in frappe.get_roles(frappe.session.user):\n"
+            "        frappe.throw('no')\n"
+            "    frappe.db.set_value('Project', 'x', 'status', 'Open')\n")])
+        self.assertEqual(found[("erplite/x.py", "touch")]["gates"], {"get_roles"})
+
+    # -- hole 2: two modules, one name ------------------------------------
+
+    def test_a_gate_is_not_inherited_across_modules_on_a_name_match(self):
+        """The deeper hole, and the one that actually excused the injection.
+
+        `get_projects_and_activities` is defined in both `scheduler/api.py`
+        (no gate) and `projects/api.py` (gated by `is_timesheet_admin`). The
+        helper index was keyed by bare name, so the scheduler endpoint
+        inherited the timesheet module's gate.
+        """
+        for rel in ("erplite/scheduler/api.py", "erplite/projects/api.py"):
+            self.assertIn((rel, "get_projects_and_activities"), self.index,
+                          "%s no longer defines get_projects_and_activities" % rel)
+        gated = self.index[("erplite/projects/api.py",
+                            "get_projects_and_activities")][0]
+        ungated = self.index[("erplite/scheduler/api.py",
+                              "get_projects_and_activities")][0]
+        self.assertEqual(_gates(gated), {"is_timesheet_admin"})
+        self.assertEqual(_gates(ungated), set())
+
+        found = self._classify([
+            ("erplite/projects/api.py",
+             "import frappe\n"
+             "def is_timesheet_admin():\n"
+             "    return 'System Manager' in frappe.get_roles(frappe.session.user)\n"
+             "def helper():\n"
+             "    if not is_timesheet_admin():\n"
+             "        return []\n"
+             "    return frappe.get_all('Project')\n"),
+            ("erplite/scheduler/api.py",
+             "import frappe\n"
+             "def helper():\n"
+             "    return frappe.get_all('Project')\n"
+             "@frappe.whitelist()\n"
+             "def endpoint():\n"
+             "    helper()\n"
+             "    frappe.db.set_value('Project', 'x', 'status', 'Open')\n"),
+        ])
+        key = ("erplite/scheduler/api.py", "endpoint")
+        self.assertIn(key, found)
+        self.assertEqual(found[key]["gates"], set(),
+                         "a gate was inherited from a same-named function in "
+                         "another module")
+
+    def test_a_write_is_not_invented_from_another_modules_namesake(self):
+        """The same confusion the other way round: a false alarm."""
+        found = self._classify([
+            ("erplite/a.py",
+             "import frappe\n"
+             "def helper():\n"
+             "    frappe.db.set_value('Project', 'x', 'y', 1)\n"),
+            ("erplite/b.py",
+             "import frappe\n"
+             "def helper():\n"
+             "    return frappe.get_all('Project')\n"
+             "@frappe.whitelist()\n"
+             "def endpoint():\n"
+             "    return helper()\n"),
+        ])
+        self.assertNotIn(("erplite/b.py", "endpoint"), found,
+                         "b.endpoint was blamed for a write in a.helper")
+
+    def test_an_imported_helper_is_still_followed(self):
+        """Module scoping must not lose the Xero endpoints' own helpers.
+
+        They import across modules both at module level and inside the
+        function, so both forms have to resolve.
+        """
+        for where in ("module", "function"):
+            imp = "from erplite.xero.accounts import create_sales_invoice\n"
+            src = ("import frappe\n"
+                   + (imp if where == "module" else "")
+                   + "@frappe.whitelist()\n"
+                     "def send_to_xero(name):\n"
+                   + ("    " + imp if where == "function" else "")
+                   + "    return create_sales_invoice(name)\n")
+            found = self._classify([
+                ("erplite/xero/accounts.py",
+                 "import frappe\n"
+                 "def create_sales_invoice(name):\n"
+                 "    frappe.db.set_value('Sales Invoice', name, 'x', 1)\n"),
+                ("erplite/accounts/doctype/sales_invoice/sales_invoice.py", src),
+            ])
+            key = ("erplite/accounts/doctype/sales_invoice/sales_invoice.py",
+                   "send_to_xero")
+            self.assertIn(key, found, "a %s-level import was not followed" % where)
+            self.assertTrue(found[key]["via"])
+
+    def test_the_four_xero_senders_still_resolve_through_their_helper(self):
+        """The same thing against the real app, not synthetic source."""
+        for rel in ("erplite/accounts/doctype/sales_invoice/sales_invoice.py",
+                    "erplite/accounts/doctype/purchase_invoice/purchase_invoice.py",
+                    "erplite/crm/doctype/customer/customer.py",
+                    "erplite/crm/doctype/supplier/supplier.py"):
+            entry = self.found[(rel, "send_to_xero")]
+            self.assertTrue(entry["via"],
+                            "%s send_to_xero no longer resolves its helper, so "
+                            "it is passing for the wrong reason" % rel)
+            self.assertTrue(any("erplite/xero/accounts.py" in label
+                                for label, _ in entry["via"]))
+
+    # -- the meta-rule ----------------------------------------------------
+
+    def test_every_listed_app_gate_really_checks(self):
+        """Membership of APP_GATE_CALLS is a claim; this holds each one to it."""
+        for name in sorted(APP_GATE_CALLS):
+            matches = [nodes for (rel, n), nodes in self.index.items() if n == name]
+            self.assertTrue(matches, "APP_GATE_CALLS names %s, which the app "
+                                     "does not define" % name)
+            for nodes in matches:
+                body = "\n".join(ast.dump(n) for n in nodes)
+                self.assertTrue("session" in body or "get_roles" in body,
+                                "%s is listed as a gate but never consults the "
+                                "caller" % name)
+
+    def test_has_timesheet_permission_is_not_listed_as_a_gate(self):
+        """It is named like a gate, whitelisted, and returns True to everyone.
+
+        The first version of this guard listed it. Nothing calls it today, so
+        it masked nothing -- but `if not has_timesheet_permission(): return`
+        would have scored an endpoint gated while leaving it wide open.
+        """
+        self.assertNotIn("has_timesheet_permission", GATE_CALLS)
+        node = self.index[("erplite/projects/api.py",
+                           "has_timesheet_permission")][0]
+        body = [n for n in node.body if not isinstance(n, ast.Expr)]
+        self.assertEqual(len(body), 1)
+        self.assertIsInstance(body[0], ast.Return)
+        self.assertIs(body[0].value.value, True,
+                      "has_timesheet_permission now does something; re-read it "
+                      "before deciding whether it is a gate.")
+        self.assertEqual(_gates(node), set())
+
+    def test_the_other_clear_old_logs_is_not_a_second_instance(self):
+        """Two modules define `clear_old_logs`; only one is the hazard.
+
+        `XeroSyncLog.clear_old_logs` is a @staticmethod, not whitelisted, and
+        deletes through `frappe.delete_doc`, which checks. Pinned because
+        "this is the last instance in the app" was told to the owner, and a
+        name-keyed index is exactly how that claim would rot unnoticed.
+        """
+        rel = "erplite/setup/doctype/xero_sync_log/xero_sync_log.py"
+        node = self.index[(rel, "clear_old_logs")][0]
+        self.assertFalse(_is_whitelisted(node))
+        self.assertEqual(_unchecked_writes(node), [])
+        self.assertNotIn((rel, "clear_old_logs"), self.found)
 
 
 class TestSchedulerLogRowsAreWhatAGateWouldRestOn(unittest.TestCase):
