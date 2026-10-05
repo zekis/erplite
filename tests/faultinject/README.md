@@ -165,6 +165,19 @@ Three habits earn their keep:
 * **Expect a fault to come back green, and treat it as a finding about the
   test, not a mistake in the fault.** One did here, and fixing the test was the
   right answer — see `scheduler_read_gate` below.
+* **If you fix the test in the same pass, go back and watch the fault go
+  green.** Writing the fault and the missing test together means you never see
+  the before-state, so "this fault would not have bitten" is a guess about your
+  own work. It is cheap to measure: put the old test file back on a throwaway
+  commit and run the new faults against it. Doing that for `xero_invoice_send`
+  turned up exactly the five that were predicted — which is the only reason
+  that number is in this README rather than an estimate.
+* **A rule written out once per DocType is guarded once per DocType, and
+  rarely evenly.** See `xero_invoice_send`: deleting the duplicate-send lookup
+  from the sales path turns seven tests red, and deleting the identical call
+  from the purchase path turns exactly one. The code is symmetric and the test
+  file looks symmetric; the guarding is not, and only one fault per copy shows
+  it.
 
 And one more, learned from adding the second target: **a fault on a DocType JSON
 is worth as much as a fault on the code.** The rule in both targets asks frappe
@@ -176,7 +189,7 @@ breaking the code.
 
 ## Targets
 
-Five so far. Ten test files in this repo describe having been
+Six so far. Ten test files in this repo describe having been
 fault-injected; these are the ones where that proof is reproducible.
 
 ### `xero_gate` — `tests/offline/test_xero_permission_gate.py`
@@ -478,3 +491,88 @@ the file, and those tests cannot be fault-injected from here: there is no
 real-source edit that makes "a gate is not inherited across modules on a name
 match" false. The five faults above measure the sweep end to end against the real
 app, which is the half that can rot without anyone noticing.
+
+### `xero_invoice_send` — `tests/offline/test_xero_invoice_send.py`
+
+The owner's two decisions on the Xero invoice send (rev_7b11901cfb,
+rev_5c3dfe6ff3). Every invoice goes to Xero as a `DRAFT`, because invoices are
+reviewed and approved in Xero and not in this app; and a send whose reply is
+lost must not become a second invoice in the real ledger, which
+`find_invoice_in_xero` prevents by asking Xero before posting.
+
+Both decisions land in near-copies: `create_sales_invoice` and
+`create_purchase_invoice` in `erplite/xero/accounts.py`, and a `send_to_xero`
+written out once per DocType. So every fault that can be made on one side is
+made on both.
+
+30 faults, 28 expected red and two controls:
+
+* **the status**, four ways. The removed `"AUTHORISED" if status == "Submitted"`
+  branch restored verbatim on each call site — and then the same mistake made
+  *without the word*, `cstr(doc.status).upper()`, because
+  `test_the_module_no_longer_mentions_authorised` reads the source and would
+  catch the first pair on their spelling alone. The second pair is what shows
+  the behavioural tests carry it: each turns exactly one test red, the one whose
+  document arrives with `status == "Submitted"`;
+* **what is recorded locally** taken from our own document instead of Xero's
+  answer — the two agree today and differ precisely when Xero disagrees;
+* **the lookup deleted**, once per call site: the exact state before the fix;
+* **the lookup still called, but from inside the `try`**, where
+  `except Exception` hands the stop back as "Error creating invoice in Xero:
+  ...". Its position outside that `try` is the whole of what makes a stop read
+  as a stop, and it is one line of indentation away from being lost;
+* **the re-wrap in `send_to_xero`** restored ("Failed to send invoice to Xero:
+  Xero already has this invoice"), once per DocType, plus the already-sent guard
+  deleted once per DocType, plus the Error Log entry for a stop dropped — the
+  only trace a send with an unknown outcome leaves;
+* **`find_invoice_in_xero` answering "not there" on doubt**, in each of the four
+  ways it can be in doubt: unreachable, non-200, an answer it cannot read, and a
+  filter Xero ignored. All four are injected in the dangerous direction, since
+  `None` means "go ahead and post";
+* **what counts as a match**: `VOIDED`/`DELETED` no longer skipped, narrowed to
+  `VOIDED` alone, `Type` dropped, the contact's name dropped, and the lookup no
+  longer asking Xero for the one number;
+* **the timeout**, one fault per module (`accounts.py`, `auth.py`, `client.py`)
+  because the claim is that no call site in the package is left out and the sweep
+  walks every file in it; `auth.py` using `XERO_HTTP_TIMEOUT` without importing
+  it; and the value itself as a bare number and as a pair with the read shorter
+  than the connect;
+* **two controls**, both ordinary: a local renamed in `find_invoice_in_xero`,
+  and a local renamed in Sales Invoice's `send_to_xero`. Two files, because the
+  tests read both.
+
+All 28 go red and both controls stay green, against `main` at `7fe563a`.
+
+**Five faults came back green against the test file as it stood, and the test
+file was what needed fixing** — measured, not inferred: the old file was put
+back on a throwaway commit and the new faults run against it, and exactly the
+five predicted passed. Three were untested claims the file's own docstring
+makes (an unreadable answer stops the send; `DELETED` frees the number as
+`VOIDED` does; the purchase-side already-sent guard), fixed by adding the three
+tests. The other two needed an existing test strengthened: both stop messages
+were asserted with `assertIn`, which cannot tell a stop from a stop wearing a
+failure's prefix, so the lookup could move inside the `try` and the purchase
+`send_to_xero` could re-wrap its stop with every assertion still passing. They
+now assert the message arrives with no prefix at all.
+
+**The red sets are very uneven between the two copies.** Deleting the lookup
+from the sales path turns seven tests red; deleting the identical call from the
+purchase path turns exactly **one**,
+`test_the_same_number_from_the_same_supplier_does_block_a_bill`. Everything
+protecting the owner's real ledger from a duplicated *bill* rests on that single
+test. Worth knowing before anyone tidies it, and the reason the fault is split
+per call site rather than written once.
+
+**One fault is caught twice over, and it is worth knowing which half you are
+reading.** Dropping the timeout from the lookup `GET` turns 17 of the 23 tests
+red, not because 17 assertions are about timeouts but because `FakeXero.get`
+asserts `timeout is not None` on every call, so every behavioural test fails as
+well as the AST sweep. The sweep is the half that generalises to the package;
+the stand-in's assertion only covers the two calls it serves.
+
+**What this target does not reach.** Whether Xero itself rejects a duplicate
+`InvoiceNumber` — that needs a real write to the owner's accounts, and the point
+of the change is that the app no longer sends the second one. And the four
+`except Exception: frappe.throw(...)` handlers wrapping the POST itself are only
+exercised through the lost-reply path; a fault on the POST's own error handling
+would need Xero stand-ins this file does not have.

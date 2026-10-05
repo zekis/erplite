@@ -751,10 +751,303 @@ WHITELIST_WRITE_GATE = Target(
                 '                        "approval_seen", 1)\n')]),
     ])
 
+# --- erplite/xero invoice send --------------------------------------------
+# rev_7b11901cfb, rev_5c3dfe6ff3: every invoice reaches Xero as a DRAFT, and a
+# send whose reply is lost must not become a second invoice in the real ledger.
+#
+# Two kinds of fault live here, and they fail in opposite directions:
+#   * the status one is about what we SEND -- getting it wrong authorises a bill
+#     in the owner's accounts;
+#   * the lookup ones are about what we send TWICE -- getting them wrong bills a
+#     customer again. Each is written out once per DocType in the app, so each
+#     is injected once per DocType: `send_to_xero` and the `create_*_invoice`
+#     functions are near-copies, and a fix applied to one of them is a fix
+#     applied to one of them.
+
+ACCOUNTS = "erplite/xero/accounts.py"
+XERO_INIT = "erplite/xero/__init__.py"
+XERO_AUTH = "erplite/xero/auth.py"
+XERO_CLIENT = "erplite/xero/client.py"
+
+# The two call sites' invoice_data, each with its own InvoiceNumber expression.
+SI_STATUS = ('        "Status": "DRAFT",\n'
+             '        "InvoiceNumber": cstr(sales_invoice.name)')
+PI_STATUS = ('        "Status": "DRAFT",\n'
+             '        "InvoiceNumber": invoice_number\n')
+
+# The comment goes with the call: it is the comment that says why the call is
+# where it is, so a fault that moves or removes the call removes it too.
+SI_LOOKUP = (
+    "    # Don't post a second copy of an invoice Xero already has: see\n"
+    "    # find_invoice_in_xero. Deliberately outside the try/except below, so that\n"
+    "    # this stop reaches the user as a stop and not as a failed send.\n"
+    '    existing = find_invoice_in_xero(\n'
+    '        invoice_data["InvoiceNumber"], "ACCREC",\n'
+    '        sales_invoice.customer_name, settings.tenant_id, token\n'
+    '    )\n'
+    '    if existing:\n'
+    '        frappe.throw(_already_in_xero_message(invoice_data["InvoiceNumber"], existing))\n')
+
+PI_LOOKUP = (
+    "    # Don't post a second copy of an invoice Xero already has: see\n"
+    "    # find_invoice_in_xero. Deliberately outside the try/except below, so that\n"
+    "    # this stop reaches the user as a stop and not as a failed send.\n"
+    '    existing = find_invoice_in_xero(\n'
+    '        invoice_data["InvoiceNumber"], "ACCPAY",\n'
+    '        purchase_invoice.supplier_name, settings.tenant_id, token\n'
+    '    )\n'
+    '    if existing:\n'
+    '        frappe.throw(_already_in_xero_message(invoice_data["InvoiceNumber"], existing))\n')
+
+# What follows the sales lookup, up to the POST. Needed verbatim so the lookup
+# can be moved to the other side of `try:` in one edit.
+SI_POST_PREAMBLE = (
+    '\n'
+    '    # Send to Xero\n'
+    '    headers = {\n'
+    '        "Authorization": f"Bearer {token}",\n'
+    '        "Content-Type": "application/json",\n'
+    '        "Accept": "application/json",\n'
+    '        "Xero-Tenant-Id": settings.tenant_id\n'
+    '    }\n'
+    '    \n'
+    '    try:\n'
+    '        response = requests.post(\n')
+
+SI_LOOKUP_INSIDE_TRY = (
+    '\n'
+    '    # Send to Xero\n'
+    '    headers = {\n'
+    '        "Authorization": f"Bearer {token}",\n'
+    '        "Content-Type": "application/json",\n'
+    '        "Accept": "application/json",\n'
+    '        "Xero-Tenant-Id": settings.tenant_id\n'
+    '    }\n'
+    '    \n'
+    '    try:\n'
+    '        existing = find_invoice_in_xero(\n'
+    '            invoice_data["InvoiceNumber"], "ACCREC",\n'
+    '            sales_invoice.customer_name, settings.tenant_id, token\n'
+    '        )\n'
+    '        if existing:\n'
+    '            frappe.throw(_already_in_xero_message(invoice_data["InvoiceNumber"], existing))\n'
+    '        response = requests.post(\n')
+
+# send_to_xero's handler for a stop: logged, then re-raised unchanged.
+def _stop_handler(doctype):
+    return ('        frappe.log_error("%s", f"Send to Xero stopped: {str(e)}")\n'
+            '        raise\n' % doctype)
+
+
+def _already_sent_guard(variable):
+    return ('        # Check if already sent to Xero\n'
+            '        if %s.xero_invoice_id:\n'
+            '            frappe.throw(_("This invoice has already been sent to Xero"))\n'
+            % variable)
+
+
+# find_invoice_in_xero's four refusals and three match conditions.
+FIND_UNREACHABLE = (
+    '    except Exception as e:\n'
+    '        frappe.throw(\n'
+    '            f"Could not check whether Xero already has invoice {invoice_number}: "\n'
+    '            f"{str(e)}. Nothing was sent. Please try again."\n'
+    '        )\n')
+
+FIND_NON_200 = (
+    '    if response.status_code != 200:\n'
+    '        frappe.throw(\n'
+    '            f"Could not check whether Xero already has invoice {invoice_number}: "\n'
+    '            f"Xero answered {response.status_code}, {response.text[:500]}. "\n'
+    '            "Nothing was sent. Please try again."\n'
+    '        )\n')
+
+FIND_UNREADABLE = (
+    '    try:\n'
+    '        invoices = response.json().get("Invoices") or []\n'
+    '    except Exception as e:\n'
+    '        frappe.throw(\n'
+    '            f"Could not read Xero\'s answer when checking invoice {invoice_number}: "\n'
+    '            f"{str(e)}. Nothing was sent. Please try again."\n'
+    '        )\n')
+
+FIND_IGNORED_FILTER = (
+    '    if others:\n'
+    '        frappe.throw(\n'
+    '            f"Could not check whether Xero already has invoice {invoice_number}: "\n'
+    '            f"asked Xero for that number and it returned {len(invoices)} invoice(s), "\n'
+    '            f"{len(others)} of them under other numbers, so the answer cannot be "\n'
+    '            "trusted. Nothing was sent."\n'
+    '        )\n')
+
+FIND_TYPE = ('        if invoice.get("Type") != invoice_type:\n'
+             '            continue\n')
+FIND_VOIDED = ('        if cstr(invoice.get("Status")).strip().upper() in ("VOIDED", "DELETED"):\n'
+               '            continue\n')
+FIND_CONTACT = (
+    '        if contact_name:\n'
+    '            theirs = cstr((invoice.get("Contact") or {}).get("Name")).strip().lower()\n'
+    '            if theirs != cstr(contact_name).strip().lower():\n'
+    '                continue\n')
+
+XERO_INVOICE_SEND = Target(
+    test="tests/offline/test_xero_invoice_send.py",
+    faults=[
+        # 1. What status reaches Xero. The first two restore the removed branch
+        #    verbatim; the second two make the same mistake without using the
+        #    word, because `test_the_module_no_longer_mentions_authorised` reads
+        #    the source and would catch the first two on their spelling alone.
+        Fault("the AUTHORISED branch restored: Sales Invoice", True, [
+            (ACCOUNTS, SI_STATUS,
+             '        "Status": "AUTHORISED" if sales_invoice.status == "Submitted" else "DRAFT",\n'
+             '        "InvoiceNumber": cstr(sales_invoice.name)')]),
+        Fault("the AUTHORISED branch restored: Purchase Invoice", True, [
+            (ACCOUNTS, PI_STATUS,
+             '        "Status": "AUTHORISED" if purchase_invoice.status == "Submitted" else "DRAFT",\n'
+             '        "InvoiceNumber": invoice_number\n')]),
+        Fault("the status read off the local record, never spelling AUTHORISED: "
+              "Sales Invoice", True, [
+            (ACCOUNTS, SI_STATUS,
+             '        "Status": cstr(sales_invoice.status).upper(),\n'
+             '        "InvoiceNumber": cstr(sales_invoice.name)')]),
+        Fault("the status read off the local record, never spelling AUTHORISED: "
+              "Purchase Invoice", True, [
+            (ACCOUNTS, PI_STATUS,
+             '        "Status": cstr(purchase_invoice.status).upper(),\n'
+             '        "InvoiceNumber": invoice_number\n')]),
+        # What is recorded locally is what Xero said, not what we asked for --
+        # the two differ precisely when Xero disagrees, which is the case worth
+        # having a record of.
+        Fault("the local record keeps our own status instead of Xero's answer", True, [
+            (ACCOUNTS,
+             '                frappe.db.set_value("Sales Invoice", sales_invoice.name, {\n'
+             '                    "xero_invoice_id": invoice["InvoiceID"],\n'
+             '                    "xero_invoice_number": invoice.get("InvoiceNumber"),\n'
+             '                    "xero_status": invoice.get("Status"),\n',
+             '                frappe.db.set_value("Sales Invoice", sales_invoice.name, {\n'
+             '                    "xero_invoice_id": invoice["InvoiceID"],\n'
+             '                    "xero_invoice_number": invoice.get("InvoiceNumber"),\n'
+             '                    "xero_status": sales_invoice.status,\n')]),
+
+        # 2. The lookup that makes a send repeatable, removed -- the exact state
+        #    before the fix, once per DocType.
+        Fault("the lookup deleted: Sales Invoice (a retry posts a second invoice)",
+              True, [(ACCOUNTS, SI_LOOKUP, "")]),
+        Fault("the lookup deleted: Purchase Invoice", True,
+              [(ACCOUNTS, PI_LOOKUP, "")]),
+        # Still called, but from inside the try, where `except Exception`
+        # relabels the stop. The call's placement is the whole of what makes it
+        # read as a stop, and it is one line of indentation away from being lost.
+        Fault("the lookup moved inside create_sales_invoice's try, so the stop "
+              "comes back as 'Error creating invoice in Xero'", True, [
+            (ACCOUNTS, SI_LOOKUP + SI_POST_PREAMBLE, SI_LOOKUP_INSIDE_TRY)]),
+        # And the re-wrap in send_to_xero itself, which is what hid the stops
+        # before: "Failed to send invoice to Xero: Xero already has this one".
+        Fault("send_to_xero re-wraps the stop as a failed send: Sales Invoice",
+              True, [(SI, _stop_handler("Sales Invoice"),
+                      '        frappe.log_error("Sales Invoice", f"Send to Xero stopped: {str(e)}")\n'
+                      '        frappe.throw(_("Failed to send invoice to Xero: {0}").format(str(e)))\n')]),
+        Fault("send_to_xero re-wraps the stop as a failed send: Purchase Invoice",
+              True, [(PI, _stop_handler("Purchase Invoice"),
+                      '        frappe.log_error("Purchase Invoice", f"Send to Xero stopped: {str(e)}")\n'
+                      '        frappe.throw(_("Failed to send invoice to Xero: {0}").format(str(e)))\n')]),
+        Fault("the already-sent guard deleted: Sales Invoice", True,
+              [(SI, _already_sent_guard("sales_invoice"), "")]),
+        Fault("the already-sent guard deleted: Purchase Invoice", True,
+              [(PI, _already_sent_guard("purchase_invoice"), "")]),
+        # A send whose outcome is unknown is traceable from one place only.
+        Fault("the Error Log entry for a stop dropped: Sales Invoice", True,
+              [(SI, _stop_handler("Sales Invoice"), "        raise\n")]),
+
+        # 3. find_invoice_in_xero never answers "not there" on doubt. Each of
+        #    the four ways it can be in doubt is made to answer None instead --
+        #    the dangerous direction, since None means "go ahead and post".
+        Fault("an unreachable Xero treated as 'not there'", True,
+              [(ACCOUNTS, FIND_UNREACHABLE,
+                '    except Exception:\n        return None\n')]),
+        Fault("a non-200 on the lookup treated as 'not there'", True,
+              [(ACCOUNTS, FIND_NON_200,
+                '    if response.status_code != 200:\n        return None\n')]),
+        Fault("an answer that cannot be read treated as 'not there'", True,
+              [(ACCOUNTS, FIND_UNREADABLE,
+                '    invoices = response.json().get("Invoices") or []\n')]),
+        Fault("a filter Xero ignored treated as a trustworthy empty answer", True,
+              [(ACCOUNTS, FIND_IGNORED_FILTER, "")]),
+
+        # 4. What counts as a match. Dropping a condition blocks sends that
+        #    should go through; widening one lets a duplicate past.
+        Fault("VOIDED and DELETED invoices block the send", True,
+              [(ACCOUNTS, FIND_VOIDED, "")]),
+        Fault("only VOIDED frees the number again, not DELETED", True,
+              [(ACCOUNTS, FIND_VOIDED,
+                '        if cstr(invoice.get("Status")).strip().upper() in ("VOIDED",):\n'
+                '            continue\n')]),
+        Fault("Type dropped from the match, so our SINV- number on a bill blocks "
+              "the invoice", True, [(ACCOUNTS, FIND_TYPE, "")]),
+        Fault("the contact dropped from the match, so another supplier's INV-001 "
+              "blocks our bill", True, [(ACCOUNTS, FIND_CONTACT, "")]),
+        Fault("the lookup stops asking Xero for the one number", True, [
+            (ACCOUNTS, '            params={"InvoiceNumbers": cstr(invoice_number)},\n',
+             '            params={},\n')]),
+
+        # 5. Every Xero call carries a timeout. One fault per module, because
+        #    the claim is that no call site in the package is left out and the
+        #    sweep walks every file in it -- a fault in accounts.py alone would
+        #    prove only that it walks accounts.py.
+        Fault("timeout dropped from the lookup GET (accounts.py)", True, [
+            (ACCOUNTS,
+             '            params={"InvoiceNumbers": cstr(invoice_number)},\n'
+             '            timeout=XERO_HTTP_TIMEOUT\n',
+             '            params={"InvoiceNumbers": cstr(invoice_number)},\n')]),
+        Fault("timeout dropped from requests.delete in auth.py", True, [
+            (XERO_AUTH,
+             '                response = requests.delete(url, headers=headers, timeout=XERO_HTTP_TIMEOUT)\n',
+             '                response = requests.delete(url, headers=headers)\n')]),
+        Fault("timeout dropped from requests.put in client.py", True, [
+            (XERO_CLIENT,
+             '        response = requests.put(\n'
+             '            url, \n'
+             '            headers=self.get_headers(), \n'
+             '            data=json.dumps(data),\n'
+             '            timeout=XERO_HTTP_TIMEOUT,\n'
+             '        )\n',
+             '        response = requests.put(\n'
+             '            url, \n'
+             '            headers=self.get_headers(), \n'
+             '            data=json.dumps(data),\n'
+             '        )\n')]),
+        # Used in nine places in auth.py and imported in one: a NameError at the
+        # moment of the call, which nothing offline would otherwise reach.
+        Fault("auth.py uses the timeout without importing it", True, [
+            (XERO_AUTH, 'from erplite.xero import XERO_HTTP_TIMEOUT\n', '')]),
+        Fault("the timeout is one number instead of a (connect, read) pair", True,
+              [(XERO_INIT, 'XERO_HTTP_TIMEOUT = (10, 60)\n',
+                'XERO_HTTP_TIMEOUT = 30\n')]),
+        Fault("the read timeout is shorter than the connect timeout", True,
+              [(XERO_INIT, 'XERO_HTTP_TIMEOUT = (10, 60)\n',
+                'XERO_HTTP_TIMEOUT = (60, 10)\n')]),
+
+        # 6. Controls: real edits, no behaviour change. One in the module under
+        #    test and one in the caller, because the tests read both.
+        Fault("CONTROL: a local renamed in find_invoice_in_xero (must stay green)",
+              False, [
+            (ACCOUNTS, '    wanted = cstr(invoice_number).strip().lower()\n',
+             '    asked_for = cstr(invoice_number).strip().lower()\n'),
+            (ACCOUNTS, '        if cstr(inv.get("InvoiceNumber")).strip().lower() != wanted\n',
+             '        if cstr(inv.get("InvoiceNumber")).strip().lower() != asked_for\n')]),
+        Fault("CONTROL: a local renamed in Sales Invoice's send_to_xero "
+              "(must stay green)", False, [
+            (SI, '        xero_invoice_id = create_sales_invoice(sales_invoice)\n',
+             '        created_id = create_sales_invoice(sales_invoice)\n'),
+            (SI, '        if xero_invoice_id:\n', '        if created_id:\n')]),
+    ])
+
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
     "timesheet_target_user": TIMESHEET_TARGET_USER,
     "scheduler_read_gate": SCHEDULER_READ_GATE,
     "whitelist_write_gate": WHITELIST_WRITE_GATE,
+    "xero_invoice_send": XERO_INVOICE_SEND,
 }
