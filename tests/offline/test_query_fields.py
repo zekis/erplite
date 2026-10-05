@@ -15,7 +15,7 @@ frappe-version-15 source:
   * **Silently, reading a stale value.** If the field was REMOVED from the DocType, the
     column is still there: `bench migrate` never drops one. `frappe.model.delete_fields`
     (`frappe/model/__init__.py:198-211`) is the only DROP COLUMN in frappe and it runs
-    only from a patch somebody writes by hand; this app's `patches.txt` is empty. So the
+    only from a patch somebody writes by hand, and this app's `patches.txt` declares none. So the
     SQL is valid, the orphan is read, and nothing is logged. New rows have NULL there,
     because `get_valid_dict()` never writes a column the DocType does not declare -- so
     a filter on the orphan silently excludes every row written since the removal.
