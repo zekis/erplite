@@ -425,17 +425,43 @@ class FakeFrappe(object):
         if doc is not None and isinstance(doc, (str, int)):
             doc = self.get_doc(doctype, doc)
 
-        allowed = False
-        for role in self.get_roles(user):
-            entry = rows.get(role)
-            if not entry or ptype not in entry["granted"]:
-                continue
-            if entry["if_owner"] and doc is not None:
-                owner = doc.get("owner") if hasattr(doc, "get") else None
-                if owner != user:
-                    continue
+        # frappe's own algorithm, from get_role_permissions
+        # (permissions.py:288-305). Ported rather than paraphrased because its
+        # no-doc answer is the whole point and this file had it wrong before:
+        # it used to let an `if_owner` row grant write at DocType level, so a
+        # Projects User passed `has_permission("Timesheet Entry", "write")`.
+        # Frappe refuses that. For a right granted only by `if_owner` rows it
+        # sets the right to 0 -- except `select` and `read`, which stay 1 so the
+        # list view can load and then be filtered by owner, and except `create`,
+        # which `if_owner` never restricts ("if_owner does not come with create
+        # rights", permissions.py:303-305).
+        #
+        # Note the three tests are taken across **all** the user's applicable
+        # rows, not row by row: a user holding both Projects User (write
+        # `if_owner`) and Projects Manager (write outright) has write on
+        # everyone's rows, because one applicable row grants it without
+        # `if_owner`.
+        applicable = [rows[role] for role in self.get_roles(user) if role in rows]
+        granted = any(ptype in entry["granted"] for entry in applicable)
+        has_if_owner_enabled = any(entry["if_owner"] for entry in applicable)
+        without_if_owner = any(
+            ptype in entry["granted"] and not entry["if_owner"] for entry in applicable)
+
+        if not granted:
+            allowed = False
+        elif has_if_owner_enabled and not without_if_owner and ptype != "create":
+            if doc is None:
+                allowed = ptype in ("select", "read")
+            else:
+                if not hasattr(doc, "get"):
+                    raise AssertionError(
+                        "has_permission was given a %r, which cannot answer "
+                        "`owner`, on a DocType whose rows are restricted by "
+                        "if_owner. Refusing silently would make the check pass "
+                        "for the wrong reason." % (type(doc).__name__,))
+                allowed = doc.get("owner") == user
+        else:
             allowed = True
-            break
 
         self.permission_checks.append(
             _dict(doctype=doctype, ptype=ptype,
@@ -843,6 +869,30 @@ class FakeDocumentBase(object):
 
     _doc_before_save = None
 
+    def get(self, key, default=None):
+        """frappe BaseDocument.get, for the plain-fieldname case.
+
+        Here because `has_permission(doc=...)` asks a document for its `owner`
+        the way frappe does. Without it a controller instance answered nothing,
+        `hasattr(doc, "get")` was False, and the check silently refused -- a
+        permission test that fails for the wrong reason is worse than no test.
+        """
+        return getattr(self, key, default)
+
+    def is_new(self):
+        """frappe BaseDocument.is_new (base_document.py:461-462): `__islocal`.
+
+        `insert()` sets `__islocal` before it runs a single hook and deletes it
+        once the row is written (document.py:390 and :430-432); `_save()` on an
+        existing document never sets it. So a hook asking `self.is_new()` is
+        asking "am I being inserted", and a rule guarded by it cannot reach an
+        update. make_doc's `is_new=` argument stands in for that, and defaults
+        to True because make_doc builds a document the way frappe builds a
+        **new** one -- a test standing for a later save must say
+        `is_new=False`.
+        """
+        return bool(getattr(self, "__islocal", False))
+
     def get_doc_before_save(self):
         """frappe Document.get_doc_before_save (document.py:503-504)."""
         return getattr(self, "_doc_before_save", None)
@@ -989,7 +1039,8 @@ class FakeUtils(object):
         return "Australia/Perth"
 
 
-def make_doc(controller_class, doctype, module, doctype_dir, data=None):
+def make_doc(controller_class, doctype, module, doctype_dir, data=None,
+             is_new=True):
     """Build a controller instance the way Frappe builds a new document.
 
     Which attributes a Document has is the whole point of this helper, so it
@@ -1016,6 +1067,11 @@ def make_doc(controller_class, doctype, module, doctype_dir, data=None):
     valid = doctype_fields(module, doctype_dir)
     doc = controller_class.__new__(controller_class)
     doc.doctype = doctype
+    # `__islocal` is not a DocType field, so it is set past __setattr__'s field
+    # check, exactly as frappe's `self.set("__islocal", True)` sits outside the
+    # valid column list.
+    if is_new:
+        object.__setattr__(doc, "__islocal", True)
     for field in valid:
         object.__setattr__(doc, field, None)
     # init_valid_columns gives these two a value rather than leaving them None.
