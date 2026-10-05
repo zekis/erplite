@@ -19,7 +19,9 @@ Runs without a bench.
 """
 import importlib.util
 import os
+import py_compile
 import subprocess
+import sys
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -373,6 +375,118 @@ class TestTheHarnessRefusesToDestroyWork(unittest.TestCase):
         finally:
             harness.git = original
         self.assertIn("RESTORE FAILED", str(caught.exception))
+
+
+class TestNoFaultIsMeasuredAgainstThePreviousOnesBytecode(unittest.TestCase):
+    """A cached `.pyc` is reused when the source's size and whole-second mtime
+    both match what was cached. Faults are small, same-shaped edits on one file
+    applied seconds apart, so that happens by ordinary coincidence: every one of
+    the twelve `frappe.get_list(` -> `frappe.get_all(` edits in the
+    scheduler_read_gate target leaves api.py at exactly the same size.
+
+    It was found by running one fault twice with another between and getting two
+    different answers -- a behavioural test red, then green on the neighbour's
+    code. No `run.py` verdict changed, because every fault in the four current
+    targets is also caught by an AST test that reads source text; that is luck of
+    the target set, not a property of the tool. A fault guarded only by a
+    behavioural test would have been reported GREEN, and that direction is the
+    dangerous one: a false GREEN reads as "the test does not notice this
+    regression" and sends someone to fix a test that is fine.
+    """
+
+    SOURCE = "erplite/scheduler/api.py"
+
+    def test_cached_bytecode_finds_what_python_would_actually_serve(self):
+        """Pinned against importlib's own answer, not a hand-built path."""
+        absolute = os.path.join(REPO, self.SOURCE)
+        expected = importlib.util.cache_from_source(absolute)
+        py_compile.compile(absolute, doraise=True)
+        try:
+            self.assertTrue(os.path.exists(expected), expected)
+            self.assertIn(expected, harness.cached_bytecode(self.SOURCE))
+        finally:
+            if os.path.exists(expected):
+                os.remove(expected)
+
+    def test_purge_bytecode_removes_it(self):
+        absolute = os.path.join(REPO, self.SOURCE)
+        expected = importlib.util.cache_from_source(absolute)
+        py_compile.compile(absolute, doraise=True)
+        try:
+            self.assertEqual(harness.purge_bytecode([self.SOURCE]), [expected])
+            self.assertEqual(harness.cached_bytecode(self.SOURCE), [])
+        finally:
+            if os.path.exists(expected):
+                os.remove(expected)
+
+    def test_a_non_python_file_has_no_bytecode_to_purge(self):
+        """Faults edit DocType JSONs too, and those must not confuse this."""
+        self.assertEqual(
+            harness.cached_bytecode(
+                "erplite/projects/doctype/project/project.json"), [])
+
+    def test_the_test_subprocess_cannot_write_bytecode(self):
+        """Checked by asking an interpreter started that way, not by reading the
+        dict: the point is the behaviour of the process the harness starts."""
+        self.assertEqual(
+            harness.subprocess_env().get("PYTHONDONTWRITEBYTECODE"), "1")
+        done = subprocess.run(
+            [sys.executable, "-c", "import sys; print(sys.dont_write_bytecode)"],
+            cwd=REPO, capture_output=True, text=True,
+            env=harness.subprocess_env())
+        self.assertEqual(done.stdout.strip(), "True", done.stderr)
+
+    def test_the_run_stops_rather_than_measure_against_stale_bytecode(self):
+        """The guard, not just the purge: that purging worked is a second claim.
+
+        A refactor that drops the purge, or a file Python recompiles into a cache
+        this does not know about, must stop the run -- not quietly measure the
+        wrong code.
+        """
+        absolute = os.path.join(REPO, self.SOURCE)
+        expected = importlib.util.cache_from_source(absolute)
+        py_compile.compile(absolute, doraise=True)
+        original_git = harness.git
+        harness.git = lambda *a: type("R", (), {"stdout": ""})()
+        try:
+            with self.assertRaises(harness.Stop) as caught:
+                harness.require_no_cached_bytecode(
+                    faults_mod.Fault("a fault", True, []), [self.SOURCE])
+        finally:
+            harness.git = original_git
+            if os.path.exists(expected):
+                os.remove(expected)
+        self.assertIn("CACHED BYTECODE SURVIVED", str(caught.exception))
+        self.assertIn(expected, str(caught.exception),
+                      "the message has to name the file to delete")
+
+    def test_restore_purges_the_bytecode_a_run_could_have_left(self):
+        """`restore` purges as well as checking out, so a .pyc written by a run
+        made under a fault cannot outlive that fault.
+
+        Deliberately *not* written as "no bytecode is cached for api.py": that
+        asserts a property of whoever's machine this is, not of the harness. It
+        passed here only because an alphabetically earlier test in this class
+        happened to delete the file first, and it would fail outright on the
+        bench, where frappe imports erplite and the .pyc is always there.
+        """
+        absolute = os.path.join(REPO, self.SOURCE)
+        expected = importlib.util.cache_from_source(absolute)
+        py_compile.compile(absolute, doraise=True)
+        checkouts = []
+        original_git = harness.git
+        harness.git = lambda *a: (checkouts.append(a),
+                                  type("R", (), {"stdout": ""})())[1]
+        try:
+            self.assertTrue(os.path.exists(expected))
+            harness.restore([self.SOURCE])
+            self.assertFalse(os.path.exists(expected),
+                             "restore left bytecode behind for the next fault")
+        finally:
+            harness.git = original_git
+            if os.path.exists(expected):
+                os.remove(expected)
+        self.assertEqual(checkouts, [("checkout", "--", self.SOURCE)])
 
 
 class TestTheHarnessIsNotCollectedByPytest(unittest.TestCase):

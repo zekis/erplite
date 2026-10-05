@@ -10,7 +10,7 @@ This module is the part that does not depend on which test you are asking
 about: applying an edit to real source, proving it applied, running a test
 file, and putting the source back. `faults.py` holds the edits themselves.
 
-## The three ways this goes wrong silently
+## The four ways this goes wrong silently
 
 Every guard below exists because the mistake it catches has actually been made
 in this repo, and each one turns a false pass into a hard stop.
@@ -37,6 +37,28 @@ in this repo, and each one turns a false pass into a hard stop.
    alternative is losing an afternoon's work to a tool that was meant to check
    it. Commit first, then inject.
 
+4. **Python serves the previous fault's bytecode.** A cached `.pyc` is reused
+   when the source's size and its mtime *in whole seconds* both match what was
+   cached. Faults are small, same-shaped edits applied seconds apart, so two
+   different faults on one file routinely produce the same size in the same
+   second -- `frappe.get_list(` -> `frappe.get_all(` twelve times over leaves
+   `erplite/scheduler/api.py` at exactly 32531 bytes every time. The second
+   fault is then measured against the first one's code.
+
+   This was not hypothetical: running one fault twice, with another between,
+   gave two different answers -- a behavioural test went red, then green on the
+   neighbour's bytecode. It corrupted which tests each fault was seen to break;
+   it did not change any run.py verdict here, because every fault in the four
+   current targets is also caught by an AST test that reads source text. That is
+   luck of the target set. **A fault guarded only by a behavioural test would
+   have been reported GREEN**, which is the worst thing this tool can produce: it
+   reads as "the test does not notice this regression" and invites someone to go
+   and fix a test that is fine.
+
+   So `apply_fault` deletes the cached bytecode for every file it touches and
+   refuses to continue if any survives, and the test subprocess runs with
+   bytecode writing switched off.
+
 A fourth, which no guard can catch for you: a "negative control" that goes red
 is not a control. It must be an edit that genuinely changes the source and
 genuinely changes no behaviour -- a local variable rename, not a comment.
@@ -61,6 +83,62 @@ import sys
 REPO = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 EXPECTED_MATCHES = 1
+
+
+def subprocess_env():
+    """The environment for a test run: no bytecode written, ever.
+
+    Nothing may be cached from a run made under a fault, because the next fault
+    can produce a source file with the same size in the same second and would
+    then be handed this one's bytecode. See point 4 above.
+    """
+    env = dict(os.environ)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return env
+
+
+def cached_bytecode(relpath):
+    """Every cached-bytecode file Python could serve in place of this source.
+
+    The whole cache directory is searched rather than only the path
+    `importlib.util.cache_from_source` names, because that names the file for
+    the interpreter running right now and the point here is to leave nothing
+    behind for any of them.
+    """
+    if not relpath.endswith(".py"):
+        return []
+    directory, name = os.path.split(os.path.join(REPO, relpath))
+    cache = os.path.join(directory, "__pycache__")
+    if not os.path.isdir(cache):
+        return []
+    stem = name[:-len(".py")] + "."
+    return sorted(os.path.join(cache, entry) for entry in os.listdir(cache)
+                  if entry.startswith(stem) and entry.endswith(".pyc"))
+
+
+def purge_bytecode(paths):
+    """Delete the cached bytecode for sources that have just changed."""
+    removed = []
+    for relpath in paths:
+        for pyc in cached_bytecode(relpath):
+            os.remove(pyc)
+            removed.append(pyc)
+    return removed
+
+
+def require_no_cached_bytecode(fault, paths):
+    """Stop rather than measure a fault against the previous one's bytecode.
+
+    Separate from `purge_bytecode` because purging and checking that purging
+    worked are two different claims, and this is the one that has to hold.
+    """
+    stale = [pyc for path in paths for pyc in cached_bytecode(path)]
+    if stale:
+        restore(paths)
+        raise Stop(
+            "CACHED BYTECODE SURVIVED -- %s. Python could serve it instead of "
+            "the edited source, so this fault would measure the previous one's "
+            "code.\n  %s" % (fault.name, "\n  ".join(stale)))
 
 
 class Stop(Exception):
@@ -125,6 +203,11 @@ def apply_fault(fault):
             fh.write(text.replace(old_n, new_n, EXPECTED_MATCHES))
         touched.append(path)
 
+    # The edited source must be compiled afresh, or this fault is measured
+    # against whatever was cached for the last one (point 4 above).
+    purge_bytecode(touched)
+    require_no_cached_bytecode(fault, touched)
+
     # Belief is not evidence: ask git whether the tree actually differs.
     if not git("diff", "--stat").stdout.strip():
         restore(touched)
@@ -138,6 +221,7 @@ def apply_fault(fault):
 def restore(paths):
     if paths:
         git("checkout", "--", *sorted(set(paths)))
+        purge_bytecode(paths)
 
 
 def require_restored(fault):
@@ -155,6 +239,6 @@ def run_test_file(path):
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", path, "-q", "--no-header",
          "-p", "no:cacheprovider"],
-        cwd=REPO, capture_output=True, text=True)
+        cwd=REPO, capture_output=True, text=True, env=subprocess_env())
     lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
     return proc.returncode != 0, (lines[-1] if lines else "(no output)")

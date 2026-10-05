@@ -168,6 +168,22 @@ def api_for(roles):
     return frappe, load_scheduler_api(frappe)
 
 
+def first_refusal(frappe):
+    """The first read the stand-in refused, as (doctype, ptype), or None.
+
+    `assertRaises(PermissionError)` says only that something refused. A single
+    scheduler call reads up to five DocTypes gated on different roles, so a
+    test that asserts no more than "it raised" can go on passing when the
+    DocType it names stops being the one that refuses. See
+    `test_a_scheduler_user_is_refused_project`: fault injection found it doing
+    exactly that.
+    """
+    for check in frappe.permission_checks:
+        if not check.allowed:
+            return (check.doctype, check.ptype)
+    return None
+
+
 class TestTheRowsAreApplied(unittest.TestCase):
     """A read now asks the DocType, and the answer changes with the caller."""
 
@@ -245,6 +261,12 @@ class TestWhoTheRowsActuallyAdmit(unittest.TestCase):
 
     Recorded, not fixed: widening the rows would be inventing policy. If they
     are made consistent later, these two go red and this position is revisited.
+
+    That last sentence was not true when it was written: granting Scheduler User
+    read on Project left both tests green, because Activity refused the call
+    instead and `assertRaises` cannot tell the difference. `first_refusal` is
+    what makes the claim hold, and the fault that found it is
+    `rows grant Scheduler User read on Project` in tests/faultinject/faults.py.
     """
 
     def test_a_scheduler_user_is_refused_project(self):
@@ -252,10 +274,20 @@ class TestWhoTheRowsActuallyAdmit(unittest.TestCase):
         self.assertEqual([r["role_name"] for r in api.get_roles()],
                          ["Senior Systems Engineer"],
                          "Scheduler Role grants read to Scheduler User")
-        with self.assertRaises(FakePermissionError):
-            api.get_projects_and_activities()
-        with self.assertRaises(FakePermissionError):
-            api.get_scheduler_data()
+        # Project is named, so Project is what has to do the refusing. Both
+        # calls read Activity straight after Project, and Activity is gated on
+        # the same Projects roles -- so without `first_refusal` these two
+        # assertions pass on Activity's refusal even when Project's rows have
+        # been widened, which is the one change this class exists to notice.
+        for call in ("get_projects_and_activities", "get_scheduler_data"):
+            with self.subTest(call=call):
+                frappe, api = api_for(["Scheduler User"])
+                with self.assertRaises(FakePermissionError):
+                    getattr(api, call)()
+                self.assertEqual(
+                    first_refusal(frappe), ("Project", "read"),
+                    "something other than Project's rows refused this call, so "
+                    "widening Project would leave this test green")
 
     def test_a_projects_user_is_refused_scheduler_role(self):
         frappe, api = api_for(["Projects User"])
@@ -264,6 +296,9 @@ class TestWhoTheRowsActuallyAdmit(unittest.TestCase):
                          "Project grants read to Projects User")
         with self.assertRaises(FakePermissionError):
             api.get_roles()
+        self.assertEqual(
+            first_refusal(frappe), ("Scheduler Role", "read"),
+            "something other than Scheduler Role's rows refused get_roles")
 
     def test_both_families_together_can_load_the_scheduler(self):
         frappe, api = api_for(["Projects User", "Scheduler User"])
