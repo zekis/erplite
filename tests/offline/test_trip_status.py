@@ -52,15 +52,31 @@ the finding, and it is why the fix consults the pre-save document instead.
 `TestNoButtonSetSelectIsSilentlyOverwritten` below is the whole-app form of the
 rule, and it accepts either remedy, because both are correct.
 
-## What is NOT asserted here
+## The owner's answer, and what it did and did not settle
 
-Whether a status set by hand should survive *later* saves. After the fix, clicking
-"Start Trip" on a trip that has not departed persists `In Progress`; the next save
-of that document (editing the notes, say) re-derives it back to `Planned`, because
-that save does not change the status. Whether dates or people own the field is a
-product decision, not a bug, and it is going to the owner as a question. Nothing
-below depends on the answer: these tests pin that an explicit change survives the
-save that makes it, which is true either way.
+The question above went to the owner as review item **rev_f9dce41f7f**, asking
+whether a status set by hand should survive *later* saves. The answer was narrow:
+**"a Completed trip stays Completed"**. So `TERMINAL_STATUSES` was added to
+`trip.py` and `before_save` now also returns early when the *stored* status is
+`Completed` or `Cancelled`.
+
+What that settled: clicking "Complete Trip" on a trip whose arrival is still in
+the future used to persist `Completed` and then lose it on the next unrelated save
+of that document, which derived it back to `In Progress`. It no longer does.
+`TestATerminalStatusIsNotDerivedAway` below pins that.
+
+What it deliberately did not settle: a hand-set **non**-terminal status still goes
+stale. Clicking "Start Trip" on a trip that has not departed persists
+`In Progress`, and the next save that does not touch the status re-derives it to
+`Planned`. `test_a_stale_status_is_refreshed_when_the_save_does_not_touch_it`
+still pins that, and it is the behaviour the owner left in place.
+
+The guard reads the *previous* document's status, not the current one, and that
+distinction is load-bearing: a brand-new trip created as `Completed` with dates in
+the future still derives to `Planned`, because there is no stored status to
+protect. `test_a_new_trip_in_the_future_is_planned` pins it from the other side.
+Only `Cancelled` is honoured on insert, by the per-branch checks in the three
+derivation arms, which this change left alone.
 
 These tests run without a bench. See fake_frappe.py for the stand-in.
 """
@@ -577,6 +593,96 @@ class TestNoButtonSetSelectIsSilentlyOverwritten(unittest.TestCase):
         _, _, consults = _pre_save_assignments_and_guards(CONTROLLER)
         self.assertTrue(consults, "trip.py must keep consulting "
                                   "get_doc_before_save, or the buttons break again")
+
+
+# ---------------------------------------------------------------------------
+# 5. The owner's rule: a terminal status is not derived away (rev_f9dce41f7f)
+# ---------------------------------------------------------------------------
+class TestATerminalStatusIsNotDerivedAway(TripTestCase):
+    """Once a stored trip is Completed or Cancelled, the dates stop deciding."""
+
+    def _stored(self, status, dep, arr):
+        """A trip already in the database with `status`, reloaded for editing."""
+        doc = self.new_trip(status=status,
+                            departure_datetime=dep, arrival_datetime=arr)
+        self.rows[doc.name] = {k: v for k, v in vars(doc).items()
+                               if not k.startswith("_") and k != "doctype"}
+        return self.new_trip(**copy.deepcopy(self.rows[doc.name]))
+
+    def test_a_completed_trip_still_running_by_the_clock_stays_completed(self):
+        """The bug the owner's answer fixes.
+
+        "Complete Trip" on a trip that is running persists Completed (that is
+        TestAnExplicitStatusChangeSurvivesTheSave). This is the *next* save of
+        that document -- someone edits the notes -- where the status is
+        unchanged, so the explicit-change guard does not fire and derivation
+        used to put it back to In Progress.
+        """
+        doc = self._stored("Completed", RUNNING_DEP, RUNNING_ARR)
+        doc.notes = "receipts attached"
+        self.save(doc)
+        self.assertEqual(self.stored(), "Completed")
+
+    def test_a_completed_trip_whose_departure_is_in_the_future_stays_completed(self):
+        doc = self._stored("Completed", FUTURE_DEP, FUTURE_ARR)
+        doc.notes = "cut short"
+        self.save(doc)
+        self.assertEqual(self.stored(), "Completed")
+
+    def test_a_cancelled_trip_stays_cancelled_for_every_date_window(self):
+        for dep, arr in ((FUTURE_DEP, FUTURE_ARR),
+                         (RUNNING_DEP, RUNNING_ARR),
+                         (PAST_DEP, PAST_ARR)):
+            with self.subTest(dep=dep):
+                self.rows.clear()
+                doc = self._stored("Cancelled", dep, arr)
+                doc.notes = "edited"
+                self.save(doc)
+                self.assertEqual(self.stored(), "Cancelled")
+
+    def test_a_terminal_trip_can_still_be_reopened_by_hand(self):
+        """The rule must not turn Completed into a one-way door.
+
+        This is the explicit-change guard, which runs first. Without it the
+        terminal check would also refuse the user's own correction.
+        """
+        doc = self._stored("Completed", RUNNING_DEP, RUNNING_ARR)
+        doc.status = "In Progress"
+        self.save(doc)
+        self.assertEqual(self.stored(), "In Progress")
+
+    def test_a_non_terminal_status_is_still_refreshed(self):
+        """What the owner's answer deliberately left alone."""
+        doc = self._stored("Planned", RUNNING_DEP, RUNNING_ARR)
+        doc.notes = "edited"
+        self.save(doc)
+        self.assertEqual(self.stored(), "In Progress")
+
+    def test_a_new_trip_created_as_cancelled_keeps_it(self):
+        """Insert has no previous document, so the per-branch checks carry it.
+
+        Pins the part of the old guard this change left in place: if those
+        `!= "Cancelled"` arms were removed on the strength of the new
+        previous-status check, a trip created as Cancelled with past dates
+        would silently become Completed.
+        """
+        self.save(self.new_trip(status="Cancelled",
+                                departure_datetime=PAST_DEP,
+                                arrival_datetime=PAST_ARR))
+        self.assertEqual(self.stored(), "Cancelled")
+
+    def test_terminal_statuses_are_real_options_on_the_doctype(self):
+        module = self.module
+        with open(DOCTYPE_JSON, encoding="utf-8") as fh:
+            fields = json.load(fh)["fields"]
+        options = next(f for f in fields
+                       if f["fieldname"] == "status")["options"].split("\n")
+        self.assertEqual(sorted(module.TERMINAL_STATUSES),
+                         ["Cancelled", "Completed"])
+        for value in module.TERMINAL_STATUSES:
+            self.assertIn(value, options,
+                          "a terminal status the Select cannot hold would "
+                          "never be reached")
 
 
 if __name__ == "__main__":
