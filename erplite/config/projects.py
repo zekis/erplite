@@ -18,9 +18,9 @@ def get_data():
                 },
                 {
                     "type": "doctype",
-                    "name": "Task",
-                    "label": _("Task"),
-                    "description": _("Create and manage project tasks")
+                    "name": "Activity",
+                    "label": _("Activity"),
+                    "description": _("Create and manage project activities")
                 }
             ]
         },
