@@ -12,6 +12,7 @@ class TimesheetEntry(Document):
     def validate(self):
         """Validate timesheet entry"""
         self.set_employee_default()
+        self.validate_employee_ownership()
         self.calculate_duration()
         self.validate_times()
         self.check_overlapping_entries()
@@ -21,6 +22,76 @@ class TimesheetEntry(Document):
         if not self.employee:
             self.employee = frappe.session.user
     
+    def validate_employee_ownership(self):
+        """On insert, keep `employee` and `owner` naming the same person.
+
+        Two different fields answer "whose timesheet is this", and nothing kept
+        them in agreement:
+
+          * **Frappe decides who may read and write from `owner`**, the standard
+            column it sets to the creating user (`set_user_and_timestamp`,
+            frappe/model/document.py:555-566). The Projects User row on this
+            DocType carries `if_owner`, so for that role read and write stop at
+            the rows that user created (`get_role_permissions`,
+            frappe/permissions.py:288-305).
+          * **The app decides whose hours they are from `employee`**, a required
+            editable Link to User. `get_week_timesheets`,
+            `export_timesheet_data` and the dashboard widgets all filter on it,
+            through `frappe.get_all`, which ignores permissions by design.
+
+        That went wrong in both directions. Any Projects User could insert an
+        entry with `employee` set to a colleague -- `create` is the one right
+        `if_owner` never restricts ("if_owner does not come with create rights",
+        permissions.py:303-305) -- and the hours then counted as that
+        colleague's everywhere the app looks. And an entry booked *for* you by
+        someone else could not be corrected by you, because `owner` was them:
+        you saw it in the week view (`get_all` skips permissions) and frappe
+        refused the save.
+
+        So, on insert:
+
+          * an `employee` other than the session user needs write on this
+            DocType. That invents no policy -- it is the test `approve_timesheet`
+            below already applies, and the one Afterz applies in its own
+            `update_timesheet_entry` -- and it enforces the permission rows this
+            app ships: System Manager and Projects Manager hold write outright,
+            Projects User holds it only `if_owner`, which at DocType level
+            evaluates to 0 (permissions.py:296-305).
+          * when that is allowed, `owner` becomes the employee, so frappe's
+            `if_owner` and the app's `employee` name the same person. The
+            employee can then correct their own hours. `modified_by` still
+            records who entered them, and nothing in this app or in Afterz reads
+            `owner` on a Timesheet Entry.
+
+        **Insert only, and that is structural rather than tidy.** Every other
+        save must stay exactly as it was, because acting on another person's
+        entry is the point of the approval workflow. Afterz's
+        `submit_week_entries`, `approve_all_entries`, `reject_entry_with_reason`
+        and `unapprove_entry` each `save()` an entry whose `employee` is someone
+        else; erplite's own `approve_timesheet` and `reject_timesheet` do too. A
+        rule on every save would refuse all six.
+
+        Two edges, stated rather than hidden. Frappe's doctype-level write test
+        also answers True to anyone who has even one Timesheet Entry shared with
+        them for write (`false_if_not_shared`, permissions.py:159-184) -- a
+        deliberate grant by someone who could already do it, but wider than the
+        role rows alone. And during `bench migrate` or a patch,
+        `set_user_and_timestamp` leaves `owner` unset and `db_insert` fills it
+        from the session user afterwards (base_document.py:551-553), so a row
+        created by a patch keeps the patch's user as owner.
+        """
+        if not self.is_new():
+            return
+        if self.employee == frappe.session.user:
+            return
+        if not frappe.has_permission(self.doctype, "write"):
+            frappe.throw(_(
+                "You can only book time against your own name. "
+                "Set Employee to yourself, or ask someone who may book time for "
+                "others to enter it."
+            ))
+        self.owner = self.employee
+
     def calculate_duration(self):
         """Calculate duration in hours"""
         if self.check_in_time and self.check_out_time:

@@ -189,9 +189,18 @@ class WorkflowTestCase(unittest.TestCase):
 
     # -- the driver ----------------------------------------------------------
 
-    def _blank(self, **data):
+    def _blank(self, is_new=True, **data):
+        """A controller instance, standing for an insert or for a later save.
+
+        `is_new` is not decoration: frappe sets `__islocal` only inside
+        `insert()` (document.py:390), so a hook guarded by `self.is_new()` runs
+        on creation and never on a save of a stored row. A harness that built
+        both the same way would drive an insert-only rule on every save -- and
+        it did: the first version of this method made every document new, and
+        the approver tests below then failed on a rule that cannot reach them.
+        """
         return make_doc(self.module.TimesheetEntry, "Timesheet Entry",
-                        "projects", "timesheet_entry", data)
+                        "projects", "timesheet_entry", data, is_new=is_new)
 
     def _get_doc(self, arg, name=None):
         """frappe.get_doc, both shapes: a dict (new doc) or (doctype, name)."""
@@ -214,7 +223,8 @@ class WorkflowTestCase(unittest.TestCase):
         stored = self.rows.get(name)
         if stored is None:
             raise ValidationError("no Timesheet Entry %r" % (name,))
-        doc = self._blank(**copy.deepcopy(stored))
+        # A stored row is NOT new, whatever is done to it next.
+        doc = self._blank(is_new=False, **copy.deepcopy(stored))
         doc.insert = lambda: self.insert(doc)
         doc.save = lambda: self.save(doc)
         return doc
