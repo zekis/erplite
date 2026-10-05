@@ -79,7 +79,7 @@ def get_active_divisions():
 def get_division_projects(division):
 	"""Get projects for a specific division"""
 	projects = frappe.get_all("Project",
-		filters={"division": division, "status": ["in", ["Open"]]},
+		filters={"division": division, "status": ["in", ["Open", "Active"]]},
 		fields=["name", "project_name", "status"],
 		order_by="project_name"
 	)

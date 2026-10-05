@@ -466,6 +466,42 @@ outright.** It names the projects that must be present as well now.
 One measured blind spot: `get_daily_metrics` builds its filter in a variable
 rather than a dict literal in the call, so a static rule cannot see it.
 
+### The mirror is not frappe's copy, and this is how that was learnt
+
+A core DocType's options are whatever the **live site** has, not whatever
+frappe ships. `KNOWN_CORE_SELECTS` first held frappe version-15's
+`ToDo.status` of `Open\nClosed\nCancelled`, cross-checked against frappe's own
+`DF.Literal` in `todo.py:35`. Both agree and both are wrong here:
+`crew.tierneymorris.com.au` carries `Backlog\nPlanned\nOpen\nClosed\nCancelled`
+with `Backlog` as the default, and 17 ToDos are `Planned` right now.
+
+So the guard flagged `create_todo` setting `status="Backlog"`, and the kanban
+reading a backlog column, and all of it was correct code. Narrowing it to
+`Open` — which is what nearly shipped — would have sent every new todo past
+the backlog column and dropped 17 real rows out of the active metric. The
+owner caught it by knowing his own front end. **Widen the mirror; do not narrow
+the app.** The comment above `KNOWN_CORE_SELECTS` carries the measured options,
+the counts behind them, and the deploy risk that the two extra options appear to
+live only in the live database.
+
+Reading Property Setters would not have caught this: there is no Property Setter
+on ToDo. Offline, there is no way to know a live schema at all. What an offline
+sweep can honestly do is state which mirror it is using and make a change to it
+a failing test rather than a silent re-rule, which is what
+`ToDoStatusMirrorIsStated` is for.
+
+### Findings the owner has not ruled on
+
+`AWAITING_OWNER_DECISION` holds findings this guard stands by that are not being
+changed yet, keyed by exact site with the reason and what was measured. They do
+not fail the run. They are still asserted to **exist**, so fixing one, or moving
+its line, fails `test_every_awaiting_owner_finding_is_still_there` and names the
+stale entry — a waiver list cannot outlive what it waives, or quietly become
+where findings go to be forgotten.
+
+It exists because a sweep finds two different things, a bug and a question, and
+editing app code to green the run is how a question gets mistaken for a bug.
+
 ## `test_query_fields.py` — the field names inside a query
 
 The surface every other sweep here left alone, and the one this app gets wrong

@@ -394,7 +394,7 @@ def create_todo(description, priority="Medium", allocated_to=None, date=None, co
         todo = frappe.get_doc({
             "doctype": "ToDo",
             "description": description,
-            "status": "Open",  # the only status ToDo has that the board can show
+            "status": "Backlog",  # New todos start in backlog
             "priority": priority,
             "allocated_to": allocated_to,
             "date": date,
@@ -517,10 +517,9 @@ def get_daily_metrics():
         cancelled_filters["modified"] = [">=", today]
         metrics["cancelled"] = frappe.db.count("ToDo", filters=cancelled_filters)
         
-        # Active - todos still open. "Planned" and "Backlog" used to be listed here
-        # too; ToDo.status has no such options, so they never matched anything.
+        # Active - todos with Open, Planned, or Backlog status
         active_filters = base_filters.copy()
-        active_filters["status"] = ["in", ["Open"]]
+        active_filters["status"] = ["in", ["Open", "Planned", "Backlog"]]
         metrics["active"] = frappe.db.count("ToDo", filters=active_filters)
         
         # Additional debug info

@@ -58,9 +58,9 @@ Not covered, and each is a real way past this guard:
     kanban's `update_todo_status(todo_name, new_status)` takes the status straight from the
     browser, so no static pass can see what it will be. Its caller
     (`erplite/public/js/todo/dragdrop/TodoDragDropManager.js:745-751`) maps the three kanban
-    columns to "Backlog", "Planned" and "Open" -- two of which ToDo cannot hold -- and that
-    mapping is in JavaScript, out of this pass's reach. KNOWN_CORE_SELECTS below is the record
-    of it.
+    columns to "Backlog", "Planned" and "Open", all three of which the live site's ToDo does
+    hold, and that mapping is in JavaScript, out of this pass's reach. KNOWN_CORE_SELECTS
+    below is the record of it, and of why frappe's own JSON is not the authority on it.
   * Frappe's own DocTypes, except the handful mirrored in KNOWN_CORE_SELECTS. These tests run
     without a bench, so there is no frappe source to read; an unmirrored core DocType is
     skipped silently. Extending the mirror is how coverage grows.
@@ -80,19 +80,42 @@ SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "public"}
 
 # Select options for the Frappe DocTypes this app writes to or filters on.
 #
-# Mirrored by hand because these tests run with no bench and no frappe checkout. Each entry
-# below was read out of frappe version-15's own DocType JSON, not recalled; ToDo's status is
-# also stated a second time in frappe's controller as
-# `status: DF.Literal["Open", "Closed", "Cancelled"]`
-# (frappe/desk/doctype/todo/todo.py:35), which is a useful cross-check on the mirror.
+# Mirrored by hand because these tests run with no bench and no frappe checkout.
 #
-# A mirror can go stale against a frappe upgrade. It fails safe in the direction that matters:
+# READ THIS BEFORE "FIXING" CODE THIS GUARD FLAGS. A core DocType's options are not whatever
+# frappe ships. The live site can extend them, and then frappe's JSON is the wrong answer and
+# the app code the guard flags is the right one. That happened here, to ToDo, and it got as
+# far as a pull request before the owner caught it. Widen the mirror; do not narrow the app.
+#
+# ToDo/status is the worked example. Stock frappe version-15 ships
+# `Open\nClosed\nCancelled` (frappe/desk/doctype/todo/todo.json) and restates it as
+# `status: DF.Literal["Open", "Closed", "Cancelled"]` in frappe/desk/doctype/todo/todo.py:35.
+# Both agree, both are wrong for crew.tierneymorris.com.au, which carries five options with
+# `Backlog` as the default. Measured read-only on the live site, 5 Oct 2026:
+#
+#   * `DocType/ToDo` field `status` (DocField 549ll9q8br):
+#     `Backlog\nPlanned\nOpen\nClosed\nCancelled`, default `Backlog`. The DocType is
+#     `custom: 0`, module Desk, last modified 2025-10-12.
+#   * 1727 ToDos: Closed 1454, Cancelled 145, Open 111, Planned 17, Backlog 0. Those five
+#     account for every row, so nothing holds an off-list value.
+#   * `Planned` has 17 real rows. The kanban's backlog column is real too
+#     (erplite/www/todo/index.py:299-305, erplite/public/js/todo/utils/TodoUtils.js:128-137).
+#
+# WHERE THOSE TWO EXTRA OPTIONS LIVE IS UNRESOLVED, and it is a deploy risk rather than a
+# test problem. There is no Property Setter on ToDo (the only ones on this site are two on
+# `Project.naming_series`), erplite declares them nowhere (`fixtures = ["Workspace"]`, empty
+# patches.txt, no todo.json, no make_property_setter), and there is no frappe fork to hold
+# them. So as far as anyone has been able to check they exist only in `tabDocField` on the
+# live database, which a `bench migrate` would reset to frappe's three -- taking the 17
+# Planned ToDos off-list and emptying two kanban columns, quietly, on a routine deploy.
+#
+# A mirror can also go stale against a frappe upgrade. It fails safe in the same direction:
 # if frappe ADDS an option, this guard reports a violation that is no longer real, and someone
 # reads this comment and widens it. It cannot invent a violation out of nothing.
 KNOWN_CORE_SELECTS = {
-    # frappe/desk/doctype/todo/todo.json
+    # NOT frappe's three -- the live site's five. See the comment above before narrowing this.
     "ToDo": {
-        "status": {"Open", "Closed", "Cancelled"},
+        "status": {"Backlog", "Planned", "Open", "Closed", "Cancelled"},
         "priority": {"High", "Medium", "Low"},
     },
 }
@@ -260,9 +283,46 @@ def violations():
     return found
 
 
+# Findings this guard stands by, that the owner has not yet ruled on, and that nobody should
+# quietly "fix" to get a green run.
+#
+# A sweep like this finds two kinds of thing: a bug, and a question. Narrowing app code to
+# match the guard is how a question gets mistaken for a bug -- it is what happened to ToDo
+# above. So a finding the owner has not decided lives here, by exact site, with the reason and
+# what is known. It does not fail the run. It is still asserted to exist, so if someone
+# changes the code the run fails and points them at this entry to remove.
+#
+# Each key is "<path>:<line>  <DocType>.<field> = <value>".
+AWAITING_OWNER_DECISION = {
+    "erplite/scheduler/doctype/division/division.py:82  Project.status = 'Active'": """
+    `get_division_projects` filters Project.status on ["Open", "Active"]. Project declares
+    Opportunity, Estimate, Open, Archived (erplite/projects/doctype/project/project.json),
+    so "Active" matches nothing and the filter is really ["Open"].
+
+    Measured read-only on the live site, 5 Oct 2026: 19 Projects, 12 Open and 7 Archived,
+    0 with status "Active", 0 Opportunity or Estimate. 6 Division records, so this is a live
+    code path, not dead.
+
+    Today's behaviour is therefore IDENTICAL whether "Active" stays or goes, which is exactly
+    why this is not being changed here. Dropping it is a no-op cleanup whose only failure mode
+    is the ToDo one -- if the live DocType carries "Active" as an unused option, removing it
+    silently breaks the first project ever set to it. Unlike ToDo, the live Project data agrees
+    with the repo's JSON and nothing suggests an extension; but the one-line change buys
+    nothing today, so it is the owner's call and not worth the risk inside a larger PR.
+    """,
+}
+
+
+def _finding_key(rel, line, doctype, field, value):
+    return "%s:%d  %s.%s = %r" % (rel, line, doctype, field, value)
+
+
 class SelectOptionsAreRespected(unittest.TestCase):
     def test_no_select_field_is_given_a_value_it_cannot_hold(self):
-        found = violations()
+        found = [
+            v for v in violations()
+            if _finding_key(v[0], v[1], v[2], v[3], v[4]) not in AWAITING_OWNER_DECISION
+        ]
         if found:
             lines = [
                 "%s:%d  [%s]  %s.%s = %r\n        allowed: %s"
@@ -274,6 +334,19 @@ class SelectOptionsAreRespected(unittest.TestCase):
                 "A write aborts the save; a filter matches the wrong set in silence.\n\n%s"
                 % (len(found), "\n".join(lines))
             )
+
+    def test_every_awaiting_owner_finding_is_still_there(self):
+        """The waiver list cannot outlive what it waives.
+
+        If one of these is fixed or its line moves, this fails and names the stale entry,
+        so the list cannot quietly become a place where findings go to be forgotten.
+        """
+        live = {_finding_key(v[0], v[1], v[2], v[3], v[4]) for v in violations()}
+        stale = sorted(set(AWAITING_OWNER_DECISION) - live)
+        self.assertEqual(
+            [], stale,
+            "AWAITING_OWNER_DECISION entries that no longer match a real finding -- the code "
+            "changed or the line moved, so remove or re-anchor them: %r" % (stale,))
 
     def test_the_pass_can_see_this_apps_doctypes(self):
         """Guard the guard: if the JSON walk breaks, every check above passes vacuously."""
@@ -320,24 +393,29 @@ class ToDoStatusMirrorIsStated(unittest.TestCase):
     with this file's comment next to it rather than a silently wrong whole-app rule.
     """
 
-    def test_todo_has_three_statuses_and_no_kanban_ones(self):
-        self.assertEqual({"Open", "Closed", "Cancelled"},
+    def test_the_mirror_is_the_live_sites_statuses_not_frappes(self):
+        self.assertEqual({"Backlog", "Planned", "Open", "Closed", "Cancelled"},
                          KNOWN_CORE_SELECTS["ToDo"]["status"])
 
-    def test_only_one_kanban_column_is_reachable(self):
-        """The consequence worth naming: two of the board's three columns cannot fill.
+    def test_the_mirror_extends_stock_frappe_rather_than_contradicting_it(self):
+        """Every status frappe ships is still a status here; this site only adds."""
+        self.assertLess({"Open", "Closed", "Cancelled"},
+                        KNOWN_CORE_SELECTS["ToDo"]["status"])
+
+    def test_every_kanban_column_is_reachable(self):
+        """The board's three columns all fill, which is why the app code is right as it is.
 
         `erplite/www/todo/index.py:get_todo_column` and its browser twin
         `erplite/public/js/todo/utils/TodoUtils.js:128-137` map status to column as
-        Backlog -> backlog, Planned -> todo, Open -> progress. Only one of those three
-        statuses exists, so every ToDo that shows on the board shows in `progress`.
+        Backlog -> backlog, Planned -> todo, Open -> progress. On stock frappe two of those
+        three would be dead and this test would fail, which is the point of it.
         """
         status_to_column = {"Backlog": "backlog", "Planned": "todo", "Open": "progress"}
         reachable = {
             column for status, column in status_to_column.items()
             if status in KNOWN_CORE_SELECTS["ToDo"]["status"]
         }
-        self.assertEqual({"progress"}, reachable)
+        self.assertEqual({"backlog", "todo", "progress"}, reachable)
 
 
 class StandInRejectsImpossibleSelectValues(unittest.TestCase):
@@ -408,8 +486,11 @@ class StandInRejectsImpossibleSelectValues(unittest.TestCase):
         """Real Frappe aborts the save; the stand-in raises rather than writing."""
         self.frappe.tables["ToDo"] = [self._dict(name="t1", status="Open")]
         with self.assertRaises(self.ImpossibleValue):
-            self.frappe.db.set_value("ToDo", "t1", "status", "Backlog")
+            self.frappe.db.set_value("ToDo", "t1", "status", "Done")
         self.assertEqual("Open", self.frappe.tables["ToDo"][0]["status"])
+        # "Backlog" is NOT impossible on this site, so it must be accepted.
+        self.frappe.db.set_value("ToDo", "t1", "status", "Backlog")
+        self.assertEqual("Backlog", self.frappe.tables["ToDo"][0]["status"])
 
     def test_a_reverted_fixture_is_caught_by_the_stand_in(self):
         """The two suites that carried an impossible Project fixture now cannot.
