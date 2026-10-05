@@ -1297,6 +1297,291 @@ TODO_ASSIGNMENT = Target(
              "        const response = await fetch(url, request);\n")]),
     ])
 
+# --- trip status: a derived field a user is also allowed to set by hand ------
+# rev_f9dce41f7f ("a Completed trip stays Completed") and the e585a5b
+# regression before it: deriving `status` in before_save() overwrote whatever
+# the "Start Trip" / "Complete Trip" buttons had just set, so both buttons
+# silently did nothing. Guarded by tests/offline/test_trip_status.py, which
+# pins three separate things -- the controller's behaviour, the premises it
+# rests on (trip.js's buttons, trip.json's Select) and a whole-app rule -- so
+# the faults below are grouped by which of the three should notice.
+
+TRIP = "erplite/projects/doctype/trip/trip.py"
+TRIP_JS = "erplite/projects/doctype/trip/trip.js"
+TRIP_JSON = "erplite/projects/doctype/trip/trip.json"
+SQ = "erplite/accounts/doctype/supplier_quote/supplier_quote.py"
+SQ_JS = "erplite/accounts/doctype/supplier_quote/supplier_quote.js"
+
+# The whole previous-document consultation, comments included. Deleting this is
+# the pre-e585a5b-fix shape of the file.
+TRIP_PREV_BLOCK = (
+    '        previous = self.get_doc_before_save()\n'
+    '        if previous:\n'
+    "            # This save changed the status, so it was somebody's explicit\n"
+    '            # choice -- a button or the Select -- and derivation must not\n'
+    '            # overwrite it before the row is written.\n'
+    '            if previous.status != self.status:\n'
+    '                return\n'
+    '            # And a trip that already reached a terminal status stays there,\n'
+    '            # whatever the dates now say. Without this, clicking "Complete\n'
+    '            # Trip" on a trip whose arrival is still in the future persisted\n'
+    '            # Completed, and then the next unrelated save of that document\n'
+    '            # derived it back to In Progress.\n'
+    '            if previous.status in TERMINAL_STATUSES:\n'
+    '                return\n'
+    '\n')
+
+TRIP_EXPLICIT_GUARD = ('            if previous.status != self.status:\n'
+                       '                return\n')
+TRIP_TERMINAL_GUARD = ('            if previous.status in TERMINAL_STATUSES:\n'
+                       '                return\n')
+TRIP_TERMINALS = 'TERMINAL_STATUSES = ("Completed", "Cancelled")\n'
+
+# The three derivation arms. Each is a separate copy of the "Cancelled is
+# honoured on insert" rule, so each gets its own fault: the file's own
+# docstring claims all three carry it.
+TRIP_ARM_FUTURE = ('            if now < departure:\n'
+                   '                if self.status != "Cancelled":\n'
+                   '                    self.status = "Planned"\n')
+TRIP_ARM_RUNNING = ('            elif departure <= now <= arrival:\n'
+                    '                if self.status != "Cancelled":\n'
+                    '                    self.status = "In Progress"\n')
+TRIP_ARM_PAST = ('            elif now > arrival:\n'
+                 '                if self.status != "Cancelled":\n'
+                 '                    self.status = "Completed"\n')
+
+
+def _arm_unguarded(arm, value):
+    """The same arm with its Cancelled exclusion removed."""
+    return arm.replace('                if self.status != "Cancelled":\n'
+                       '                    self.status = "%s"\n' % value,
+                       '                self.status = "%s"\n' % value)
+
+
+TRIP_STATUS = Target(
+    test="tests/offline/test_trip_status.py",
+    faults=[
+        # 1. The explicit-change guard: a status this save set by hand, or by a
+        #    button, must survive the save that sets it. This is the bug.
+        Fault("the whole previous-document consultation deleted (the "
+              "pre-e585a5b-fix shape of the file)", True,
+              [(TRIP, TRIP_PREV_BLOCK, "")]),
+        Fault("explicit-change guard deleted, terminal guard kept", True,
+              [(TRIP, TRIP_EXPLICIT_GUARD, "")]),
+        Fault("explicit-change guard inverted: == instead of !=, so derivation "
+              "runs only when the status WAS changed", True,
+              [(TRIP, '            if previous.status != self.status:\n',
+                '            if previous.status == self.status:\n')]),
+        Fault("guard rewritten with has_value_changed, the trap trip.py's own "
+              "docstring names: True on insert, so a new trip is never derived",
+              True,
+              [(TRIP, TRIP_PREV_BLOCK,
+                '        if self.has_value_changed("status"):\n'
+                '            return\n\n')]),
+        Fault("guard compares the wrong field, so a status change is not seen "
+              "as explicit", True,
+              [(TRIP, '            if previous.status != self.status:\n',
+                '            if previous.trip_name != self.trip_name:\n')]),
+        Fault("insert treated as its own previous document, so a new trip's "
+              "given status is respected instead of derived", True,
+              [(TRIP, '        previous = self.get_doc_before_save()\n',
+                '        previous = self.get_doc_before_save() or self\n')]),
+
+        # 2. The owner's rule, rev_f9dce41f7f: a stored terminal status is not
+        #    derived away. One fault per half of TERMINAL_STATUSES, because the
+        #    two halves are not guarded alike.
+        Fault("terminal-status guard deleted (the owner's rule removed)", True,
+              [(TRIP, TRIP_TERMINAL_GUARD, "")]),
+        Fault("TERMINAL_STATUSES narrowed to Completed, dropping Cancelled",
+              True, [(TRIP, TRIP_TERMINALS, 'TERMINAL_STATUSES = ("Completed",)\n')]),
+        Fault("TERMINAL_STATUSES narrowed to Cancelled, dropping Completed",
+              True, [(TRIP, TRIP_TERMINALS, 'TERMINAL_STATUSES = ("Cancelled",)\n')]),
+        Fault("TERMINAL_STATUSES emptied", True,
+              [(TRIP, TRIP_TERMINALS, 'TERMINAL_STATUSES = ()\n')]),
+        # Written as a fault, on the belief -- which the test file's own
+        # docstring stated -- that the explicit-change guard had to come first
+        # or a hand correction to a Completed trip would be refused. It came
+        # back green, and it is green because the two guards are equivalent in
+        # order: both do nothing but `return`, so whichever fires, derivation
+        # is skipped and whatever the save holds is written. Kept as a control,
+        # because that equivalence is worth having stated somewhere, and the
+        # test docstring is corrected.
+        Fault("CONTROL: the two guards swapped -- equivalent, because each one "
+              "only returns (must stay green)", False,
+              [(TRIP, TRIP_PREV_BLOCK,
+                '        previous = self.get_doc_before_save()\n'
+                '        if previous:\n'
+                '            if previous.status in TERMINAL_STATUSES:\n'
+                '                return\n'
+                '            if previous.status != self.status:\n'
+                '                return\n'
+                '\n')]),
+
+        # 3. The per-arm Cancelled exclusions. trip.py's docstring says these
+        #    three are what honours Cancelled on insert, where there is no
+        #    previous document. One fault per arm, not one for the rule.
+        Fault("Cancelled exclusion dropped from the future arm", True,
+              [(TRIP, TRIP_ARM_FUTURE, _arm_unguarded(TRIP_ARM_FUTURE, "Planned"))]),
+        Fault("Cancelled exclusion dropped from the running arm", True,
+              [(TRIP, TRIP_ARM_RUNNING,
+                _arm_unguarded(TRIP_ARM_RUNNING, "In Progress"))]),
+        Fault("Cancelled exclusion dropped from the past arm", True,
+              [(TRIP, TRIP_ARM_PAST, _arm_unguarded(TRIP_ARM_PAST, "Completed"))]),
+
+        # 4. Derivation itself: the value each arm produces, and the two
+        #    instants where the arms meet.
+        Fault("future arm derives In Progress", True,
+              [(TRIP, '                    self.status = "Planned"\n',
+                '                    self.status = "In Progress"\n')]),
+        Fault("running arm derives Planned", True,
+              [(TRIP, '                    self.status = "In Progress"\n',
+                '                    self.status = "Planned"\n')]),
+        Fault("past arm derives In Progress", True,
+              [(TRIP, '                    self.status = "Completed"\n',
+                '                    self.status = "In Progress"\n')]),
+        Fault("the departure instant moved into the future arm: a trip "
+              "departing exactly now reads Planned, not In Progress", True,
+              [(TRIP, '            if now < departure:\n',
+                '            if now <= departure:\n')]),
+        Fault("the arrival instant dropped from the running arm: a trip "
+              "arriving exactly now is derived by no arm at all", True,
+              [(TRIP, '            elif departure <= now <= arrival:\n',
+                '            elif departure <= now < arrival:\n')]),
+        Fault("derivation gated on the departure date alone, so a trip with no "
+              "arrival date is derived", True,
+              [(TRIP,
+                '        if self.departure_datetime and self.arrival_datetime:\n'
+                '            now = datetime.now()\n',
+                '        if self.departure_datetime:\n'
+                '            now = datetime.now()\n')]),
+
+        # 5. validate(): duration, and the refusal of an impossible window.
+        Fault("duration computed in hours, labelled days", True,
+              [(TRIP, 'duration.total_seconds() / (24 * 3600)',
+                'duration.total_seconds() / 3600')]),
+        Fault("duration's sign reversed", True,
+              [(TRIP, '            duration = arrival - departure\n',
+                '            duration = departure - arrival\n')]),
+        Fault("validate no longer calls validate_dates", True,
+              [(TRIP, '        self.validate_dates()\n', "")]),
+        Fault("validate no longer calls calculate_duration", True,
+              [(TRIP, '        self.calculate_duration()\n', "")]),
+        Fault("the refusal removed from validate_dates", True,
+              [(TRIP,
+                '                frappe.throw("Arrival date and time must be '
+                'after departure date and time")\n',
+                '                pass\n')]),
+        Fault("arrival equal to departure allowed: <= becomes <", True,
+              [(TRIP, '            if arrival <= departure:\n',
+                '            if arrival < departure:\n')]),
+
+        # 6. The whole-app rule. The app holds two instances of it and the test
+        #    accepts either remedy, so there is a fault per instance and a
+        #    fault that switches trip.py from one remedy to the other.
+        Fault("supplier_quote's exclusion list removed, so Accept Quote and "
+              "Reject Quote both silently do nothing", True,
+              [(SQ,
+                '\t\tif self.valid_until and self.valid_until < nowdate() and '
+                'self.status not in ["Accepted", "Rejected"]:\n',
+                '\t\tif self.valid_until and self.valid_until < nowdate():\n')]),
+        Fault("supplier_quote protects only Accepted, so Reject Quote silently "
+              "does nothing", True,
+              [(SQ, 'self.status not in ["Accepted", "Rejected"]:\n',
+                'self.status not in ["Accepted"]:\n')]),
+        Fault("trip.py switched from consulting the previous document to "
+              "excluding its buttons' values by name -- a remedy the whole-app "
+              "rule accepts, and which disables most of the derivation", True,
+              [(TRIP, TRIP_PREV_BLOCK, ""),
+               (TRIP, '                if self.status != "Cancelled":\n'
+                      '                    self.status = "Planned"\n',
+                '                if self.status not in ("Cancelled", '
+                '"In Progress", "Completed"):\n'
+                '                    self.status = "Planned"\n'),
+               (TRIP, '                if self.status != "Cancelled":\n'
+                      '                    self.status = "In Progress"\n',
+                '                if self.status not in ("Cancelled", '
+                '"In Progress", "Completed"):\n'
+                '                    self.status = "In Progress"\n'),
+               (TRIP, '                if self.status != "Cancelled":\n'
+                      '                    self.status = "Completed"\n',
+                '                if self.status not in ("Cancelled", '
+                '"In Progress", "Completed"):\n'
+                '                    self.status = "Completed"\n')]),
+
+        # 7. The premises. These tests read trip.js and trip.json as text, so
+        #    they pin the facts the behavioural tests above assume.
+        Fault("the Start Trip button sets Planned, so the tests' premise is "
+              "stale", True,
+              [(TRIP_JS, "                frm.set_value('status', 'In Progress');\n",
+                "                frm.set_value('status', 'Planned');\n")]),
+        Fault("the Start Trip button removed from trip.js", True,
+              [(TRIP_JS,
+                '        if (frm.doc.status === "Planned") {\n'
+                "            frm.add_custom_button(__('Start Trip'), function() {\n"
+                "                frm.set_value('status', 'In Progress');\n"
+                '                frm.save();\n'
+                '            });\n'
+                '        }\n', "")]),
+        Fault("Cancelled dropped from the status Select's options", True,
+              [(TRIP_JSON,
+                '   "options": "Planned\\nIn Progress\\nCompleted\\nCancelled",\n',
+                '   "options": "Planned\\nIn Progress\\nCompleted",\n')]),
+        Fault("the status Select's default removed, so inserts raise "
+              "MandatoryError instead of deriving", True,
+              [(TRIP_JSON, '   "default": "Planned",\n   "fieldname": "status",\n',
+                '   "fieldname": "status",\n')]),
+        Fault("status no longer required", True,
+              [(TRIP_JSON,
+                '   "options": "Planned\\nIn Progress\\nCompleted\\nCancelled",\n'
+                '   "reqd": 1\n',
+                '   "options": "Planned\\nIn Progress\\nCompleted\\nCancelled",\n'
+                '   "reqd": 0\n')]),
+        Fault("status changed from a Select to free text, so the whole-app "
+              "rule stops looking at trip.py", True,
+              [(TRIP_JSON, '   "fieldname": "status",\n   "fieldtype": "Select",\n',
+                '   "fieldname": "status",\n   "fieldtype": "Data",\n')]),
+
+        # 8. Controls: real edits with no behavioural difference. Three of
+        #    these are equivalences worth having written down, not just inert
+        #    renames -- each says something about why the code is shaped as it
+        #    is, and a red would mean the test is pinning the shape instead.
+        Fault("CONTROL: the local `previous` renamed (must stay green)", False,
+              [(TRIP, '        previous = self.get_doc_before_save()\n'
+                      '        if previous:\n',
+                '        prior = self.get_doc_before_save()\n'
+                '        if prior:\n'),
+               (TRIP, '            if previous.status != self.status:\n',
+                '            if prior.status != self.status:\n'),
+               (TRIP, '            if previous.status in TERMINAL_STATUSES:\n',
+                '            if prior.status in TERMINAL_STATUSES:\n')]),
+        Fault("CONTROL: the locals in calculate_duration renamed (must stay "
+              "green)", False,
+              [(TRIP, '            departure = get_datetime(self.departure_datetime)\n'
+                      '            arrival = get_datetime(self.arrival_datetime)\n'
+                      '            duration = arrival - departure\n',
+                '            dep = get_datetime(self.departure_datetime)\n'
+                '            arr = get_datetime(self.arrival_datetime)\n'
+                '            duration = arr - dep\n')]),
+        Fault("CONTROL: the terminal guard reads self.status instead of "
+              "previous.status -- equivalent, because the guard above it has "
+              "already returned on any difference (must stay green)", False,
+              [(TRIP, TRIP_TERMINAL_GUARD,
+                '            if self.status in TERMINAL_STATUSES:\n'
+                '                return\n')]),
+        Fault("CONTROL: the past arm uses >= instead of > -- equivalent, "
+              "because the running arm's inclusive upper bound already took "
+              "the arrival instant (must stay green)", False,
+              [(TRIP, '            elif now > arrival:\n',
+                '            elif now >= arrival:\n')]),
+        Fault("CONTROL: a set_value on the status Select added to a "
+              "field-change handler, outside any button -- the whole-app rule "
+              "is about buttons and must not flag it (must stay green)", False,
+              [(SQ_JS,
+                "\t\t\tfrm.set_value('valid_until', valid_until);\n",
+                "\t\t\tfrm.set_value('valid_until', valid_until);\n"
+                "\t\t\tfrm.set_value('status', 'Draft');\n")]),
+    ])
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -1305,4 +1590,5 @@ TARGETS = {
     "whitelist_write_gate": WHITELIST_WRITE_GATE,
     "xero_invoice_send": XERO_INVOICE_SEND,
     "todo_assignment": TODO_ASSIGNMENT,
+    "trip_status": TRIP_STATUS,
 }

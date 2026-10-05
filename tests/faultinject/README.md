@@ -136,6 +136,29 @@ fix is the pair of dates immediately either side of the cutoff — and then a fa
 on *each* side of 30, because a fault on one side only shows the test rejects
 something.
 
+An eighth, which is where that one leads: **a chain of branches partitioning a
+continuous range makes one claim per branch and one more per instant where two of
+them meet, and the instants are the only data that pins the comparisons.**
+`trip.py` derives a status from `now < departure`, `departure <= now <= arrival`,
+`now > arrival`. Every date in `test_trip_status.py` sat in the middle of a
+window, so all three arms were pinned and neither edge was: `<` could become
+`<=` on one side and `<=` could become `<` on the other with the whole file
+green. A window a fortnight wide tells you nothing about its own edges. Four
+positions fix it — each instant, and the tick either side — and they are cheap,
+because a test that freezes the clock can place a document exactly on one.
+
+And a ninth, which took eight targets to meet: **a fault that comes back green
+because it changes nothing is a finding about your model of the code, not about
+the test — keep it, as a control.** Every green fault before this one was a gap
+in a test. This one was a gap in me: I swapped two guards in `before_save`
+believing their order was load-bearing, because the test file's own docstring
+said so. Both guards do nothing but `return`, so the order cannot matter, and
+the docstring was wrong. The two outcomes look identical in `run.py` — `wanted
+RED got GREEN` — so when one happens, the question is which, and the way to tell
+is to work out what the edit changes for a caller before deciding the test is at
+fault. A wrong fault is worth keeping once you know why it is wrong: it is the
+only place an equivalence gets written down.
+
 ## Adding a target
 
 For each claim the test file makes, ask: *what edit to the real source would
@@ -189,7 +212,7 @@ breaking the code.
 
 ## Targets
 
-Seven so far. Ten test files in this repo describe having been
+Eight so far. Ten test files in this repo describe having been
 fault-injected; these are the ones where that proof is reproducible.
 
 ### `xero_gate` — `tests/offline/test_xero_permission_gate.py`
@@ -663,3 +686,86 @@ without any behaviour changing. That is deliberate (there is no JS runtime
 here) but it means the client half is guarded by a name match, not by running
 anything. The eight call sites that gate a card's controls on `canEditTodo` are
 not covered at all.
+
+### `trip_status` — `tests/offline/test_trip_status.py`
+
+A derived field a user is also allowed to set by hand. `Trip.before_save`
+derives `status` from the trip's dates; `trip.js` offers "Start Trip" and
+"Complete Trip" buttons that `set_value('status', ...)` and save, and the Select
+is editable. Commit e585a5b moved the derivation into `before_save` to fix a
+lost write and thereby broke both buttons: they saved successfully and the field
+simply was not what was asked for. The repair consults `get_doc_before_save()`,
+and the owner's answer to rev_f9dce41f7f ("a Completed trip stays Completed")
+added `TERMINAL_STATUSES`. The test file pins three different things — the
+controller's behaviour, the premises it rests on (`trip.js`'s buttons,
+`trip.json`'s Select) and a whole-app rule — so the faults are grouped by which
+of the three should notice.
+
+**40 faults, 35 red, 5 controls green. 29 tests, 10 subtests.** Six came back
+green against the file as it stood, and all six were measured before anything
+was repaired — the faults were written and run first, against the file on `main`.
+
+**Two of the three copies of a rule were unguarded, and the file's own docstring
+said all three carried it.** Cancelled is honoured on insert — where there is no
+previous document — by a `!= "Cancelled"` check inside each of the three
+derivation arms. Only the past arm was tested. Dropping the exclusion from the
+future arm or from the running arm left the whole file green. Same family as the
+7-red-versus-1-red in `xero_invoice_send`, with one difference worth noting: the
+three copies here sit in three consecutive branches of one `if`/`elif` chain, ten
+lines apart, which is about as symmetric as code gets and made the single test
+look like it covered them.
+
+**Neither instant where the arms meet was tested** — see the eighth lesson
+above. `now < departure` → `<=` and `departure <= now <= arrival` →
+`< arrival` were both green, and the second of those leaves a trip arriving at
+this instant derived by no arm at all.
+
+**`arrival <= departure` was pinned only as `<`.** The refusal test used two
+dates days apart the wrong way round, which is true of `<` as well, so a trip
+arriving at the instant it departs would have been accepted. The equal case is
+the only one that pins the `=`.
+
+**The two halves of the owner's rule are not guarded alike, and cannot be.**
+Dropping `"Completed"` from `TERMINAL_STATUSES` turns three tests red. Dropping
+`"Cancelled"` turns exactly one — and it is
+`test_terminal_statuses_are_real_options_on_the_doctype`, which reads the tuple
+rather than exercising it. No behavioural test notices, because the three
+derivation arms already skip a Cancelled trip on their own, so the Cancelled
+half makes no behavioural difference while those arms stand. That asymmetry is
+recorded in the test class's docstring, because the alternative is somebody
+reading "1 red" as a gap and going looking for a test that cannot be written.
+Keeping the redundant half is still right: it states the rule where the rule is
+read, and the arms are what the next change might remove.
+
+**One fault was wrong, and that was the useful part** — see the ninth lesson
+above. It is now a control.
+
+**The whole-app rule has two instances in the app and accepts two remedies, so
+it takes three faults.** `TestNoButtonSetSelectIsSilentlyOverwritten` holds that
+a button setting a Select must not be overwritten by a pre-save hook, and
+accepts either consulting the previous document (`trip`) or excluding the
+button's values by name (`supplier_quote`, whose guard is
+`status not in ["Accepted", "Rejected"]`). One fault empties that list, one
+narrows it to `["Accepted"]` so only Reject breaks, and a third switches `trip`
+from the first remedy to the second. That third is worth reading carefully: the
+whole-app test stays **green** under it, correctly, because excluding the
+button's values *is* one of the two remedies — and three behavioural tests go
+red, because for `trip` the button values are also what derivation produces, so
+excluding them disables most of it. The rule is deliberately permissive about
+how you fix it and says nothing about whether your fix works.
+
+**A discrimination control for the walker, not just a sensitivity one.**
+`_button_set_values` brace-matches the callback of each `add_custom_button`,
+because a field-change handler recomputing a dependent value is the server being
+authoritative and is correct. So one control adds `set_value('status', 'Draft')`
+to `supplier_quote.js`'s `quote_date` handler — outside any button, and a value
+the guard does not protect. A line-based walker would flag it. It must stay
+green.
+
+**What this target does not reach.** The walker's own machinery
+(`_button_set_values`, `_pre_save_assignments_and_guards`) is exercised against
+synthetic source inside the test file, so no edit to real source can falsify its
+units — the same honest limit as `whitelist_write_gate`. And the buttons
+themselves are pinned by reading `trip.js` as text: nothing here runs any
+JavaScript, so "the button does what the test says it does" rests on a string
+match.

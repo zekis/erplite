@@ -78,6 +78,26 @@ protect. `test_a_new_trip_in_the_future_is_planned` pins it from the other side.
 Only `Cancelled` is honoured on insert, by the per-branch checks in the three
 derivation arms, which this change left alone.
 
+## What fault injection added (6 Oct 2026)
+
+Forty faults, against the file as it stood. Thirty-four behaved; the six
+that did not are the reason for every change in this file since:
+
+* **Two of the three derivation arms were unguarded.** The docstring above
+  says Cancelled is honoured on insert "by the per-branch checks in the
+  three derivation arms". Only the past arm was tested. Dropping the
+  exclusion from the future or the running arm was green.
+* **Neither instant where the arms meet was tested.** Every date here sat
+  in the middle of a window, so `now < departure` -> `<=` and
+  `departure <= now <= arrival` -> `< arrival` were both green.
+* **`arrival <= departure` was pinned only as `<`.** The refusal test used
+  dates days apart the wrong way round, so a trip arriving at the instant
+  it departs would have been accepted.
+* **One fault was simply wrong, and that was the useful part.** Swapping
+  the two guards in `before_save` is an equivalence, not a regression --
+  see `test_a_terminal_trip_can_still_be_reopened_by_hand`, whose docstring
+  claimed the opposite.
+
 These tests run without a bench. See fake_frappe.py for the stand-in.
 """
 
@@ -118,6 +138,14 @@ RUNNING_DEP = datetime.datetime(2026, 10, 5, 8, 0, 0)
 RUNNING_ARR = datetime.datetime(2026, 10, 9, 18, 0, 0)
 PAST_DEP = datetime.datetime(2026, 9, 1, 8, 0, 0)
 PAST_ARR = datetime.datetime(2026, 9, 5, 18, 0, 0)
+
+# The three derivation arms are `now < departure`, `departure <= now <=
+# arrival` and `now > arrival`, so both instants where they meet belong to
+# the running arm. Every date above sits in the middle of a window, which
+# pins "somewhere inside it" and not the edge: a trip positioned exactly on
+# each instant is the only thing that notices either comparison loosened by
+# one tick. Found by fault injection, not review.
+ONE_SECOND = datetime.timedelta(seconds=1)
 
 
 class FrozenDatetime(datetime.datetime):
@@ -382,6 +410,29 @@ class TestDerivationStillWorks(TripTestCase):
         self.assertEqual(self.stored(), "Planned")
         self.assertIsNone(self.stored(field="duration_days"))
 
+    def test_the_instants_where_the_arms_meet_belong_to_the_running_arm(self):
+        """Both of the running arm's comparisons are inclusive; pin both.
+
+        Four positions: the tick before departure, the departure instant,
+        the arrival instant, the tick after arrival. Without the two middle
+        ones, `now < departure` could become `<=` and the running arm could
+        stop at `< arrival` with nothing in this file going red -- measured,
+        both were green before this test existed.
+        """
+        for label, dep, arr, expected in (
+                ("the tick before departure", NOW + ONE_SECOND, FUTURE_ARR,
+                 "Planned"),
+                ("the departure instant", NOW, FUTURE_ARR, "In Progress"),
+                ("the arrival instant", PAST_DEP, NOW, "In Progress"),
+                ("the tick after arrival", PAST_DEP, NOW - ONE_SECOND,
+                 "Completed")):
+            with self.subTest(label):
+                self.rows.clear()
+                self.save(self.new_trip(status="Planned",
+                                        departure_datetime=dep,
+                                        arrival_datetime=arr))
+                self.assertEqual(self.stored(), expected)
+
     def test_duration_days_is_computed_from_the_two_dates(self):
         self.save(self.new_trip(departure_datetime=RUNNING_DEP,
                                 arrival_datetime=RUNNING_ARR))
@@ -390,6 +441,21 @@ class TestDerivationStillWorks(TripTestCase):
 
     def test_arrival_before_departure_is_refused(self):
         doc = self.new_trip(departure_datetime=RUNNING_ARR,
+                            arrival_datetime=RUNNING_DEP)
+        with self.assertRaises(ValidationError):
+            self.save(doc)
+        self.assertNotIn(doc.name, self.rows, "the throw aborts the save")
+
+    def test_arrival_equal_to_departure_is_refused(self):
+        """The window has to be open, not merely non-negative.
+
+        The test above uses two dates days apart the wrong way round, so it
+        passes with `arrival <= departure` loosened to `<` -- which accepts
+        a trip arriving at the instant it departs. The equal case is the
+        only one that pins the `=`. Measured: that loosening was green
+        before this test existed.
+        """
+        doc = self.new_trip(departure_datetime=RUNNING_DEP,
                             arrival_datetime=RUNNING_DEP)
         with self.assertRaises(ValidationError):
             self.save(doc)
@@ -599,7 +665,21 @@ class TestNoButtonSetSelectIsSilentlyOverwritten(unittest.TestCase):
 # 5. The owner's rule: a terminal status is not derived away (rev_f9dce41f7f)
 # ---------------------------------------------------------------------------
 class TestATerminalStatusIsNotDerivedAway(TripTestCase):
-    """Once a stored trip is Completed or Cancelled, the dates stop deciding."""
+    """Once a stored trip is Completed or Cancelled, the dates stop deciding.
+
+    The two halves of `TERMINAL_STATUSES` are not guarded alike, and cannot
+    be. Dropping "Completed" from it turns three tests red. Dropping
+    "Cancelled" turns exactly one red --
+    `test_terminal_statuses_are_real_options_on_the_doctype`, which reads the
+    tuple rather than exercising it -- because the three derivation arms
+    already skip a Cancelled trip on their own. So the Cancelled half of the
+    owner's rule makes no behavioural difference while those arms stand, and
+    no behavioural test can be written for it. Keeping it is still right: it
+    states the rule where the rule is read, and the arms are what the next
+    change might remove. But the asymmetry is real, and without it someone
+    will eventually read "1 red" as a gap and go looking for a test that
+    cannot exist.
+    """
 
     def _stored(self, status, dep, arr):
         """A trip already in the database with `status`, reloaded for editing."""
@@ -643,8 +723,14 @@ class TestATerminalStatusIsNotDerivedAway(TripTestCase):
     def test_a_terminal_trip_can_still_be_reopened_by_hand(self):
         """The rule must not turn Completed into a one-way door.
 
-        This is the explicit-change guard, which runs first. Without it the
-        terminal check would also refuse the user's own correction.
+        This is the explicit-change guard, and what it needs is to *exist*:
+        deleting it goes red. An earlier version of this docstring said it
+        also had to run *before* the terminal check, or that check "would
+        also refuse the user's own correction". That was wrong. Both guards
+        do nothing but `return`, so whichever of them fires, derivation is
+        skipped and the hand-set value is what gets written -- swapping them
+        is an equivalence, and `faults.py` carries it as a control rather
+        than a fault. Fault injection is what said so; reading it did not.
         """
         doc = self._stored("Completed", RUNNING_DEP, RUNNING_ARR)
         doc.status = "In Progress"
@@ -663,13 +749,24 @@ class TestATerminalStatusIsNotDerivedAway(TripTestCase):
 
         Pins the part of the old guard this change left in place: if those
         `!= "Cancelled"` arms were removed on the strength of the new
-        previous-status check, a trip created as Cancelled with past dates
-        would silently become Completed.
+        previous-status check, a trip created as Cancelled would silently be
+        derived to whatever its dates say.
+
+        One case per arm. The rule is written out three times -- once in each
+        arm -- and this test used to exercise only the past one: dropping the
+        exclusion from the future arm or the running arm left this whole file
+        green. A rule written three times is guarded three times or not at
+        all.
         """
-        self.save(self.new_trip(status="Cancelled",
-                                departure_datetime=PAST_DEP,
-                                arrival_datetime=PAST_ARR))
-        self.assertEqual(self.stored(), "Cancelled")
+        for dep, arr in ((FUTURE_DEP, FUTURE_ARR),
+                         (RUNNING_DEP, RUNNING_ARR),
+                         (PAST_DEP, PAST_ARR)):
+            with self.subTest(dep=dep):
+                self.rows.clear()
+                self.save(self.new_trip(status="Cancelled",
+                                        departure_datetime=dep,
+                                        arrival_datetime=arr))
+                self.assertEqual(self.stored(), "Cancelled")
 
     def test_terminal_statuses_are_real_options_on_the_doctype(self):
         module = self.module
