@@ -736,9 +736,16 @@ def import_customer_from_xero(xero_contact_id):
                     frappe.throw(f"Customer already exists with Xero Contact ID: {contact['ContactID']}")
                 
                 # Create customer
+                # customer_type is reqd on Customer with no default, so
+                # leaving it out made insert() raise MandatoryError for every
+                # contact Xero returned -- the import could never create one.
+                # "Company" is the owner's rule for imported contacts
+                # (review item rev_f9dce41f7f); it is one of the five Select
+                # options and can be changed on the record afterwards.
                 customer = frappe.get_doc({
                     "doctype": "Customer",
                     "customer_name": contact["Name"],
+                    "customer_type": "Company",
                     "first_name": contact.get("FirstName", ""),
                     "last_name": contact.get("LastName", ""),
                     "email": contact.get("EmailAddress", ""),
@@ -807,9 +814,12 @@ def import_supplier_from_xero(xero_contact_id):
                     frappe.throw(f"Supplier already exists with Xero Contact ID: {contact['ContactID']}")
                 
                 # Create supplier
+                # supplier_type is reqd on Supplier with no default: same
+                # MandatoryError, same rule. See import_customer_from_xero.
                 supplier = frappe.get_doc({
                     "doctype": "Supplier",
                     "supplier_name": contact["Name"],
+                    "supplier_type": "Company",
                     "first_name": contact.get("FirstName", ""),
                     "last_name": contact.get("LastName", ""),
                     "email": contact.get("EmailAddress", ""),

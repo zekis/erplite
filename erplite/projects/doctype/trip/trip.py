@@ -7,6 +7,13 @@ from frappe.utils import getdate, get_datetime
 from datetime import datetime, timedelta
 
 
+# Statuses a trip does not leave on its own. "Cancelled" and "Completed" are
+# statements about what happened to the trip, not a reading of the clock, so
+# once a stored trip holds one of them the dates stop deciding. The owner's
+# rule, from review item rev_f9dce41f7f: "a Completed trip stays Completed".
+TERMINAL_STATUSES = ("Completed", "Cancelled")
+
+
 class Trip(Document):
     def validate(self):
         self.calculate_duration()
@@ -30,7 +37,8 @@ class Trip(Document):
                 frappe.throw("Arrival date and time must be after departure date and time")
 
     def before_save(self):
-        """Derive status from the trip's dates, unless this save set it explicitly.
+        """Derive status from the trip's dates, unless this save set it
+        explicitly or the trip has already reached a terminal status.
 
         A pre-save hook, not on_update(): frappe's Document._save() writes the row
         in db_update() before it runs the post-save hooks, so a status assigned in
@@ -57,8 +65,19 @@ class Trip(Document):
         scheduled job, which is a separate change.
         """
         previous = self.get_doc_before_save()
-        if previous and previous.status != self.status:
-            return
+        if previous:
+            # This save changed the status, so it was somebody's explicit
+            # choice -- a button or the Select -- and derivation must not
+            # overwrite it before the row is written.
+            if previous.status != self.status:
+                return
+            # And a trip that already reached a terminal status stays there,
+            # whatever the dates now say. Without this, clicking "Complete
+            # Trip" on a trip whose arrival is still in the future persisted
+            # Completed, and then the next unrelated save of that document
+            # derived it back to In Progress.
+            if previous.status in TERMINAL_STATUSES:
+                return
 
         if self.departure_datetime and self.arrival_datetime:
             now = datetime.now()
