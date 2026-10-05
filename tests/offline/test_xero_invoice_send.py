@@ -150,12 +150,14 @@ class FakeXero(object):
     """
 
     def __init__(self, lose_reply_on=(), holding=(), lookup_raises=None,
-                 lookup_status=None, ignore_filter=False):
+                 lookup_status=None, ignore_filter=False,
+                 lookup_unreadable=False):
         self.posted = list(holding)
         self.lose_reply_on = set(lose_reply_on)
         self.lookup_raises = lookup_raises
         self.lookup_status = lookup_status
         self.ignore_filter = ignore_filter
+        self.lookup_unreadable = lookup_unreadable
         self.posts = 0
         self.lookups = []
 
@@ -180,6 +182,10 @@ class FakeXero(object):
             raise self.lookup_raises("could not connect to api.xero.com")
         if self.lookup_status:
             return _Response(self.lookup_status, None, text="Forbidden")
+        if self.lookup_unreadable:
+            # 200 and not JSON: a proxy or gateway error page, which is
+            # what an unreadable answer looks like in practice.
+            return _Response(200, None, text="<html>504 Gateway Time-out</html>")
         wanted = (params or {}).get("InvoiceNumbers")
         if self.ignore_filter or not wanted:
             found = list(self.posted)
@@ -416,6 +422,15 @@ class RetryTests(unittest.TestCase):
 
         self.assertNotIn("Failed to send invoice to Xero", str(caught.exception))
         self.assertIn("nothing was sent", str(caught.exception))
+        # Nor dressed up as anything else. The lookup sits outside
+        # create_sales_invoice's try/except deliberately; moved inside it,
+        # `except Exception` there would hand this stop back as "Error
+        # creating invoice in Xero: ...". Any prefix makes a stop read as a
+        # failure, so the message has to arrive with none -- which is also
+        # the only assertion here that notices if that call moves.
+        self.assertTrue(
+            str(caught.exception).startswith("Xero already has invoice SINV-00042"),
+            "the stop reached the user wrapped: %r" % str(caught.exception))
         self.assertEqual(xero.posts, 0)
 
     def test_the_already_sent_guard_is_also_reported_as_a_stop(self):
@@ -504,6 +519,9 @@ class RetryTests(unittest.TestCase):
             purchase.send_to_xero("PINV-00007")
 
         self.assertIn("Xero already has invoice INV-001", str(caught.exception))
+        self.assertTrue(
+            str(caught.exception).startswith("Xero already has invoice INV-001"),
+            "the stop reached the user wrapped: %r" % str(caught.exception))
         self.assertEqual(xero.posts, 0)
 
     def test_a_sales_invoice_matching_an_accpay_number_is_not_a_match(self):
@@ -525,6 +543,54 @@ class RetryTests(unittest.TestCase):
         sales.send_to_xero("SINV-00042")
 
         self.assertEqual(xero.lookups, [{"InvoiceNumbers": "SINV-00042"}])
+
+    def test_an_unreadable_answer_from_xero_stops_the_send(self):
+        """200 with a body that is not JSON -- a gateway's error page, say.
+
+        The invoice may or may not be in Xero and nothing here can tell, which
+        is the same position as an unreachable Xero and gets the same answer.
+        """
+        xero = FakeXero(lookup_unreadable=True)
+        frappe = world("Sales Invoice", "accounts", "sales_invoice", sales_row())
+        _accounts, sales, _purchase = load_under_test(frappe, xero)
+
+        with self.assertRaises(ValidationError) as caught:
+            sales.send_to_xero("SINV-00042")
+
+        self.assertIn("Could not read Xero's answer", str(caught.exception))
+        self.assertIn("Nothing was sent", str(caught.exception))
+        self.assertEqual(xero.posts, 0)
+
+    def test_a_deleted_invoice_in_xero_does_not_block_the_send(self):
+        """DELETED frees the number again exactly as VOIDED does.
+
+        Both are pinned because the code names both, and a test of one says
+        nothing about the other -- narrowing that tuple to ("VOIDED",) alone is
+        a one-word edit.
+        """
+        xero = FakeXero(holding=[xero_invoice("SINV-00042", status="DELETED")])
+        frappe = world("Sales Invoice", "accounts", "sales_invoice", sales_row())
+        _accounts, sales, _purchase = load_under_test(frappe, xero)
+
+        sales.send_to_xero("SINV-00042")
+
+        self.assertEqual(xero.posts, 1)
+
+    def test_the_purchase_already_sent_guard_is_also_reported_as_a_stop(self):
+        """`send_to_xero` is written out once per DocType, so the guard and the
+        unchanged re-raise both have to be pinned on each of them."""
+        xero = FakeXero()
+        row = purchase_row()
+        row.xero_invoice_id = "xero-1"
+        frappe = world("Purchase Invoice", "accounts", "purchase_invoice", row)
+        _accounts, _sales, purchase = load_under_test(frappe, xero)
+
+        with self.assertRaises(ValidationError) as caught:
+            purchase.send_to_xero("PINV-00007")
+
+        self.assertEqual(str(caught.exception), "This invoice has already been sent to Xero")
+        self.assertEqual(xero.posts, 0)
+        self.assertEqual(xero.lookups, [], "no need to ask Xero; we already know")
 
 
 class TimeoutTests(unittest.TestCase):
