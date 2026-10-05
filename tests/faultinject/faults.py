@@ -142,8 +142,9 @@ XERO_GATE = Target(
 # needs write on Timesheet Entry, and the row then belongs to that employee.
 #
 # This target is the reason the line-ending guard is per-file rather than a
-# repo-wide claim: the controller below is CRLF and its DocType JSON is LF, in
-# the same folder. `harness.read` detects each file's own ending, so a fault may
+# repo-wide claim: as committed, the controller below is CRLF and its DocType
+# JSON is LF, in the same folder (a checkout with core.autocrlf=true will show
+# you both as CRLF; the blobs are what the other copies of this repo see). `harness.read` detects each file's own ending, so a fault may
 # name either -- but a pattern written for one and applied to the other matches
 # nothing, which is the silent failure EXPECTED_MATCHES exists to catch.
 

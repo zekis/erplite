@@ -49,13 +49,22 @@ each turns a false pass into a hard stop.
    passes. Write patterns with `\n` and let `harness.nl` translate them.
 
    **This repo's line endings are mixed, so the ending is a property of the
-   file and never of the repo.** Measured 6 Oct 2026: 82 CRLF `.py` files and
-   62 LF, 31 CRLF `.json` and 22 LF. The split runs *inside* one DocType
-   folder — `timesheet_entry.py` is CRLF, `timesheet_entry.json` beside it is
-   LF — which is why `harness.read` detects each file's own ending. The first
-   version of this harness asserted every file a fault named was CRLF; that was
-   true of everything the first target happened to touch, and the second target
-   failed it immediately.
+   file and never of the repo.** Measured 6 Oct 2026 from the committed blobs:
+   82 CRLF `.py` files and 62 LF, 31 CRLF `.json` and 22 LF. The split runs
+   *inside* one DocType folder — `timesheet_entry.py` is CRLF,
+   `timesheet_entry.json` beside it is LF — which is why `harness.read`
+   detects each file's own ending. The first version of this harness asserted
+   every file a fault named was CRLF; that was true of everything the first
+   target happened to touch, and the second target failed it immediately.
+
+   **Nor is it a property you can read off your own working tree.** With
+   `core.autocrlf=true`, git's default on Windows, the LF files are checked out
+   as CRLF and that mixture is invisible locally. `harness.read` is unaffected,
+   because it reads whatever is actually in front of it — but two tests that
+   described the mixture by reading the working tree passed in a Linux sandbox
+   and failed on Windows. They read `git cat-file` now. If you write something
+   that asserts what *the repo* holds, read the blob; the working tree only
+   tells you about your own checkout.
 2. **The edit matches more than once**, lands somewhere unintended, and the red
    you get is not the red you asked for.
 3. **Restoring destroys uncommitted work.** Hence the clean-tree refusal.
