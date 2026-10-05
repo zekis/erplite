@@ -1043,6 +1043,260 @@ XERO_INVOICE_SEND = Target(
     ])
 
 
+# --- the todo kanban page: who may assign, see and change a todo -----------
+# The owner's rule: anyone may assign a todo to anyone, and whoever created or
+# handed it on keeps track of it afterwards. That rule is frappe's own ToDo
+# rule, and it is written out TWICE on this page -- once as `_can_manage_todo`
+# for the writes, and once as the board's `or_filters` for the lists -- plus a
+# third time in JavaScript as `canEditTodo`. Every copy gets its own faults:
+# the same rule guarded unevenly across its copies is the recurring finding of
+# this harness (2 of 4 DocTypes, 6 of 12 call sites, 7 red vs 1 red).
+
+TODO_PAGE = "erplite/www/todo/index.py"
+TODO_JS = "erplite/public/js/todo/data/TodoDataManager.js"
+
+CAN_MANAGE = (
+    "    return bool(\n"
+    "        user_is_manager\n"
+    "        or todo.allocated_to == user\n"
+    "        or todo.assigned_by == user\n"
+    "        or todo.owner == user\n"
+    "    )\n")
+
+IS_MANAGER_QUERY = (
+    '    return bool(frappe.db.exists("Has Role", {\n'
+    '        "parent": user,\n'
+    '        "role": ["in", MANAGER_ROLES]\n'
+    '    }))\n')
+
+# The one permission line is written out twice, identically, so each call site
+# is named by what follows it. That is the point rather than an inconvenience:
+# a fault has to be able to hit one endpoint without the other.
+_UPDATE_CHECK = (
+    '        if not _can_manage_todo(todo, current_user, _is_manager(current_user)):\n'
+    '            frappe.throw(_("You don\'t have permission to update this todo"))\n'
+    '        \n')
+STATUS_GATE = _UPDATE_CHECK + "        # Update status\n"
+UPDATE_GATE = _UPDATE_CHECK + "        # Update fields if provided\n"
+_ALLOCATED_TO_ONLY = (
+    '        if not _is_manager(current_user) and todo.allocated_to != current_user:\n'
+    '            frappe.throw(_("You don\'t have permission to update this todo"))\n'
+    '        \n')
+
+DELETE_CHECK = (
+    '        if not _is_manager(current_user) and todo.allocated_to != current_user:\n')
+DELETE_GATE = DELETE_CHECK + (
+    '            frappe.throw(_("You don\'t have permission to delete this todo"))\n')
+
+BOARD_OR_FILTERS = (
+    '            or_filters={\n'
+    '                "allocated_to": current_user,\n'
+    '                "assigned_by": current_user,\n'
+    '                "owner": current_user\n'
+    '            },\n')
+# Two status filters, one per branch of `if is_manager`. The manager's carries
+# a trailing comment, which is what tells them apart.
+NONMANAGER_STATUS_FILTER = '            filters={"status": ["!=", "Cancelled"]},\n'
+MANAGER_STATUS_FILTER = (
+    '            filters={"status": ["!=", "Cancelled"]},'
+    '  # Don\'t show cancelled by default\n')
+
+DIRECTORY = (
+    '    users = frappe.get_all("User",\n'
+    '        filters={"enabled": 1, "user_type": "System User"},\n'
+    '        fields=["name", "full_name", "user_image"],\n'
+    '        order_by="full_name"\n'
+    '    )\n')
+
+CREATE_DEFAULT_ASSIGNEE = (
+    "        if not allocated_to:\n"
+    "            allocated_to = current_user\n")
+
+CAN_EDIT_JS = (
+    "        return todo.allocated_to === this.currentUser\n"
+    "            || todo.assigned_by === this.currentUser\n"
+    "            || todo.owner === this.currentUser;\n")
+CAN_DELETE_JS = "        return todo.allocated_to === this.currentUser;\n"
+
+
+TODO_ASSIGNMENT = Target(
+    test="tests/offline/test_todo_assignment.py",
+    faults=[
+        # 1. The server's copy of the rule. The pre-fix state first, then one
+        #    fault per clause -- a three-way OR satisfied by any one clause is
+        #    exactly the shape that a single fault flatters.
+        Fault("the pre-fix rule restored: a todo is yours only while it is "
+              "with you", True, [
+            (TODO_PAGE, CAN_MANAGE,
+             "    return bool(user_is_manager or todo.allocated_to == user)\n")]),
+        Fault("assigned_by dropped from the server rule", True, [
+            (TODO_PAGE, "        or todo.assigned_by == user\n", "")]),
+        Fault("owner dropped from the server rule", True, [
+            (TODO_PAGE, "        or todo.owner == user\n", "")]),
+        Fault("allocated_to dropped from the server rule", True, [
+            (TODO_PAGE, "        or todo.allocated_to == user\n", "")]),
+        Fault("the manager shortcut dropped from the server rule", True, [
+            (TODO_PAGE,
+             "        user_is_manager\n        or todo.allocated_to == user\n",
+             "        todo.allocated_to == user\n")]),
+        Fault("the rule widened to everybody", True, [
+            (TODO_PAGE, CAN_MANAGE, "    return True\n")]),
+
+        # 2. Who counts as a manager. `Has Role` is a child table, so the user
+        #    is in `parent`; asking for `name` is the mistake the stand-in's own
+        #    docstring records having made, and it answers False for everybody.
+        Fault("_is_manager asks Has Role for the row's name instead of the "
+              "user's", True, [
+            (TODO_PAGE, IS_MANAGER_QUERY,
+             '    return bool(frappe.db.exists("Has Role", {\n'
+             '        "name": user,\n'
+             '        "role": ["in", MANAGER_ROLES]\n'
+             '    }))\n')]),
+        Fault("Administrator dropped from MANAGER_ROLES", True, [
+            (TODO_PAGE, 'MANAGER_ROLES = ["System Manager", "Administrator"]\n',
+             'MANAGER_ROLES = ["System Manager"]\n')]),
+        Fault("any role at all makes you a manager", True, [
+            (TODO_PAGE, IS_MANAGER_QUERY,
+             '    return bool(frappe.db.exists("Has Role", {\n'
+             '        "parent": user,\n'
+             '    }))\n')]),
+
+        # 3. create_todo: the assignee the user chose must survive.
+        Fault("the pre-fix overwrite restored: a non-manager's chosen assignee "
+              "replaced with themselves", True, [
+            (TODO_PAGE, CREATE_DEFAULT_ASSIGNEE,
+             "        if not allocated_to or not _is_manager(current_user):\n"
+             "            allocated_to = current_user\n")]),
+        Fault("the default assignee dropped, so a quick-add todo is allocated "
+              "to nobody", True, [(TODO_PAGE, CREATE_DEFAULT_ASSIGNEE, "")]),
+        Fault("assigned_by recorded as the assignee instead of the creator", True, [
+            (TODO_PAGE, '            "assigned_by": current_user\n',
+             '            "assigned_by": allocated_to\n')]),
+        Fault("a new todo starts in Open rather than Backlog", True, [
+            (TODO_PAGE,
+             '            "status": "Backlog",  # New todos start in backlog\n',
+             '            "status": "Open",\n')]),
+
+        # 4. update_todo: handing a todo on, and the bookkeeping that keeps the
+        #    person who did so able to follow it.
+        Fault("the hand-over is not recorded, so whoever hands a todo on loses "
+              "it", True, [
+            (TODO_PAGE, "            todo.assigned_by = current_user\n", "")]),
+        Fault("any update counts as a hand-over, overwriting assigned_by", True, [
+            (TODO_PAGE,
+             "        if allocated_to is not None and allocated_to != todo.allocated_to:\n",
+             "        if allocated_to is not None:\n")]),
+        Fault("allocated_to written even when the caller sent none", True, [
+            (TODO_PAGE,
+             "        if allocated_to is not None and allocated_to != todo.allocated_to:\n",
+             "        if allocated_to != todo.allocated_to:\n")]),
+        # Afterz's Planner Entry points at its parent todo by name, and
+        # ignore_links_on_delete covers it, so frappe will not catch this.
+        Fault("update_todo re-creates the todo instead of saving it, breaking "
+              "Afterz's link to it", True, [
+            (TODO_PAGE,
+             "            todo.color = color\n        \n        todo.save()\n",
+             "            todo.color = color\n        \n        todo.insert()\n")]),
+
+        # 5. The two call sites of the rule, one endpoint at a time.
+        Fault("the status endpoint keeps the old allocated_to-only check", True, [
+            (TODO_PAGE, STATUS_GATE,
+             _ALLOCATED_TO_ONLY + "        # Update status\n")]),
+        Fault("the status endpoint's permission check deleted", True, [
+            (TODO_PAGE, STATUS_GATE, "        # Update status\n")]),
+        Fault("update_todo's permission check deleted", True, [
+            (TODO_PAGE, UPDATE_GATE, "        # Update fields if provided\n")]),
+
+        # 6. delete_todo is deliberately narrower than updating. That asymmetry
+        #    is a decision on the record, so it is broken in both directions.
+        Fault("delete widened to everyone who may update", True, [
+            (TODO_PAGE, DELETE_CHECK,
+             "        if not _can_manage_todo(todo, current_user, _is_manager(current_user)):\n")]),
+        Fault("delete narrowed to managers only", True, [
+            (TODO_PAGE, DELETE_CHECK, "        if not _is_manager(current_user):\n")]),
+        Fault("delete's permission check deleted", True, [
+            (TODO_PAGE, DELETE_GATE, "")]),
+
+        # 7. The board's copy of the same three-way OR. `frappe.get_all` sets
+        #    ignore_permissions=True, so these filters are the whole of what
+        #    decides what a non-manager sees -- nothing behind them.
+        Fault("the pre-fix board filter restored: allocated_to only", True, [
+            (TODO_PAGE, NONMANAGER_STATUS_FILTER,
+             '            filters={"status": ["!=", "Cancelled"],\n'
+             '                     "allocated_to": current_user},\n'),
+            (TODO_PAGE, BOARD_OR_FILTERS, "")]),
+        Fault("assigned_by dropped from the board's filter", True, [
+            (TODO_PAGE, '                "assigned_by": current_user,\n', "")]),
+        Fault("owner dropped from the board's filter", True, [
+            (TODO_PAGE, '                "owner": current_user\n',
+             '                "assigned_by": current_user\n')]),
+        Fault("allocated_to dropped from the board's filter", True, [
+            (TODO_PAGE, '                "allocated_to": current_user,\n', "")]),
+        Fault("cancelled todos come back onto a non-manager's board", True, [
+            (TODO_PAGE, NONMANAGER_STATUS_FILTER, "")]),
+        Fault("cancelled todos come back onto a manager's board", True, [
+            (TODO_PAGE, MANAGER_STATUS_FILTER, "")]),
+        Fault("every non-manager gets the manager's query", True, [
+            (TODO_PAGE, "    if is_manager:\n", "    if True:\n")]),
+
+        # 8. The three fields the page decides its own permissions from. None
+        #    were sent before, so every card compared undefined with the current
+        #    user -- always false, which hid every control from every
+        #    non-manager. One fault per field, because one dropped field is the
+        #    regression and the page shows nothing at all about it.
+        Fault("allocated_to not sent to the page", True, [
+            (TODO_PAGE, '            "allocated_to": todo.allocated_to,\n', "")]),
+        Fault("assigned_by not sent to the page", True, [
+            (TODO_PAGE, '            "assigned_by": todo.assigned_by,\n', "")]),
+        Fault("owner not sent to the page", True, [
+            (TODO_PAGE, '            "owner": todo.owner,\n', "")]),
+        Fault("owner never asked for in the query, so the board cannot send it",
+              True, [
+            (TODO_PAGE, '        "assigned_by", "owner", "creation", "modified"\n',
+             '        "assigned_by", "creation", "modified"\n')]),
+
+        # 9. Anyone may assign to anyone, so anyone needs the whole directory.
+        Fault("the assignable-user list narrowed to the caller again", True, [
+            (TODO_PAGE, DIRECTORY,
+             DIRECTORY
+             + "    if not is_manager:\n"
+               "        users = [u for u in users if u.name == current_user]\n")]),
+
+        # 10. The client's copy. Both halves of a client/server pair are easy to
+        #     leave behind one another, and the symptom -- a control hidden, or
+        #     shown and then refused -- appears only in a browser.
+        Fault("canEditTodo drops assigned_by, so the page and the server "
+              "disagree", True, [
+            (TODO_JS, "            || todo.assigned_by === this.currentUser\n", "")]),
+        Fault("canEditTodo drops owner", True, [
+            (TODO_JS, "            || todo.owner === this.currentUser;\n",
+             "            ;\n")]),
+        Fault("canDeleteTodo widened to canEditTodo's rule, so the delete "
+              "button fails on the click", True, [
+            (TODO_JS, CAN_DELETE_JS, CAN_EDIT_JS)]),
+
+        # 11. Controls: real edits, no behaviour change. One per file the tests
+        #     read, because two of these tests read source text rather than run
+        #     it and would otherwise be satisfied by any edit at all.
+        Fault("CONTROL: a local renamed in get_context (must stay green)",
+              False, [
+            (TODO_PAGE, "        processed_todo = {\n", "        card = {\n"),
+            (TODO_PAGE, "        processed_todos.append(processed_todo)\n",
+             "        processed_todos.append(card)\n")]),
+        Fault("CONTROL: a local renamed in delete_todo (must stay green)",
+              False, [
+            (TODO_PAGE,
+             "        current_user = frappe.session.user\n        \n"
+             "        if not _is_manager(current_user) and todo.allocated_to != current_user:\n",
+             "        me = frappe.session.user\n        \n"
+             "        if not _is_manager(me) and todo.allocated_to != me:\n")]),
+        Fault("CONTROL: a local renamed in TodoDataManager.makeRequest "
+              "(must stay green)", False, [
+            (TODO_JS, "        const options = {\n", "        const request = {\n"),
+            (TODO_JS, "        const response = await fetch(url, options);\n",
+             "        const response = await fetch(url, request);\n")]),
+    ])
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -1050,4 +1304,5 @@ TARGETS = {
     "scheduler_read_gate": SCHEDULER_READ_GATE,
     "whitelist_write_gate": WHITELIST_WRITE_GATE,
     "xero_invoice_send": XERO_INVOICE_SEND,
+    "todo_assignment": TODO_ASSIGNMENT,
 }

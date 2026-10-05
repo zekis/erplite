@@ -189,7 +189,7 @@ breaking the code.
 
 ## Targets
 
-Six so far. Ten test files in this repo describe having been
+Seven so far. Ten test files in this repo describe having been
 fault-injected; these are the ones where that proof is reproducible.
 
 ### `xero_gate` — `tests/offline/test_xero_permission_gate.py`
@@ -576,3 +576,90 @@ of the change is that the app no longer sends the second one. And the four
 `except Exception: frappe.throw(...)` handlers wrapping the POST itself are only
 exercised through the lost-reply path; a fault on the POST's own error handling
 would need Xero stand-ins this file does not have.
+
+### `todo_assignment` — `tests/offline/test_todo_assignment.py`
+
+The todo kanban page (`erplite/www/todo/index.py`): anyone may assign a todo to
+anyone, and whoever created or handed one on keeps track of it afterwards. That
+is frappe's own ToDo rule — `allocated_to == user or assigned_by == user or
+owner == user` — and the page writes it out **three times**: as
+`_can_manage_todo` for the writes, as the board's `or_filters` for the lists,
+and again in JavaScript as `canEditTodo`.
+
+41 faults, 38 expected red and 3 controls:
+
+* the pre-fix rule restored (allocated_to only), then **one fault per clause**
+  of the three-way OR, in both the server's copy and the board's — plus the
+  rule widened to everybody, which is the other direction;
+* who counts as a manager: `Has Role` asked for the row's `name` instead of the
+  user's `parent`, `Administrator` dropped from `MANAGER_ROLES`, and the role
+  filter dropped so that any role at all counts;
+* `create_todo`: the chosen assignee overwritten with the caller (the exact
+  pre-fix bug), the default assignee dropped, `assigned_by` recorded as the
+  assignee, a new todo starting in `Open`;
+* `update_todo`: the hand-over not recorded, every edit treated as a hand-over,
+  `allocated_to` written when the caller sent none, and the todo re-created
+  instead of saved (Afterz's `Planner Entry` points at it by name, and
+  `ignore_links_on_delete` covers it, so frappe will not catch that);
+* the rule's two call sites broken one endpoint at a time, and `delete_todo` —
+  deliberately narrower than updating — broken in both directions;
+* the board: each clause of `or_filters`, both status filters (one per branch of
+  `if is_manager`), and every non-manager handed the manager's query;
+* the three fields the page decides its own permissions from, one fault each,
+  and `owner` dropped from the fields the query asks for;
+* the client's copy: `canEditTodo` losing a clause, and `canDeleteTodo` widened
+  to the editor's rule so the button would fail on the click;
+* three controls — a local renamed in `get_context`, one in `delete_todo`, and
+  one in `TodoDataManager.makeRequest`. The last matters because two tests here
+  read source text rather than run it, and would otherwise be satisfied by any
+  edit at all to that file.
+
+**Six faults came back green against the test file as it stood, and in every
+case the test file was what needed fixing.** They were measured before the
+repairs, not reasoned about afterwards: the faults were written and run first,
+on a commit with main's test file. Five new tests close them.
+
+**The finding: one rule, written twice, pinned as a whole in one copy and
+clause by clause in the other.** Deleting any single clause from
+`_can_manage_todo` went red; deleting the same clause from the board's
+`or_filters` went **green, all three times**. The code is symmetric. The
+difference is in the fixtures: the update tests hand a todo on, which leaves
+documents matching exactly one clause each (handed on by you, created by you,
+with you), so they reach the clauses separately as a side effect of what they
+were testing. The board's two fixtures were the creator's by all three fields
+at once, and a three-way OR is satisfied by any one of them. Three fixtures
+reachable through exactly one field each fix it. `frappe.get_all` passes
+`ignore_permissions=True`, so these filters are the whole of what a non-manager
+sees — there is nothing behind them to catch a clause that goes missing.
+
+**A table that only holds the positive case cannot falsify the predicate that
+reads it.** `Has Role` was built for the managers only, so every non-manager
+held no role at all — and in that world "System Manager or Administrator" and
+"any role whatsoever" give the same answer for every user. Dropping the role
+filter entirely was green. Now everybody holds a role and only the managers
+hold a managing one: the same fault turns 5 tests red. The same gap left
+`Administrator` — half of `MANAGER_ROLES` — pinned by nothing; it now has one
+test, and that one test is all that guards it.
+
+**An actor who is also the value being overwritten hides the overwrite.**
+`if allocated_to is not None and ...` became `if allocated_to != ...`, so a
+description-only edit unallocated the todo. Green: the only assertion after a
+plain edit was on `assigned_by`, the edit was made by the creator, and the
+creator is also what `assigned_by` would have been overwritten with. The wrong
+code and the right code agreed on the one field being read. Generally: when
+asserting that a field is left alone, make the actor differ from what the bug
+would write there.
+
+**One fault is caught ten times over, and not for the reason the number
+suggests.** Dropping `owner` from `todo_fields` turns 10 of 34 red — not ten
+assertions about `owner`, but `fake_frappe._dict` raising `AttributeError` on a
+key the query never asked for, in every test that builds a board. The
+stand-in's strictness is carrying that one, not the file's assertions.
+
+**What this target does not reach.** `canEditTodo` and `canDeleteTodo` are
+checked by reading the JavaScript as text, so those two tests pin the spelling
+of both method names as well as their contents — renaming either would go red
+without any behaviour changing. That is deliberate (there is no JS runtime
+here) but it means the client half is guarded by a name match, not by running
+anything. The eight call sites that gate a card's controls on `canEditTodo` are
+not covered at all.

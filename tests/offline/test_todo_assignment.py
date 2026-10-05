@@ -120,10 +120,18 @@ def world(session_user, manager=None):
     ]
     # Only the people named here are managers. `Has Role` is a child table, so
     # the user is in `parent` -- which is how the page queries it.
+    #
+    # Everybody else holds a role too, and that is deliberate. In a world where
+    # non-managers held no role at all, "System Manager or Administrator" and
+    # "any role whatsoever" answered the same for every user here, so a page
+    # that stopped checking *which* role someone holds passed every test in
+    # this file.
+    managers = list(manager or [BOSS])
     frappe.tables["Has Role"] = [
         _dict(name="hr-%s" % email, parent=email, parenttype="User",
-              parentfield="roles", role="System Manager")
-        for email in (manager or [BOSS])
+              parentfield="roles",
+              role="System Manager" if email in managers else "Projects User")
+        for email in (CREATOR, ASSIGNEE, THIRD, STRANGER, BOSS)
     ]
     frappe.tables["ToDo"] = []
     return frappe
@@ -267,12 +275,42 @@ class UpdateTestCase(unittest.TestCase):
         page = load_page(self.frappe)
         self.assertTrue(page.update_todo("TODO-0001", priority="Low")["success"])
 
+    def test_a_manager_by_the_administrator_role_can_update_anybody_s(self):
+        """MANAGER_ROLES names two roles, and only one of them was pinned.
+
+        Dropping "Administrator" from that list changed nothing any test here
+        noticed, so half of what decides who may manage anybody's todo was
+        unguarded. THIRD has no part in this todo by name.
+        """
+        self.frappe.tables["Has Role"].append(
+            _dict(name="hr-admin", parent=THIRD, parenttype="User",
+                  parentfield="roles", role="Administrator"))
+        self.frappe.session.user = THIRD
+        page = load_page(self.frappe)
+
+        self.assertTrue(page.update_todo("TODO-0001", priority="High")["success"])
+
     def test_editing_without_reassigning_leaves_assigned_by_alone(self):
         page = load_page(self.frappe)
 
         page.update_todo("TODO-0001", description="Reconcile Q1")
 
         self.assertEqual(self.frappe.tables["ToDo"][0]["assigned_by"], CREATOR)
+
+    def test_editing_without_reassigning_leaves_the_assignee_alone(self):
+        """A description-only edit must not unallocate the todo.
+
+        `allocated_to is not None` is the whole of what makes that true, and
+        dropping it passed every test here: the only thing checked after a
+        plain edit was assigned_by, and this edit is made by the creator --
+        who is also what assigned_by would have been overwritten with. So the
+        wrong code and the right code agreed on the one field being read.
+        """
+        page = load_page(self.frappe)
+
+        page.update_todo("TODO-0001", description="Reconcile Q1")
+
+        self.assertEqual(self.frappe.tables["ToDo"][0]["allocated_to"], ASSIGNEE)
 
     def test_reassigning_to_the_same_person_leaves_assigned_by_alone(self):
         """Re-sending the current assignee is not a hand-over."""
@@ -352,13 +390,32 @@ class DeleteTestCase(unittest.TestCase):
 
 
 class BoardTestCase(unittest.TestCase):
-    """What get_context puts in front of a non-manager."""
+    """What get_context puts in front of a non-manager.
+
+    This is the *second* copy of the three-way rule -- `or_filters` here,
+    `_can_manage_todo` above -- and the two were not guarded equally. The
+    server's copy is pinned clause by clause, because the update tests hand a
+    todo on and so reach it as assigner and as creator separately. The board's
+    copy was pinned only as a whole, by fixtures that matched all three clauses
+    at once. `frappe.get_all` passes ignore_permissions=True, so these filters
+    are the only thing deciding what a non-manager sees: there is nothing
+    behind them to catch a clause that goes missing.
+    """
 
     def setUp(self):
         self.frappe = world(CREATOR)
         self.frappe.tables["ToDo"] = [
             a_todo("TODO-MINE", allocated_to=CREATOR, assigned_by=CREATOR, owner=CREATOR),
             a_todo("TODO-HANDED-ON", allocated_to=ASSIGNEE, assigned_by=CREATOR, owner=CREATOR),
+            # TODO-MINE and TODO-HANDED-ON are the creator's by all three
+            # fields at once, so neither can tell the board's three-way OR
+            # apart from any single clause of it: with only those two here,
+            # dropping any one field from `or_filters` changed nothing this
+            # file noticed. These three are reachable through exactly one
+            # field each, and each is a real way a todo arrives.
+            a_todo("TODO-ONLY-BY-ME", allocated_to=THIRD, assigned_by=CREATOR, owner=BOSS),
+            a_todo("TODO-ONLY-FROM-ME", allocated_to=THIRD, assigned_by=ASSIGNEE, owner=CREATOR),
+            a_todo("TODO-ONLY-WITH-ME", allocated_to=CREATOR, assigned_by=BOSS, owner=BOSS),
             a_todo("TODO-THEIRS", allocated_to=STRANGER, assigned_by=STRANGER, owner=STRANGER),
             a_todo("TODO-CANCELLED", allocated_to=CREATOR, status="Cancelled"),
         ]
@@ -378,6 +435,21 @@ class BoardTestCase(unittest.TestCase):
         self.assertIn("TODO-HANDED-ON", names)
         self.assertIn("TODO-MINE", names)
 
+    def test_a_todo_you_handed_on_but_did_not_create_is_still_yours(self):
+        """Reachable through assigned_by alone: somebody else created it."""
+        self.assertIn("TODO-ONLY-BY-ME",
+                      [t["name"] for t in self.board(CREATOR)["todos"]])
+
+    def test_a_todo_you_created_and_somebody_else_handed_on_is_still_yours(self):
+        """Reachable through owner alone: assigned_by moved on with the hand-over."""
+        self.assertIn("TODO-ONLY-FROM-ME",
+                      [t["name"] for t in self.board(CREATOR)["todos"]])
+
+    def test_a_todo_simply_given_to_you_is_yours(self):
+        """Reachable through allocated_to alone: you neither created nor sent it."""
+        self.assertIn("TODO-ONLY-WITH-ME",
+                      [t["name"] for t in self.board(CREATOR)["todos"]])
+
     def test_the_board_does_not_show_other_people_s_work(self):
         names = [t["name"] for t in self.board(CREATOR)["todos"]]
 
@@ -392,8 +464,9 @@ class BoardTestCase(unittest.TestCase):
     def test_a_manager_sees_everything_uncancelled(self):
         names = [t["name"] for t in self.board(BOSS)["todos"]]
 
-        self.assertEqual(
-            sorted(names), ["TODO-HANDED-ON", "TODO-MINE", "TODO-THEIRS"])
+        self.assertEqual(sorted(names), [
+            "TODO-HANDED-ON", "TODO-MINE", "TODO-ONLY-BY-ME",
+            "TODO-ONLY-FROM-ME", "TODO-ONLY-WITH-ME", "TODO-THEIRS"])
 
     def test_the_page_is_told_who_each_todo_is_with(self):
         """The three fields the page decides its own permissions from.
