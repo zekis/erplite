@@ -4,3 +4,5 @@
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
+# Needs the DocType migrated first: it reads ToDo's meta and writes a Property Setter against it.
+erplite.patches.declare_todo_status_options
