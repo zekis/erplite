@@ -15,12 +15,18 @@ file, and putting the source back. `faults.py` holds the edits themselves.
 Every guard below exists because the mistake it catches has actually been made
 in this repo, and each one turns a false pass into a hard stop.
 
-1. **The edit matches nothing.** erplite is CRLF throughout, so a pattern
-   written with `\\n` matches zero times in every file. Six of the first twelve
-   faults written for `test_xero_permission_gate.py` silently matched nothing
-   for exactly this reason, and without `EXPECTED_MATCHES` they would have been
-   reported as six passes. Patterns here are written with `\\n` and translated
-   to the file's own ending by `read`/`nl`.
+1. **The edit matches nothing.** A pattern written with `\\n` matches zero
+   times in a CRLF file. Six of the first twelve faults written for
+   `test_xero_permission_gate.py` silently matched nothing for exactly this
+   reason, and without `EXPECTED_MATCHES` they would have been reported as six
+   passes. Patterns here are written with `\\n` and translated to the file's own
+   ending by `read`/`nl`.
+
+   The ending is a property of the **file** -- this repo's are mixed -- and of
+   the **checkout** as well: with `core.autocrlf=true` git hands Windows a CRLF
+   copy of an LF file, and there is no `.gitattributes` here to stop it. Which
+   is why `read` asks the file in front of it every time and nothing here
+   records what the ending "should" be.
 
 2. **The edit matches more than once**, so it lands somewhere unintended as
    well and the red you get is not the red you asked for.

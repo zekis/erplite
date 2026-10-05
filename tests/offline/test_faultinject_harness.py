@@ -19,6 +19,7 @@ Runs without a bench.
 """
 import importlib.util
 import os
+import subprocess
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -36,6 +37,43 @@ def _load(name, path):
 harness = _load("fi_harness", os.path.join(FI, "harness.py"))
 faults_mod = _load("fi_faults", os.path.join(FI, "faults.py"))
 TARGETS = faults_mod.TARGETS
+
+
+def _is_work_tree():
+    try:
+        done = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=REPO, capture_output=True, text=True)
+    except OSError:
+        return False
+    return done.returncode == 0 and done.stdout.strip() == "true"
+
+
+WORK_TREE = _is_work_tree()
+_blobs = {}
+
+
+def committed(relpath):
+    """Read a file as the repository stores it, line endings and all.
+
+    Deliberately not the working tree. Git rewrites line endings on checkout
+    when `core.autocrlf` is on, so the working tree's endings are a fact about
+    whose machine it is; the blob is the same bytes for everybody. Anything
+    asserting what *this repo* holds has to read it here.
+    """
+    if relpath not in _blobs:
+        done = subprocess.run(
+            ["git", "cat-file", "blob", "HEAD:" + relpath.replace("\\", "/")],
+            cwd=REPO, capture_output=True)
+        if done.returncode != 0:
+            raise AssertionError(
+                "%s is not in HEAD, so what the repo stores for it cannot be "
+                "read: %s" % (relpath,
+                              done.stderr.decode("utf-8", "replace").strip()))
+        _blobs[relpath] = done.stdout
+    raw = _blobs[relpath]
+    text = raw.decode("utf-8")
+    return text, ("\r\n" if "\r\n" in text else "\n")
 
 
 class TestEveryFaultStillMatchesItsOneSpot(unittest.TestCase):
@@ -131,15 +169,35 @@ class TestTheLineEndingGuard(unittest.TestCase):
     this translation a multi-line fault is reported as a pass having measured
     nothing. That is what happened to six of the first twelve faults here.
 
-    **This repo is mixed, not CRLF.** Measured 6 Oct 2026: 82 CRLF `.py` files
-    and 62 LF, 31 CRLF `.json` and 22 LF -- and the split runs *inside* a single
-    DocType folder, where `timesheet_entry.py` is CRLF and its
-    `timesheet_entry.json` is LF. So the ending is a property of each file and
-    never of the repo, which is why `harness.read` detects it per file and the
-    assertions below are per file too. An earlier version of this class asserted
-    every fault's file was CRLF; it was true of every file the first target
-    happened to name and false of the repo, and the second target failed it
-    immediately.
+    **This repo stores both endings.** Measured 6 Oct 2026 from the committed
+    blobs: 82 CRLF `.py` files and 62 LF, 31 CRLF `.json` and 22 LF -- and the
+    split runs *inside* a single DocType folder, where `timesheet_entry.py` is
+    CRLF and its `timesheet_entry.json` is LF.
+
+    Two corrections are folded in here, in the order they were made, because
+    each one is a narrower version of the same mistake:
+
+    1. The ending is a property of each **file**, not of the repo. An earlier
+       version of this class asserted every fault's file was CRLF. That was
+       true of every file the first target happened to name, false of the repo,
+       and the second target failed it immediately.
+    2. The ending in front of you is a property of the **checkout**, not even
+       of the file. With `core.autocrlf=true` -- git's default on Windows, and
+       there is no `.gitattributes` here to override it -- the LF files are
+       checked out as CRLF and the mixture above is invisible. Two tests below
+       described that mixture by reading the working tree; they passed in a
+       Linux sandbox and failed on a Windows checkout, which is a test
+       reporting on its author's machine rather than on the repo.
+
+    So each test reads from whichever source actually carries its claim:
+
+    * `committed()` -- the blob -- for anything about what the repository
+      holds, since that is the same for everyone.
+    * `harness.read()` -- the working tree -- for anything about what the
+      harness itself opens, since that is what it will really be given.
+
+    The harness needed no change for any of this: it asks each file in front of
+    it, whatever the checkout handed over. Only the descriptions of it broke.
     """
 
     def test_a_pattern_is_translated_for_a_crlf_file(self):
@@ -160,6 +218,13 @@ class TestTheLineEndingGuard(unittest.TestCase):
         self.assertTrue(seen)
         return sorted(seen)
 
+    def _as_committed_and_checked_out(self, path):
+        """Both sources, so neither can hide a problem the other would show."""
+        with open(os.path.join(REPO, path), "rb") as handle:
+            yield "working tree", handle.read()
+        if WORK_TREE:
+            yield "committed blob", committed(path)[0].encode("utf-8")
+
     def test_every_file_a_fault_names_has_one_consistent_ending(self):
         """What `read` actually needs: one ending per file, not one per repo.
 
@@ -168,33 +233,45 @@ class TestTheLineEndingGuard(unittest.TestCase):
         for its LF half would silently match nothing. A mixed file is the one
         shape no per-file detection can rescue, so it is refused here rather
         than discovered as a fault that measures nothing.
+
+        Checked in the working tree, which is what `read` will open, and in the
+        blob as well. A converting checkout tidies a mixed file into a uniform
+        CRLF one on its way out, so on Windows the working tree alone would
+        wave through a file that is mixed for everybody else.
         """
         for path in self._files_the_faults_name():
-            with self.subTest(file=path):
-                with open(os.path.join(REPO, path), "rb") as handle:
-                    raw = handle.read()
-                crlf = raw.count(b"\r\n")
-                bare_lf = raw.count(b"\n") - crlf
-                self.assertFalse(
-                    crlf and bare_lf,
-                    "%s mixes %d CRLF and %d LF endings. harness.read would "
-                    "call the whole file CRLF, so any pattern spanning a line "
-                    "break in its LF part matches nothing." % (path, crlf, bare_lf))
+            for source, raw in self._as_committed_and_checked_out(path):
+                with self.subTest(file=path, source=source):
+                    crlf = raw.count(b"\r\n")
+                    bare_lf = raw.count(b"\n") - crlf
+                    self.assertFalse(
+                        crlf and bare_lf,
+                        "%s mixes %d CRLF and %d LF endings (%s). harness.read "
+                        "would call the whole file CRLF, so any pattern "
+                        "spanning a line break in its LF part matches nothing."
+                        % (path, crlf, bare_lf, source))
 
     def test_both_endings_really_occur_among_those_files(self):
-        """The reason this is per-file, pinned against the real tree.
+        """The reason this is per-file, pinned against what the repo stores.
 
-        If this ever fails, the repo has been normalised to one ending. The
-        translation stays correct either way -- but the *claim* in the docstring
-        above would have gone stale, and a stale explanation is how the
-        repo-wide version of this test got written in the first place.
+        From the blobs, not the working tree: with `core.autocrlf=true` the LF
+        files arrive as CRLF and this mixture vanishes, which is precisely how
+        this test came to pass in a Linux sandbox and fail on Windows.
+
+        If it ever fails *from the blobs*, the repo really has been normalised
+        to one ending. The translation stays correct either way -- but the
+        claim in the docstring above would have gone stale, and a stale
+        explanation is how the repo-wide version of this test got written in
+        the first place.
         """
-        endings = {path: harness.read(path)[1]
+        if not WORK_TREE:
+            self.skipTest("not a git work tree, so the blobs cannot be read")
+        endings = {path: committed(path)[1]
                    for path in self._files_the_faults_name()}
         self.assertEqual(
             set(endings.values()), {"\r\n", "\n"},
-            "expected the faults to name both a CRLF and an LF file; got %r"
-            % (sorted(set(endings.values())),))
+            "expected the faults to name both a CRLF and an LF file as "
+            "committed; got %r" % (sorted(set(endings.values())),))
         self.assertEqual(
             endings["erplite/projects/doctype/timesheet_entry/timesheet_entry.py"],
             "\r\n")
@@ -207,14 +284,25 @@ class TestTheLineEndingGuard(unittest.TestCase):
     def test_a_pattern_written_for_the_wrong_ending_matches_nothing(self):
         """Both directions of the mistake, against the two real neighbours.
 
-        Not a unit test of `nl`: this is the actual failure, measured on the
-        actual files, in both directions -- a CRLF pattern against the LF file
-        as well as the LF pattern against the CRLF file.
+        Not a unit test of `nl`: this is the actual failure, measured on real
+        files that genuinely differ, in both directions -- a CRLF pattern
+        against the LF file as well as the LF pattern against the CRLF file.
+
+        From the blobs. A checkout that converts hands you two CRLF files, so
+        neither direction can be demonstrated there and this test failed on
+        Windows for want of an LF file to fail against. The mistake is no less
+        real for that: the patterns in `faults.py` are shared by every copy of
+        this repo, while the conversion is one person's.
         """
+        if not WORK_TREE:
+            self.skipTest("not a git work tree, so the blobs cannot be read")
         py = "erplite/projects/doctype/timesheet_entry/timesheet_entry.py"
         js = "erplite/projects/doctype/timesheet_entry/timesheet_entry.json"
-        py_text, _ = harness.read(py)
-        js_text, _ = harness.read(js)
+        py_text, py_ending = committed(py)
+        js_text, js_ending = committed(js)
+        self.assertEqual((py_ending, js_ending), ("\r\n", "\n"),
+                         "the two neighbours no longer differ as committed, so "
+                         "neither direction below demonstrates anything")
 
         two_lines_of_py = "        if not self.is_new():\n            return\n"
         self.assertEqual(py_text.count(two_lines_of_py), 0,
