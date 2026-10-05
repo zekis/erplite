@@ -1088,3 +1088,139 @@ One tripwire for a case skipped on purpose, the habit from `string_refs`:
 `_dotted` reads as `get_all`, which is in no table. No call site in this app is
 written that way — and that measurement is now a test naming the file, because
 a measurement that is not a test is just a sentence.
+
+### `todo_status_patch` — `tests/offline/test_todo_status_property_setter.py`
+
+42 faults, 36 red, 2 false positives green, 4 controls green, 2 blind spots left
+green on purpose. Behavioural again after three detectors, and much smaller
+ground than any of them: one 30-line patch module, one text file that wires it
+up, and a test file that stubs `frappe` by hand rather than using
+`fake_frappe`. That last choice is what makes this target worth having,
+because it changes the governing question. For a detector the question is *what
+syntax can it read?* For a test that runs the real code against stand-ins it is
+**what is the stand-in more permissive about than frappe is?** — and a stand-in
+written to make a test pass is permissive in exactly the places nobody thought
+about.
+
+**The sharpest instance: `frappe.get_meta` was `lambda doctype: _Meta(...)`.**
+It ignores its argument, so it answers for every DocType alike. `execute()`
+reads exactly one thing from the site — ToDo's `status` field — and
+`frappe.get_meta("ToDo")` → `frappe.get_meta("Task")` was invisible: a patch
+pinning one DocType's options onto another DocType's field, with every test
+green. The neighbouring stub is the contrast that makes the point:
+`_Meta.get_field` returns the field for `"status"` and `None` for anything else,
+so the *field* could not be got wrong, because that stub discriminates and the
+other does not. The general form: **a stand-in that ignores an argument has
+deleted a claim, and the test file reads as though it still makes it.** The
+stub now records what it was asked for.
+
+**Second, and the one with the most behind it: the patch pins two properties
+and the file asserted the recovery of one.** `options` and `default` are both
+written, and there is a test that a site frappe has reset gets all five options
+back. Nothing asserted the default. So
+`_declare("default", DEFAULT_STATUS)` → `_declare("default", status.default or
+DEFAULT_STATUS)` — preserving the site's own default instead of forcing
+Backlog — stayed green across all twenty tests, while on a reset site the
+default would be frappe's `Open` and **the board's first column would stop
+being where a new ToDo lands**. Half of what the patch exists to do, lost in
+one `or`. The file's own docstring says the patch "pins the options the site
+already has" *and* forces the default; the tests covered the first clause.
+Worth asking of anything that writes more than one row: is each one's story
+asserted, or does one of them get its colour from the other's test?
+
+**Third: two parsers of one text file, and the newer one was right.** This
+file hand-rolled its own reading of `patches.txt` — strip the line, skip `#`
+and `[`, split on `"."`, ask for a file — in a repo where
+`test_string_references.py` had, since the tenth target, a parser that does it
+the way frappe does. The hand-rolled one was wrong **in both directions**, and
+both were measured:
+
+| entry | frappe | this file |
+| --- | --- | --- |
+| `erplite.patches.x #2026-10-05` | runs it (`split(maxsplit=1)[0]`) | **reported it** |
+| `execute:frappe.db.set_single_value(...)` | `exec()`s it, no path at all | **reported it** |
+| a module that exists with no `execute` | **migrate stops** | passed it |
+
+The trailing date is not exotica: it is the form frappe's own `patches.txt`
+writes. So the guard argued with two entries frappe runs happily and waved
+through the one that fails a deploy — the `isfile` question is not the
+`get_attr` question. The whole-file sweep is not duplicated here any more; this
+file asserts only its own patch, through that same parser, so there is one
+answer to the question instead of two. **Two hand-kept records of one thing is
+how one of them goes stale** — which is the argument this file already made, in
+its own `TestItAgreesWithTheSelectGuard`, about the five statuses. It had made
+the argument and then kept a second parser.
+
+**Fourth, and it is the half of that fix worth reading: closing a blind spot by
+deferring to someone else's parser opened a new one.** `patch_module_paths`
+strips a `finally:` prefix, on the sound grounds that deferring the run to the
+end of the patch list is all the prefix means. v15.52.0 does not agree:
+`execute_patch` resolves `patchmodule.split(maxsplit=1)[0] + ".execute"` at
+`patch_handler.py:166-167`, **before** the prefix check at `:182`, and
+`get_attr` reads the app name as `method_string.split(".", 1)[0]` — which is
+`"finally:erplite"`, not an installed app, so it throws `AppNotInstalledError`
+and the migrate stops. A `finally:` entry is a failed deploy that the parser
+calls resolvable. The answer was not to make the parser argue with what the
+entry means, but to assert the measurement that makes its stripping safe — *we
+do not write one* — and to put that tripwire with the parser rather than in a
+second copy here. The fault for it is in the `string_refs` target, not this
+one, which is why it is green above. **When you delete a duplicate check, the
+question is not only "is the survivor better" but "does the survivor make the
+same promises".**
+
+**A control that went red, and it is the cleanest one of these yet.** The two
+Property Setters are independent upserts: separately-named documents
+(`{doc_type}-{field_name}-{property}`, `property_setter.py:34-37`), each
+deleting only its own property's row (`delete_property_setter`, `:90-98`), both
+applied by one pass over the table (`meta.py:379-387`), with nothing re-reading
+the meta in between. So declaring them the other way round changes nothing —
+and four tests went red, because the file did `options, default = calls` and
+compared `[s.property for s in calls]` to `["options", "default"]`. It was
+pinning the order the two lines were typed in. They are read by property now.
+The order of two independent writes is the kind of thing a test picks up for
+free and then nobody notices it is being asserted.
+
+**Two corrections to prose, in the patch and in the test's copy of the same
+sentence.** Both said `reset_customization` "exempts `property != "options"`
+but nothing else". It has two exemptions — `property != "options"` **and**
+`field_name != "naming_series"` (`customize_form.py:675-685`) — the second
+being the same special case for the same field that `_validate_selects` turned
+out to have in the eleventh target. The conclusion was unaffected (`status` is
+not `naming_series`, so the `default` row is spared by neither and must be
+marked), which is the kind of slip that survives review precisely because the
+sentence it sits in is going somewhere true.
+
+**The probe again, and this time it was the whole of it.** Twelve candidate
+edits planted one at a time in the real patch source, two minutes, and all
+twelve came back as predicted — including the three I expected to be false
+positives and the control I expected to go red. Then the same correction as
+the eleventh target, in the same direction: reading `patch_handler.py` and
+`frappe/__init__.py` at v15.52.0 **cut three false positives to two**, because
+frappe rejects a `finally:` entry too. The probe is good at *what does this
+test see*; only the framework's source answers *and is that the right answer*.
+
+**Every claim in the patch's docstring was re-read at the tag it names**, which
+the test for it now pins by name rather than by the shape `v15.<n>.<n>` — a
+test whose entire point is that the tag is what to re-check against could not
+see the tag being changed. All of it held: `apply_property_setters` on every
+meta load (`meta.py:138`, body 360-387, `cast(ps.property_type, ps.value)` at
+386); the DocType skip gate being `migration_hash` alone, with the timestamp
+gate beside it explicitly `and doc["doctype"] != "DocType"`
+(`import_file.py:130-144`); `delete_old_doc` (`:258-276`) sparing no child
+table because `ignore_doctypes = [""]` (`:40`); `sync_all()` called with no
+arguments (`migrate.py:120`); the delete-then-insert upsert
+(`property_setter.py:39-44`); `is_system_generated` not being a parameter of
+`make_property_setter` (`:63-71`); and both `DocField.options` and
+`DocField.default` being `Small Text`, which is what `cast` reads the value
+back with.
+
+**What this target does not reach.** `erplite/patches/__init__.py` is empty, and
+the harness only does find-and-replace, so the claim that a patches package
+without it is not importable is asserted and **not** fault-injected — the one
+claim here measured by reading rather than by breaking. `MEASURED_OPTIONS` is
+documentation, not code, and two faults in it are caught only by comparing it
+to this file's own `LIVE_OPTIONS`: two records of one measurement, which is the
+staleness this file was already built to catch, now closed in the one place it
+was still open. And the stand-ins remain stand-ins: that frappe applies these
+rows the way the docstring says needs a bench, and the file says so rather than
+implying otherwise.

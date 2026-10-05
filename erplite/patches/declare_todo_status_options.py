@@ -48,9 +48,12 @@ Two consequences worth knowing:
   * **Both rows are marked `is_system_generated`**, because the app declares
     them rather than a user having customised them. That also keeps Customize
     Form's "Reset to defaults" from dropping the `default` row:
-    `reset_customization` exempts `property != "options"` but nothing else, so
-    an unmarked `default` row would be deleted there -- silently, and this patch
-    runs once.
+    `reset_customization` deletes every Property Setter on the DocType filtered
+    `is_system_generated: False`, and its two exemptions are
+    `property != "options"` and `field_name != "naming_series"`. The `options`
+    row is spared by the first whatever it is marked; the `default` row on
+    `status` is spared by neither, so unmarked it would be deleted there --
+    silently, and this patch runs once.
 
 Re-running is safe. The Property Setter name is
 `{doc_type}-{field_name}-{property}`, and `PropertySetter.validate` deletes any

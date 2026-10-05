@@ -1937,6 +1937,17 @@ ROLE_STATS_CALL = (
 STRING_REFS = Target(
     test="tests/offline/test_string_references.py",
     faults=[
+        # `patch_module_paths` strips a `finally:` prefix, because deferring the
+        # run is all the prefix means. v15.52.0 does not: `execute_patch`
+        # resolves `patchmodule.split(maxsplit=1)[0] + ".execute"` at
+        # patch_handler.py:166-167, before the prefix check at :182, and
+        # `get_attr` throws AppNotInstalledError on app "finally:erplite". So
+        # the entry stops `bench migrate` while the parser calls it resolvable.
+        # Found writing the todo_status_patch target, where closing a blind spot
+        # by deferring to this parser opened this one.
+        Fault("patches.txt uses the finally: prefix v15 cannot resolve", True,
+              [("erplite/patches.txt", "erplite.patches.declare_todo_status_options",
+                "finally:erplite.patches.declare_todo_status_options")]),
         # -- Pass A: /assets/<app>/... names a file the app ships -------------
         # Symptom: a 404 on every page that loads it, twice (the tag and the
         # rel=preload header). No exception, nothing in the Error Log.
@@ -2404,6 +2415,244 @@ SELECT_VALUES = Target(
     ],
 )
 
+# --- the patch that declares the todo board's two extra ToDo statuses ------
+# rev_a007dfc7a8: "Declare them in code. Backlog and Planned must stay
+# supported." The twelfth target, and behavioural again after three detectors:
+# one small module, one text file that wires it up, and a test file that stubs
+# frappe by hand. Which makes the governing question a different one from the
+# detector targets' *what syntax can it read?* -- here it is **what is the
+# stand-in more permissive about than frappe is?**
+
+TSP = "erplite/patches/declare_todo_status_options.py"
+PTXT = "erplite/patches.txt"
+
+TODO_STATUS_PATCH = Target(
+    test="tests/offline/test_todo_status_property_setter.py",
+    faults=[
+        # -- options_with_extra_statuses: the pure half ---------------------
+        # The function's contract is four things at once: both statuses end up
+        # present, existing options are kept verbatim, their order is kept, and
+        # running it twice is a no-op. One fault each, because a test that
+        # notices the missing status tells you nothing about the order.
+        Fault("the two statuses are appended instead of prepended", True,
+              [(TSP, 'return "\\n".join(missing + lines)',
+                'return "\\n".join(lines + missing)')]),
+        Fault("EXTRA_STATUSES in the wrong order", True,
+              [(TSP, 'EXTRA_STATUSES = ("Backlog", "Planned")',
+                'EXTRA_STATUSES = ("Planned", "Backlog")')]),
+        Fault("Planned is no longer declared", True,
+              [(TSP, 'EXTRA_STATUSES = ("Backlog", "Planned")',
+                'EXTRA_STATUSES = ("Backlog",)')]),
+        Fault("Backlog is no longer declared", True,
+              [(TSP, 'EXTRA_STATUSES = ("Backlog", "Planned")',
+                'EXTRA_STATUSES = ("Planned",)')]),
+        # A site with no options at all must not be left with a blank option:
+        # in frappe a leading empty line is what lets a Select hold no value,
+        # so an accidental one changes what the field accepts.
+        Fault("an empty options string leaves a blank option behind", True,
+              [(TSP, '    if lines == [""]:  # no options at all; do not leave a blank one behind\n'
+                     '        lines = []\n\n', "")]),
+        Fault("a leading blank option is dropped instead of kept", True,
+              [(TSP, '    present = {line.strip() for line in lines}',
+                '    lines = [line for line in lines if line]\n'
+                '    present = {line.strip() for line in lines}')]),
+        Fault("None options crash instead of yielding the two statuses", True,
+              [(TSP, 'lines = (options or "").split("\\n")',
+                'lines = options.split("\\n")')]),
+        # The one a hard-coded list would do: narrow the field to the list this
+        # app knows about, silently deleting an option the site added itself.
+        Fault("the options are narrowed to the year-old snapshot", True,
+              [(TSP, 'return "\\n".join(missing + lines)',
+                'return MEASURED_OPTIONS')]),
+        Fault("re-running prepends the two statuses again", True,
+              [(TSP, '    missing = [status for status in EXTRA_STATUSES if status not in present]',
+                '    missing = list(EXTRA_STATUSES)')]),
+        # KNOWN BLIND SPOT, closed by test_an_option_that_differs_only_by_
+        # surrounding_space_is_not_duplicated. `present` strips because the live
+        # options arrived as a hand-edited `tabDocField` row, which is exactly
+        # where a trailing space comes from -- and an unstripped comparison then
+        # prepends a second "Backlog" and the board grows a duplicate column.
+        Fault("option membership stops ignoring surrounding space", True,
+              [(TSP, 'present = {line.strip() for line in lines}',
+                'present = {line for line in lines}')]),
+
+        # -- execute(): what it reads --------------------------------------
+        # KNOWN BLIND SPOT, closed by test_it_asks_for_ToDos_meta_and_not_
+        # another_DocTypes. The stub is `lambda doctype: _Meta(...)` -- it
+        # ignores the argument, so it answers for every DocType alike and the
+        # one thing execute() reads from the site cannot be got wrong.
+        Fault("the meta of the wrong DocType is read", True,
+              [(TSP, 'frappe.get_meta("ToDo")', 'frappe.get_meta("Task")')]),
+        Fault("the meta of the wrong field is read", True,
+              [(TSP, '.get_field("status")', '.get_field("priority")')]),
+
+        # -- execute(): the default half of the recovery story -------------
+        # KNOWN BLIND SPOT, closed by test_a_reset_site_gets_the_default_back.
+        # The patch pins two properties and the file asserted the recovery of
+        # one. On a site frappe has reset, `status.default` is "Open", so this
+        # edit pins "Open" -- the 17 Planned ToDos come back onto the list and
+        # the board's first column stops being where a new ToDo lands. Half of
+        # what the patch exists to do, lost silently.
+        Fault("the site's own default is preserved instead of forced", True,
+              [(TSP, '_declare("default", DEFAULT_STATUS)',
+                '_declare("default", status.default or DEFAULT_STATUS)')]),
+        Fault("the default is one of frappe's three", True,
+              [(TSP, 'DEFAULT_STATUS = "Backlog"', 'DEFAULT_STATUS = "Open"')]),
+        Fault("the default is not one of the options at all", True,
+              [(TSP, 'DEFAULT_STATUS = "Backlog"', 'DEFAULT_STATUS = "To Do"')]),
+        Fault("the default row is never written", True,
+              [(TSP, '    _declare("default", DEFAULT_STATUS)\n', "")]),
+        Fault("the options row is never written", True,
+              [(TSP, '    _declare("options", options_with_extra_statuses(status.options))\n', "")]),
+
+        # -- _declare(): the six columns of the Property Setter ------------
+        # Each is a column `apply_property_setters` reads (meta.py:379-387), and
+        # getting any of them wrong writes a row that is applied to the wrong
+        # thing, or not applied at all, with no error either way.
+        Fault("the Property Setter names the wrong DocType", True,
+              [(TSP, '    setter = make_property_setter(\n        "ToDo",',
+                '    setter = make_property_setter(\n        "Task",')]),
+        Fault("the Property Setter names the wrong field", True,
+              [(TSP, '        "ToDo",\n        "status",', '        "ToDo",\n        "priority",')]),
+        # `cast(ps.property_type, ps.value)` (meta.py:386) reads the value back
+        # with this. DocField.options and DocField.default are both Small Text
+        # (core/doctype/docfield/docfield.json at v15.52.0).
+        Fault("the property_type is not the DocField column's own fieldtype", True,
+              [(TSP, '        "Small Text",', '        "Data",')]),
+        # A DocType-level row is applied by the `doctype_or_field == "DocType"`
+        # arm (meta.py:380) and never reaches the field at all.
+        Fault("the row is written against the DocType, not the DocField", True,
+              [(TSP, '        validate_fields_for_doctype=False,',
+                '        for_doctype=True,\n        validate_fields_for_doctype=False,')]),
+        # PropertySetter.on_update runs validate_fields_for_doctype on the whole
+        # core DocType unless this is off (property_setter.py:53-60), which can
+        # abort a migrate over a problem the patch did not cause.
+        Fault("the whole core DocType is validated during the migrate", True,
+              [(TSP, '        validate_fields_for_doctype=False,',
+                '        validate_fields_for_doctype=True,')]),
+        # reset_customization (customize_form.py:675-685) deletes Property
+        # Setters filtered on is_system_generated: False, exempting
+        # property != "options" and field_name != "naming_series" -- neither of
+        # which covers the `default` row. Unmarked, Customize Form's "Reset to
+        # defaults" drops it, and this patch runs once.
+        Fault("neither row is marked system-generated", True,
+              [(TSP, '    setter.db_set("is_system_generated", 1, update_modified=False)\n', "")]),
+        Fault("the rows are marked as the user's customisation", True,
+              [(TSP, 'setter.db_set("is_system_generated", 1, update_modified=False)',
+                'setter.db_set("is_system_generated", 0, update_modified=False)')]),
+        # is_system_generated is not an argument to make_property_setter
+        # (property_setter.py:63-71), so it has to be written after the insert.
+        # A plain attribute set never reaches the row.
+        Fault("the mark is set on the object instead of the row", True,
+              [(TSP, '    setter.db_set("is_system_generated", 1, update_modified=False)',
+                '    setter.is_system_generated = 1')]),
+        Fault("writing the mark bumps modified, on a row nobody edited", True,
+              [(TSP, 'setter.db_set("is_system_generated", 1, update_modified=False)',
+                'setter.db_set("is_system_generated", 1)')]),
+
+        # -- patches.txt: a patch nothing runs protects nothing -------------
+        Fault("the entry is gone from patches.txt", True,
+              [(PTXT, "erplite.patches.declare_todo_status_options\n", "")]),
+        Fault("the entry is commented out", True,
+              [(PTXT, "erplite.patches.declare_todo_status_options",
+                "# erplite.patches.declare_todo_status_options")]),
+        # It reads ToDo's meta, so it must run after the DocTypes are synced.
+        # In pre_model_sync it would read -- and pin -- whatever the field held
+        # before frappe's own import reset it.
+        Fault("the entry runs before the DocTypes are migrated", True,
+              [(PTXT, "[pre_model_sync]\n",
+                "[pre_model_sync]\nerplite.patches.declare_todo_status_options\n"),
+               (PTXT, "# Needs the DocType migrated first: it reads ToDo's meta and writes a Property Setter against it.\n"
+                      "erplite.patches.declare_todo_status_options\n", "")]),
+        Fault("the module in patches.txt is misspelt", True,
+              [(PTXT, "erplite.patches.declare_todo_status_options",
+                "erplite.patches.declare_todo_status_optoins")]),
+        Fault("the path in patches.txt is one element short", True,
+              [(PTXT, "erplite.patches.declare_todo_status_options",
+                "erplite.declare_todo_status_options")]),
+        # Caught -- but by TestExecute calling `patch.execute()`, not by the
+        # patches.txt test, which asks only whether the module names a file.
+        # That narrower question is left to test_string_references.py's
+        # PatchPathsResolve, which resolves the entry to a module-level
+        # `execute`. Two answers to one question is how one of them goes stale.
+        Fault("the patch module has no execute() to resolve", True,
+              [(TSP, "def execute():", "def execute_patch():")]),
+
+        # -- FALSE POSITIVES: forms of patches.txt frappe accepts ----------
+        # Both of these were correct code that the file reported, which is the
+        # failure mode that teaches people to switch a guard off. frappe parses
+        # patches.txt with configparser and resolves
+        # `patchmodule.split(maxsplit=1)[0]` (patch_handler.py:166); this file
+        # split the whole stripped line on "." and asked for a file.
+        Fault("frappe's own trailing-date form on the entry", False,
+              [(PTXT, "erplite.patches.declare_todo_status_options",
+                "erplite.patches.declare_todo_status_options #2026-10-05")]),
+        # execute_patch checks the `execute:` prefix first (patch_handler.py:161)
+        # and exec()s the rest. There is no path in the line to resolve.
+        Fault("an execute: entry, which frappe exec()s rather than imports", False,
+              [(PTXT, "[post_model_sync]\n",
+                '[post_model_sync]\nexecute:frappe.db.set_single_value("System Settings", "country", "Australia")\n')]),
+        # NOT a false positive, though it reads like one and the probe called it
+        # one: at v15.52.0 `execute_patch` resolves the path *before* it looks
+        # for the prefix (patch_handler.py:166-167 against :182), and `get_attr`
+        # throws AppNotInstalledError on app name "finally:erplite". frappe
+        # rejects this entry, so it is a failed deploy and something must say so.
+        # Green **here** on purpose: patches.txt is parsed by
+        # test_string_references.py and the tripwire for this belongs with the
+        # parser, not in a second copy. The same fault is measured against that
+        # file in STRING_REFS below.
+        Fault("a finally: prefix, which v15 resolves before it strips", False,
+              [(PTXT, "erplite.patches.declare_todo_status_options",
+                "finally:erplite.patches.declare_todo_status_options")]),
+
+        # -- the recorded measurement, and the tag its claims were read at --
+        # MEASURED_OPTIONS is documentation: the live DocField, written down so
+        # a reviewer can see what the patch pins without reading the database.
+        # The mirror it is compared against is a set, so order was invisible --
+        # KNOWN BLIND SPOT, closed by comparing it to this file's own
+        # LIVE_OPTIONS as a string.
+        Fault("the recorded live options are in the wrong order", True,
+              [(TSP, 'MEASURED_OPTIONS = "Backlog\\nPlanned\\nOpen\\nClosed\\nCancelled"',
+                'MEASURED_OPTIONS = "Open\\nClosed\\nCancelled\\nBacklog\\nPlanned"')]),
+        Fault("the recorded live options lose a status", True,
+              [(TSP, 'MEASURED_OPTIONS = "Backlog\\nPlanned\\nOpen\\nClosed\\nCancelled"',
+                'MEASURED_OPTIONS = "Backlog\\nPlanned\\nOpen\\nClosed"')]),
+        # KNOWN BLIND SPOT, closed by naming the tag. The test asked only for
+        # the *shape* v15.x.y, in a docstring whose own point is that the tag is
+        # what to re-check the mechanisms against -- so the one edit that makes
+        # it misleading was the one it could not see.
+        Fault("the docstring names a tag the claims were not read at", True,
+              [(TSP, "v15.52.0", "v15.0.0")]),
+
+        # -- controls -------------------------------------------------------
+        Fault("control: the local in execute() is renamed", False,
+              [(TSP, '    status = frappe.get_meta("ToDo").get_field("status")\n\n'
+                     '    _declare("options", options_with_extra_statuses(status.options))',
+                '    field = frappe.get_meta("ToDo").get_field("status")\n\n'
+                '    _declare("options", options_with_extra_statuses(field.options))')]),
+        Fault("control: `options or \"\"` written as an if-expression", False,
+              [(TSP, 'lines = (options or "").split("\\n")',
+                'lines = (options if options else "").split("\\n")')]),
+        Fault("control: the comment above EXTRA_STATUSES is reworded", False,
+              [(TSP, "# What the board needs on top of whatever frappe ships.",
+                "# The statuses this app adds to whatever frappe ships.")]),
+        # THE DISCRIMINATION CONTROL, and the one that found something. The two
+        # rows are independent upserts into separately-named documents
+        # (`{doc_type}-{field_name}-{property}`, property_setter.py:34-37), each
+        # deleting only its own property's row (delete_property_setter, :90-98),
+        # both applied by one pass over the table (meta.py:379). Nothing reads
+        # the meta again between them. So declaring them the other way round is
+        # behaviour-neutral -- and the file went red, in two places, because it
+        # unpacked `calls` by position. Pinning the keystrokes, not the contract.
+        Fault("control: the two rows are declared in the other order", False,
+              [(TSP, '    _declare("options", options_with_extra_statuses(status.options))\n'
+                     '    _declare("default", DEFAULT_STATUS)',
+                '    _declare("default", DEFAULT_STATUS)\n'
+                '    _declare("options", options_with_extra_statuses(status.options))')]),
+    ],
+)
+
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -2416,4 +2665,5 @@ TARGETS = {
     "post_save_writes": POST_SAVE_WRITES,
     "string_refs": STRING_REFS,
     "select_values": SELECT_VALUES,
+    "todo_status_patch": TODO_STATUS_PATCH,
 }
