@@ -138,12 +138,17 @@ TODO_FIELDS = {
     "assigned_by_full_name", "sender", "assignment_rule", "_assign",
 }
 
-# Likewise ToDo's Select options, read from frappe version-15's
-# frappe/desk/doctype/todo/todo.json. Its controller states the same set a
-# second time as `status: DF.Literal["Open", "Closed", "Cancelled"]`
-# (frappe/desk/doctype/todo/todo.py:35).
+# Likewise ToDo's Select options -- but NOT frappe's. This site's ToDo carries five
+# statuses with `Backlog` as the default, measured read-only against
+# crew.tierneymorris.com.au on 5 Oct 2026; stock frappe version-15 ships only
+# `Open\nClosed\nCancelled` and its controller restates that as
+# `status: DF.Literal["Open", "Closed", "Cancelled"]` (frappe/desk/doctype/todo/todo.py:35).
+# Trusting frappe's copy here, as this file first did, makes the stand-in reject writes the
+# real site accepts -- `status="Backlog"` is what `create_todo` sets and what the kanban's
+# backlog column reads. tests/offline/test_select_values.py KNOWN_CORE_SELECTS carries the
+# same set, the measured counts behind it, and the migrate risk; keep the two in step.
 TODO_SELECT_OPTIONS = {
-    "status": {"Open", "Closed", "Cancelled"},
+    "status": {"Backlog", "Planned", "Open", "Closed", "Cancelled"},
     "priority": {"High", "Medium", "Low"},
 }
 

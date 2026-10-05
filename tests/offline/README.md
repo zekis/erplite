@@ -145,7 +145,9 @@ has its own release cycle and the deployed copy may differ from GitHub's.
 
 `test_undeclared_attributes.py` does not test one module. It parses the whole
 app and fails if anything reads a field its DocType does not declare, in
-either of the two places that failure lives:
+either of the two places an *attribute* read lives (the field names inside a
+**query** are a separate surface with its own sweep, `test_query_fields.py`
+below — this file does not cover them and never did):
 
 - `self.<x>` in a DocType's own controller, with the call graph walked out
   from the new-document hooks (`validate`, `before_insert`, ...) so a helper
@@ -227,9 +229,25 @@ in `schedule_row.py` for as long as the rename has existed, and they survived
 three sweeps because every sweep filtered on the symptom rather than the cause.
 The `ast.Store` twin found the second of them on its first run.
 
-A loaded document is deliberately still out of scope: `frappe.get_doc(...)`
-genuinely does carry orphan columns through `SELECT *`, so reading one there is
-a stale value rather than a bug the DocType JSON can prove.
+A loaded document is in scope for the write pass and out of scope for the two
+read passes, and the asymmetry is the point. `frappe.get_doc("X", name)`
+genuinely does carry orphan columns through `SELECT *`, so **reading** one is a
+stale value rather than a bug the DocType JSON can prove. A **write** is
+dropped either way, because `get_valid_dict()` builds the UPDATE from
+`meta.get_valid_columns()` no matter how the document arrived — so every
+load-then-modify endpoint was unguarded while the write pass inherited the read
+sweep's scope. The write pass now resolves `get_doc("X", name)` as well.
+
+Its safety rule also moved from "the name is bound exactly once" to "every
+binding of the name agrees on the DocType". The old rule threw away the
+unambiguous case of a name assigned twice from the same DocType, which is how a
+dropped write to `Timesheet Entry.date` sat under this guard for several
+sweeps: the update branch and the insert branch of one function each assigned
+`timesheet_doc`, agreeing on the DocType, and the count rule skipped the
+variable entirely. Anything unresolvable — a `for`, `with`, comprehension or
+`except` binding, an import, an augmented assignment, a call no literal can be
+read out of — still marks the name unresolved and drops it, so a disagreement
+is never reported.
 
 ## String references: does the name point at anything at all?
 
@@ -411,3 +429,149 @@ boundary: a `def validate` nested in another method, and one at module level, ar
 not hooks), 6 regression tests that drive the real `Supplier Quote` controller so a
 revert fails rather than just going unnoticed, and 3 premises tests reading the
 DocType JSON.
+## `test_select_values.py` — a value the Select cannot hold
+
+A Select field carries its whole permitted set in its own `options`, so this is
+decidable from the DocType JSON. The two ways of getting it wrong have opposite
+symptoms, which is why both halves are worth a guard.
+
+A **write** of an unlisted value aborts the save: `_validate_selects`
+(`base_document.py:892`) ends in `frappe.throw`, reached from `_validate()`
+(`document.py:627`) on both the insert path (`:310`) and the save path (`:417`)
+— after the controller's own hooks have run, so nothing a controller does can
+rescue it. A **filter** on an unlisted value is never checked: it is valid SQL
+against a value no row holds, so `==` matches nothing and `!=` matches
+everything. One name, one loud failure and one silent one.
+
+The sweep resolves the DocType from the call rather than guessing it from the
+field name, and that narrowing is the work: an earlier version keyed by field
+name and reported two false positives, because `reference_type` is a Link on
+ToDo and a Select on Payment Entry.
+
+The stand-in enforces the same rule, which is the uncomfortable half. It
+refuses to serve a fixture row, or accept a filter or a write, carrying an
+impossible Select value — and that turned existing tests red when it went in.
+`test_projects_api` and `test_scheduler_api` each built a
+`Project(status="Cancelled")` fixture to prove `!= "Cancelled"` excluded it,
+and both passed. **The fixture described a row the real database cannot
+contain, so the tests were green about a world that cannot happen.**
+
+Fault injection then caught a weak test that review had not.
+`test_archived_projects_are_excluded` asserted only `assertNotIn("dead01")`,
+and it passed with the filter reverted, because the endpoint's
+`except Exception` returns an error dict in which `"dead01"` is also absent.
+**A test that asserts only an absence is satisfied by the endpoint failing
+outright.** It names the projects that must be present as well now.
+
+One measured blind spot: `get_daily_metrics` builds its filter in a variable
+rather than a dict literal in the call, so a static rule cannot see it.
+
+### The mirror is not frappe's copy, and this is how that was learnt
+
+A core DocType's options are whatever the **live site** has, not whatever
+frappe ships. `KNOWN_CORE_SELECTS` first held frappe version-15's
+`ToDo.status` of `Open\nClosed\nCancelled`, cross-checked against frappe's own
+`DF.Literal` in `todo.py:35`. Both agree and both are wrong here:
+`crew.tierneymorris.com.au` carries `Backlog\nPlanned\nOpen\nClosed\nCancelled`
+with `Backlog` as the default, and 17 ToDos are `Planned` right now.
+
+So the guard flagged `create_todo` setting `status="Backlog"`, and the kanban
+reading a backlog column, and all of it was correct code. Narrowing it to
+`Open` — which is what nearly shipped — would have sent every new todo past
+the backlog column and dropped 17 real rows out of the active metric. The
+owner caught it by knowing his own front end. **Widen the mirror; do not narrow
+the app.** The comment above `KNOWN_CORE_SELECTS` carries the measured options,
+the counts behind them, and the deploy risk that the two extra options appear to
+live only in the live database.
+
+Reading Property Setters would not have caught this: there is no Property Setter
+on ToDo. Offline, there is no way to know a live schema at all. What an offline
+sweep can honestly do is state which mirror it is using and make a change to it
+a failing test rather than a silent re-rule, which is what
+`ToDoStatusMirrorIsStated` is for.
+
+### Findings the owner has not ruled on
+
+`AWAITING_OWNER_DECISION` holds findings this guard stands by that are not being
+changed yet, keyed by exact site with the reason and what was measured. They do
+not fail the run. They are still asserted to **exist**, so fixing one, or moving
+its line, fails `test_every_awaiting_owner_finding_is_still_there` and names the
+stale entry — a waiver list cannot outlive what it waives, or quietly become
+where findings go to be forgotten.
+
+It exists because a sweep finds two different things, a bug and a question, and
+editing app code to green the run is how a question gets mistaken for a bug.
+
+## `test_query_fields.py` — the field names inside a query
+
+The surface every other sweep here left alone, and the one this app gets wrong
+most often: two instances had been fixed one at a time
+(`Activity.subject`/`assigned_to`, then `Timesheet Entry.date`) with nothing to
+stop a third. This parses the whole app and checks every field name a query
+names — `fields`, `pluck`, `filters` and `or_filters` in both the dict and the
+list form, `order_by`, `group_by`, and the positional fieldname of
+`get_value` / `get_values` / `set_value` / `get_single_value` — against the
+DocType's declared fields plus the standard columns.
+
+**The same mistake fails three different ways, and which one you get depends on
+the call rather than on the mistake.** Line numbers below are frappe 15,
+checked at 15.121.3:
+
+| the field | the call | what happens |
+|---|---|---|
+| removed from the DocType | anything | **silent**: the column is still there, so the SQL is valid and reads a stale orphan. `frappe.model.delete_fields` is frappe's only `DROP COLUMN` and runs only from a hand-written patch, and this app's `patches.txt` declares none (just the two section headers) |
+| never existed | `frappe.db.exists` | **silent, as None**: `exists` passes `ignore=True` (`database.py:1267`) and `get_values` turns a missing column into `out = None` when `ignore` is set (`:641-646`), which is indistinguishable from "no such record" |
+| never existed | anything else | **loud**: `get_values` re-raises (`:654`) and `frappe.get_all` has no missing-column handling at all, so the caller's `except Exception` usually turns it into `{"success": False}` with no stack |
+
+The second row is the nastiest, because a guard written as
+`if frappe.db.exists(...): frappe.throw(...)` is then permanently off and looks
+like it is working.
+
+A filter on a *removed* field has a second effect worth stating separately: new
+rows have NULL in the orphan column, because `get_valid_dict()` never writes a
+column the DocType does not declare. So `filters={"<orphan>": ["between", ...]}`
+silently excludes **every row written since the field was removed** — which is
+what made the week timesheet view and the CSV export come back empty while
+saving an entry reported success, since the endpoint echoes the date back out of
+its own input rather than out of the record. Fixing the filter without fixing
+the reads would have turned that empty list into an exception: rows with a NULL
+date start matching, and `entry.date.strftime(...)` was unguarded. **The two
+halves of an orphan have to be fixed together.** (That one is fixed earlier in
+this chain; the sweep pins it so it cannot come back.)
+
+Conservative in the same way as the other sweeps: it judges only a bare
+identifier, so `count(name) as n`, `tabFoo.name`, `*`, `name as id` and
+`distinct status` are skipped rather than guessed at, and only DocTypes this app
+defines are judged. It also distinguishes the positional arguments per function,
+because they disagree — the second positional of `get_all` is `fields`
+(`DatabaseQuery.execute(fields, filters, ...)`), while the second positional of
+`get_value` is the name or filters and a **list** there is a list of names, not
+of fields. Reading that one as fields is how a sweep invents findings.
+
+Four findings are pinned open rather than fixed, because each needs a schema or
+product decision that is not a test's to make — either the field goes onto the
+DocType or the feature reading it comes out:
+
+- `Account.on_trash` (`account.py:82`) guards against deleting an Account linked
+  to a Xero Account via `db.exists("Xero Account", {"account": ...})`. `Xero
+  Account` has never had an `account` field — it has `account_name`,
+  `account_code` and `xero_account_id` — and there is no field linking the two
+  DocTypes at all.
+  Row two of the table above: the guard returns None and never fires.
+- `TermsandConditions.validate_disabled` (`terms_and_conditions.py:19`) and
+  `get_default_terms` (`:33`) both read `Company.default_terms`; Company has
+  `default_currency`, `default_letter_head`, `default_holiday_list` and
+  `is_default`, and has never had `default_terms`.
+- `FinanceBook.get_default_finance_book` (`finance_book.py:33`) reads
+  `Company.default_finance_book`, same again.
+
+Each is pinned twice: once in `KNOWN`, so a **new** finding fails, and once as a
+test of the schema fact it rests on, so adding the field fails too and says
+which list to edit. The fix that shipped with this sweep is pinned the same way
+(`Account` declares `currency`, never `account_currency`, so
+`PaymentEntry.validate_accounts` asked on every save for a column that has never
+existed — row three, loud: a Payment Entry with `paid_from` or `paid_to` set
+could not be saved at all).
+
+`TheSweepBites` holds 18 self-tests: every call shape and argument position that
+must be reported, and every expression that must not be.
