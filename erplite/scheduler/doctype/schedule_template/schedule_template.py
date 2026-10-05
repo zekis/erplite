@@ -104,7 +104,7 @@ class ScheduleTemplate(Document):
 @frappe.whitelist()
 def get_active_templates():
 	"""Get all active schedule templates"""
-	templates = frappe.get_all("Schedule Template",
+	templates = frappe.get_list("Schedule Template",
 		filters={"is_active": 1},
 		fields=[
 			"name", "template_name", "template_code", "hours", 

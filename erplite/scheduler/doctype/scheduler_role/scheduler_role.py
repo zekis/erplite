@@ -85,7 +85,7 @@ class SchedulerRole(Document):
 @frappe.whitelist()
 def get_active_roles():
 	"""Get all active roles"""
-	roles = frappe.get_all("Scheduler Role",
+	roles = frappe.get_list("Scheduler Role",
 		filters={"is_active": 1},
 		fields=["name", "role_name", "role_code", "color", "hourly_rate", "description"],
 		order_by="role_name"

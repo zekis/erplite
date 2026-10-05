@@ -232,6 +232,16 @@ USER_FIELDS = {
 ALIAS = re.compile(r"^\s*(?P<field>[\w.]+)\s+as\s+(?P<alias>[\w]+)\s*$", re.IGNORECASE)
 
 
+def _order_by_columns(order_by):
+    """The column names in an `order_by`, without their direction keywords."""
+    columns = []
+    for clause in order_by.split(","):
+        parts = clause.strip().split()
+        if parts:
+            columns.append(parts[0])
+    return columns
+
+
 def _as_datetime(value):
     """A datetime for a datetime, a date or an ISO-ish string. Used by `between`."""
     if isinstance(value, datetime.datetime):
@@ -294,6 +304,9 @@ class FakeFrappe(object):
             "Timesheet Entry": doctype_fields("projects", "timesheet_entry"),
             "Schedule Entry": doctype_fields("scheduler", "schedule_entry"),
             "Resource": doctype_fields("scheduler", "resource"),
+            "Scheduler Role": doctype_fields("scheduler", "scheduler_role"),
+            "Schedule Row": doctype_fields("scheduler", "schedule_row"),
+            "Schedule Template": doctype_fields("scheduler", "schedule_template"),
         }
         self.select_options = {
             "Activity": doctype_select_options("projects", "activity"),
@@ -303,8 +316,28 @@ class FakeFrappe(object):
             "Timesheet Entry": doctype_select_options("projects", "timesheet_entry"),
             "Schedule Entry": doctype_select_options("scheduler", "schedule_entry"),
             "Resource": doctype_select_options("scheduler", "resource"),
+            "Scheduler Role": doctype_select_options("scheduler", "scheduler_role"),
+            "Schedule Row": doctype_select_options("scheduler", "schedule_row"),
+            "Schedule Template": doctype_select_options("scheduler", "schedule_template"),
         }
-        self.permissions = {}  # doctype -> doctype_permissions(...) rows
+        # doctype -> doctype_permissions(...) rows. Loaded here, from the
+        # JSON, rather than left empty for each test to fill: `get_list` asks
+        # `has_permission` on every read, and an unloaded DocType is an
+        # AssertionError, so leaving these out would make every test that
+        # reaches a `get_list` call site fail for the wrong reason. A test that
+        # wants different rows still assigns over them.
+        self.permissions = {
+            "Activity": doctype_permissions("projects", "activity"),
+            "Project": doctype_permissions("projects", "project"),
+            "Timesheet Entry": doctype_permissions("projects", "timesheet_entry"),
+            "Division": doctype_permissions("scheduler", "division"),
+            "Schedule Entry": doctype_permissions("scheduler", "schedule_entry"),
+            "Resource": doctype_permissions("scheduler", "resource"),
+            "Scheduler Role": doctype_permissions("scheduler", "scheduler_role"),
+            "Schedule Row": doctype_permissions("scheduler", "schedule_row"),
+            "Schedule Template": doctype_permissions("scheduler", "schedule_template"),
+            "Scheduler Log": doctype_permissions("scheduler", "scheduler_log"),
+        }
         self.permission_checks = []  # every has_permission asked, for assertions
         self.errors = []
         self.messages = []
@@ -557,6 +590,46 @@ class FakeFrappe(object):
                     % (where, doctype, field, value, ", ".join(sorted(allowed))))
 
     # -- the query API under test --
+    def get_list(self, doctype, *args, **kwargs):
+        """frappe.get_list: get_all, but it consults the DocType's read rows.
+
+        The one difference, read off the installed frappe 15.52.0 rather than
+        assumed: there is only one implementation. `get_list`
+        (`frappe/__init__.py:1970`) calls `DatabaseQuery(doctype).execute(...)`
+        as given, and `get_all` (`:1993`) is that same call with
+        `ignore_permissions=True` added (`:2012`) -- its own docstring says it
+        "will **not** check for permissions". `execute` starts with `if not
+        ignore_permissions: self.check_read_permission(...)`
+        (`frappe/model/db_query.py:114-115`), which calls
+        `frappe.has_permission(..., throw=True)` in `_set_permission_map`
+        (`:516-523`). So the gate is the one flag, and `get_all` is the only
+        one of the pair that sets it.
+
+        **A user with no read row therefore gets `frappe.PermissionError`, not
+        an empty list.** That is the behaviour to hold on to: the refusal is
+        loud, and a caller that wanted "the rows I may see, or none" does not
+        get it from `get_list`.
+
+        Blind spots, stated so they are places to look rather than places to
+        stop:
+
+          * **No row-level narrowing.** Real `get_list` also applies User
+            Permissions and `if_owner`, which cut down the rows that come
+            back. This answers the DocType-level question only, so a test must
+            not read "which rows a restricted user sees" off this stand-in.
+          * **No select-only fallback.** `_set_permission_map` asks for
+            `select` instead of `read` when `frappe.only_has_select_perm` is
+            true. None of the DocTypes here grants select without read, so the
+            distinction never arises; it would have to be added if one did.
+          * **No child-table handling.** Real `get_list` on an `istable`
+            DocType is refused unless `parent_doctype` is passed, because
+            `has_permission` rejects a child DocType as its own parent
+            (`frappe/permissions.py:780`). None of the call sites converted
+            here reads a child table.
+        """
+        self.has_permission(doctype, ptype="read", throw=True)
+        return self.get_all(doctype, *args, **kwargs)
+
     def get_all(self, doctype, fields=None, filters=None, order_by=None,
                 pluck=None, limit=None, or_filters=None, **kwargs):
         self.queries.append(_dict(
@@ -580,7 +653,12 @@ class FakeFrappe(object):
         self._check_fields(doctype, list((filters or {}).keys()), "filters")
         self._check_fields(doctype, list((or_filters or {}).keys()), "or_filters")
         if order_by:
-            self._check_fields(doctype, [order_by.split()[0]], "order_by")
+            # `order_by` may name more than one column -- the scheduler asks for
+            # "schedule_date, start_time". Splitting on whitespace alone made the
+            # first column "schedule_date," and rejected a legitimate query, so
+            # every clause is split out and checked. Direction keywords (asc/desc)
+            # are dropped before the check.
+            self._check_fields(doctype, _order_by_columns(order_by), "order_by")
         self._check_select_filters(doctype, filters, "get_all")
         self._check_select_rows(doctype)
 
@@ -599,7 +677,12 @@ class FakeFrappe(object):
             # Direction matters: `modified desc` is how the callers ask for
             # "the most recent N", and ignoring the keyword silently gave
             # them the oldest N instead. NULLs sort lowest, as in MariaDB.
-            parts = order_by.split()
+            #
+            # Only the FIRST clause is applied. A multi-column `order_by` is
+            # checked in full above but sorted on its leading column only, so a
+            # test must not assert on the order within a tie -- real MariaDB
+            # would break those ties and this does not.
+            parts = order_by.split(",")[0].split()
             column = parts[0]
             descending = len(parts) > 1 and parts[1].lower() == "desc"
             rows = sorted(

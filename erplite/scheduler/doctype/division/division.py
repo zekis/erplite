@@ -68,7 +68,7 @@ class Division(Document):
 @frappe.whitelist()
 def get_active_divisions():
 	"""Get all active divisions"""
-	divisions = frappe.get_all("Division",
+	divisions = frappe.get_list("Division",
 		filters={"is_active": 1},
 		fields=["name", "division_name", "division_code", "color", "description"],
 		order_by="division_name"
@@ -78,7 +78,7 @@ def get_active_divisions():
 @frappe.whitelist()
 def get_division_projects(division):
 	"""Get projects for a specific division"""
-	projects = frappe.get_all("Project",
+	projects = frappe.get_list("Project",
 		filters={"division": division, "status": ["in", ["Open", "Active"]]},
 		fields=["name", "project_name", "status"],
 		order_by="project_name"
