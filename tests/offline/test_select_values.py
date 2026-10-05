@@ -45,15 +45,46 @@ is not a literal is skipped rather than guessed at.
 
 ## Scope, and what this pass cannot see
 
-Covered: `frappe.get_doc({...})` field literals, and `filters={...}` on `get_all`, `get_list`,
-`db.count`, `db.get_value`, `db.get_all`, `db.get_list`, `db.exists` and `db.set_value`, for
-`=`, `!=`, `in` and `not in`.
+## What "a write" and "a filter" mean here, and why the list is longer than it was
+
+The first version of this pass read `frappe.get_doc({...})` and `filters={...}` and nothing
+else. Fault injection against real source (`tests/faultinject`, target `select_values`) found
+fourteen other ways to write or filter a Select value that frappe accepts and this pass did
+not see -- **most of frappe's filter API, including the list-of-lists form documented in
+`get_all`'s own docstring beside the dict form.** Each is now read, through the shapes frappe
+itself funnels them into rather than a list of special cases:
+
+Writes: a `get_doc({...})` dict and **every nested dict in it that names its own doctype** (a
+child row's Select aborts the parent's save too), `get_doc(doctype=..., field=...)`,
+`frappe.new_doc("X").update({...})`, and `db.set_value` -- whose `field` argument may be a
+**dict of field to value** (`_get_update_dict`, database.py:769-773; four live Xero writes in
+this app use that form).
+
+Filters: `filters` and `or_filters`, given by keyword **or positionally**, on `get_all`,
+`get_list`, `db.get_all`, `db.get_list`, `db.get_value`, `db.get_values`, `frappe.get_value`,
+`db.exists`, `db.count`, `frappe.get_last_doc`, and `db.set_value`'s `dn` (which may be
+filters, database.py:948). In every form `get_filter` accepts: a dict, a list of dicts, a
+three-element list, and a four-element list -- which **names its own DocType**, so its value is
+compared against that DocType's options and not the queried one's. Operators `=`, `!=`, `in`
+and `not in`; `like`, `between` and the rest are not options comparisons.
+
+A write is judged the way `_validate_selects` judges it (base_document.py:892-920), which is
+narrower than "in options" and reporting anything narrower would flag correct code: it exempts
+`naming_series` by name, skips a falsy value, and strips the value before comparing. A filter
+is **not** stripped, because frappe compares the string it is given.
+
+## Scope, and what this pass cannot see
 
 Not covered, and each is a real way past this guard:
 
   * `doc.status = "..."` attribute assignment. The DocType of a controller's `self` is knowable
     from its folder, but of an arbitrary local it is not, and guessing is what produced the
-    false positives above. The write sites in this app all go through `get_doc`.
+    false positives above. The write sites in this app all go through `get_doc`. `.update()` is
+    read only where the DocType is in the same expression (`new_doc("X").update({...})`),
+    which is the same boundary drawn in the same place.
+  * `from frappe import get_all` and then a bare `get_all(...)`. Every call site in this app
+    is written `frappe.`-qualified; `test_every_query_call_is_frappe_qualified` below asserts
+    that, so this becomes a failing test rather than a silent gap the day someone writes one.
   * A value held in a variable, built by format string, or arriving from a request. The todo
     kanban's `update_todo_status(todo_name, new_status)` takes the status straight from the
     browser, so no static pass can see what it will be. Its caller
@@ -160,19 +191,52 @@ KNOWN_CORE_SELECTS = {
     },
 }
 
-QUERY_CALLS = {
-    "frappe.get_all",
-    "frappe.get_list",
-    "frappe.db.count",
-    "frappe.db.get_value",
-    "frappe.db.get_all",
-    "frappe.db.get_list",
-    "frappe.db.exists",
-    "frappe.db.set_value",
+# Where a filters argument sits when it is not given by name, read from each function's own
+# signature in frappe 15.52.0 rather than assumed:
+#
+#   * `frappe.get_all` / `frappe.get_list` hand their arguments to
+#     `DatabaseQuery.execute(fields, filters, or_filters, ...)` (model/db_query.py:315-319), so
+#     the first positional after the DocType is **fields**, and filters is the one after that.
+#     Getting this wrong in either direction is silent: an index too low reads the field list as
+#     filters, an index too high reads nothing.
+#   * `frappe.db.get_all` / `frappe.db.get_list` are pass-throughs to those two
+#     (database/database.py:761-766), so they share the layout.
+#   * `frappe.db.get_value` / `frappe.db.get_values` take `(doctype, filters, fieldname)`
+#     (database.py:469-473, :548-552), and `frappe.get_value` is the documented alias for the
+#     first (__init__.py:2068).
+#   * `frappe.db.exists(dt, dn)` takes a name **or** filters as `dn` (database.py:1234), and
+#     `frappe.db.count(dt, filters)` (:1269).
+#   * `frappe.get_last_doc(doctype, filters)` passes them straight to `get_all`
+#     (__init__.py:1338-1340).
+FILTER_ARG = {
+    "frappe.get_all": 2,
+    "frappe.get_list": 2,
+    "frappe.db.get_all": 2,
+    "frappe.db.get_list": 2,
+    "frappe.db.get_value": 1,
+    "frappe.db.get_values": 1,
+    "frappe.get_value": 1,
+    "frappe.db.exists": 1,
+    "frappe.db.count": 1,
+    "frappe.get_last_doc": 1,
 }
 
-# Calls whose second positional argument is the filters, when `filters=` is not given by name.
-POSITIONAL_FILTERS = {"frappe.db.get_value", "frappe.db.exists", "frappe.db.count"}
+# `or_filters` is a separate argument of the same kind, next along in `execute`. It is read
+# exactly like `filters` because frappe reads it exactly like `filters` -- the same
+# `build_filter_conditions` over the same `get_filter` (db_query.py:973-982). The app has one
+# live `or_filters`, in the ToDo kanban.
+OR_FILTER_ARG = {
+    "frappe.get_all": 3,
+    "frappe.get_list": 3,
+    "frappe.db.get_all": 3,
+    "frappe.db.get_list": 3,
+}
+
+QUERY_CALLS = set(FILTER_ARG) | {"frappe.db.set_value"}
+
+# Fields `_validate_selects` never checks, so neither does this. `naming_series` is exempted by
+# name (base_document.py:897) because its value is a series pattern, not an option.
+WRITE_EXEMPT_FIELDS = {"naming_series"}
 
 
 def _app_selects():
@@ -241,6 +305,85 @@ def _dict_value(node, key):
     return None
 
 
+def _argument(node, index, name):
+    """A call's argument, given positionally or by keyword, or None.
+
+    Reading only positions misses `field="status"`; reading only keywords misses
+    `get_all("ToDo", fields, filters)`. Both forms are ordinary frappe and both appear in this
+    app, so every argument this pass reads is read through here.
+    """
+    for keyword in node.keywords:
+        if keyword.arg == name:
+            return keyword.value
+    if index is not None and len(node.args) > index:
+        return node.args[index]
+    return None
+
+
+def _conditions(node, doctype):
+    """[(doctype, field, operator, operand_node, lineno)] for one filters argument.
+
+    Every filter frappe accepts funnels through `get_filter` (utils/data.py:1940-1975), and
+    this follows it rather than the dict form alone:
+
+      * a dict is {fieldname: value} or {fieldname: [operator, value]};
+      * a list holds dicts or lists, since `build_filter_conditions` wraps a bare dict in a
+        list and iterates (db_query.py:978-982);
+      * a three-element list is [fieldname, operator, value], and frappe fills in the query's
+        DocType (data.py:1960);
+      * a four-element list is [doctype, fieldname, operator, value] and **names its own
+        DocType**, which need not be the one queried -- so taking the query's would compare a
+        value against the wrong field's options.
+
+    A flat list of three strings is not a filter: `build_filter_conditions` iterates it and
+    hands `get_filter` a string, which throws "Filter must be a tuple or list (in a list)"
+    (data.py:1958). So it is not a form this pass needs to read.
+    """
+    out = []
+
+    def from_dict(dict_node):
+        for key, value in zip(dict_node.keys, dict_node.values):
+            field = _const_str(key)
+            if not field:
+                continue
+            if isinstance(value, (ast.List, ast.Tuple)) and len(value.elts) == 2:
+                operator = _const_str(value.elts[0])
+                if operator:
+                    out.append((doctype, field, operator.lower(), value.elts[1], key.lineno))
+                    continue
+            out.append((doctype, field, "=", value, key.lineno))
+
+    if isinstance(node, ast.Dict):
+        from_dict(node)
+    elif isinstance(node, (ast.List, ast.Tuple)):
+        for element in node.elts:
+            if isinstance(element, ast.Dict):
+                from_dict(element)
+            elif isinstance(element, (ast.List, ast.Tuple)) and len(element.elts) == 3:
+                field, operator = _const_str(element.elts[0]), _const_str(element.elts[1])
+                if field and operator:
+                    out.append((doctype, field, operator.lower(), element.elts[2],
+                                element.lineno))
+            elif isinstance(element, (ast.List, ast.Tuple)) and len(element.elts) >= 4:
+                own = _const_str(element.elts[0])
+                field, operator = _const_str(element.elts[1]), _const_str(element.elts[2])
+                if own and field and operator:
+                    out.append((own, field, operator.lower(), element.elts[3], element.lineno))
+    return out
+
+
+def _doc_dicts(node):
+    """Every dict literal at or under `node` that names its own DocType.
+
+    A child table is a list of dicts inside the parent's dict, each carrying its own
+    `doctype`, and `insert()` validates them all -- so a child row's Select aborts the parent's
+    save exactly like the parent's own.
+    """
+    for inner in ast.walk(node):
+        if isinstance(inner, ast.Dict) and _dict_value(inner, "doctype"):
+            yield inner
+
+
 def violations():
     """[(rel_path, line, doctype, field, value, how, allowed)] over the whole app."""
     selects = _selects()
@@ -252,31 +395,42 @@ def violations():
             return
         found.append((rel, line, doctype, field, value, how, allowed))
 
-    def check_filters(rel, doctype, node):
-        for key, value in zip(node.keys, node.values):
-            field = _const_str(key)
-            if not field:
-                continue
-            literal = _const_str(value)
-            if literal is not None:
-                check(rel, key.lineno, doctype, field, literal, "filter ==")
-                continue
-            # The [operator, operand] form.
-            if not isinstance(value, (ast.List, ast.Tuple)) or len(value.elts) != 2:
-                continue
-            operator = (_const_str(value.elts[0]) or "").lower()
-            operand = value.elts[1]
+    def check_write(rel, line, doctype, field, value_node, how):
+        """A write, judged the way `_validate_selects` judges it.
+
+        base_document.py:892-920 is the authority, and it is narrower than "the value is in
+        options" in three ways this pass has to copy or it reports correct code:
+
+          * `naming_series` is skipped by name (:897);
+          * a falsy value is skipped (:897), so an unset Select is not a violation -- and a
+            filter on an empty value is a real query for unset rows, so that is skipped too;
+          * the value is **stripped** before the comparison (:907), so trailing space is not a
+            violation on a write. A filter is not stripped -- frappe compares the string it is
+            given -- which is why only this half strips.
+        """
+        value = _const_str(value_node)
+        if value is None or field in WRITE_EXEMPT_FIELDS or not value.strip():
+            return
+        check(rel, line, doctype, field, value.strip(), how)
+
+    def check_filters(rel, doctype, node, how):
+        for own, field, operator, operand, line in _conditions(node, doctype):
             if operator in ("in", "not in") and isinstance(operand, (ast.List, ast.Tuple)):
                 for element in operand.elts:
                     literal = _const_str(element)
-                    if literal is not None:
-                        check(rel, key.lineno, doctype, field, literal,
-                              "filter %s" % operator)
+                    if literal:
+                        check(rel, line, own, field, literal, "%s %s" % (how, operator))
             elif operator in ("=", "==", "!="):
                 literal = _const_str(operand)
-                if literal is not None:
-                    check(rel, key.lineno, doctype, field, literal,
-                          "filter %s" % operator)
+                if literal:
+                    check(rel, line, own, field, literal, "%s %s" % (how, operator))
+
+    def check_doc_fields(rel, dict_node):
+        doctype = _dict_value(dict_node, "doctype")
+        for key, value in zip(dict_node.keys, dict_node.values):
+            field = _const_str(key)
+            if field and field != "doctype":
+                check_write(rel, key.lineno, doctype, field, value, "get_doc field")
 
     for path, rel in _python_files():
         with open(path, encoding="utf-8", errors="replace") as handle:
@@ -290,17 +444,46 @@ def violations():
             if not isinstance(node, ast.Call):
                 continue
             name = _dotted(node.func)
-            keywords = {k.arg: k.value for k in node.keywords if k.arg}
 
             if name == "frappe.get_doc" and node.args and isinstance(node.args[0], ast.Dict):
-                literal = node.args[0]
-                doctype = _dict_value(literal, "doctype")
-                if not doctype:
-                    continue
-                for key, value in zip(literal.keys, literal.values):
-                    field, written = _const_str(key), _const_str(value)
-                    if field and written is not None:
-                        check(rel, key.lineno, doctype, field, written, "get_doc field")
+                for dict_node in _doc_dicts(node.args[0]):
+                    check_doc_fields(rel, dict_node)
+                continue
+
+            # get_doc(doctype="ToDo", status="...") -- documented, if discouraged, in frappe's
+            # own overloads (__init__.py:1294-1297).
+            if name == "frappe.get_doc" and not node.args and node.keywords:
+                doctype = None
+                for keyword in node.keywords:
+                    if keyword.arg == "doctype":
+                        doctype = _const_str(keyword.value)
+                if doctype:
+                    for keyword in node.keywords:
+                        if keyword.arg and keyword.arg != "doctype":
+                            check_write(rel, node.lineno, doctype, keyword.arg,
+                                        keyword.value, "get_doc keyword")
+                continue
+
+            # `frappe.new_doc("ToDo").update({...})` and the same on a get_doc dict. The
+            # DocType is in the expression, so nothing is guessed. A bare local's `.update`
+            # stays out of reach, which is the same boundary as attribute assignment.
+            if (isinstance(node.func, ast.Attribute) and node.func.attr == "update"
+                    and node.args and isinstance(node.args[0], ast.Dict)
+                    and isinstance(node.func.value, ast.Call)):
+                receiver = node.func.value
+                receiver_name = _dotted(receiver.func)
+                doctype = None
+                if receiver_name == "frappe.new_doc" and receiver.args:
+                    doctype = _const_str(receiver.args[0])
+                elif (receiver_name == "frappe.get_doc" and receiver.args
+                        and isinstance(receiver.args[0], ast.Dict)):
+                    doctype = _dict_value(receiver.args[0], "doctype")
+                if doctype:
+                    for key, value in zip(node.args[0].keys, node.args[0].values):
+                        field = _const_str(key)
+                        if field and field != "doctype":
+                            check_write(rel, key.lineno, doctype, field, value,
+                                        "update() field")
                 continue
 
             if name not in QUERY_CALLS:
@@ -309,16 +492,33 @@ def violations():
             if not doctype:
                 continue
 
-            filters = keywords.get("filters")
-            if filters is None and name in POSITIONAL_FILTERS and len(node.args) > 1:
-                filters = node.args[1]
-            if isinstance(filters, ast.Dict):
-                check_filters(rel, doctype, filters)
+            filters = _argument(node, FILTER_ARG.get(name), "filters")
+            if filters is not None:
+                check_filters(rel, doctype, filters, "filter")
+            or_filters = _argument(node, OR_FILTER_ARG.get(name), "or_filters")
+            if or_filters is not None:
+                check_filters(rel, doctype, or_filters, "or_filter")
 
-            if name == "frappe.db.set_value" and len(node.args) >= 4:
-                field, written = _const_str(node.args[2]), _const_str(node.args[3])
-                if field and written is not None:
-                    check(rel, node.lineno, doctype, field, written, "set_value")
+            if name == "frappe.db.set_value":
+                # `field` may be a dict of field -> value: `_get_update_dict` is
+                # `fieldname if isinstance(fieldname, dict) else {fieldname: value}`
+                # (database.py:769-773), and four live Xero writes in this app use that form.
+                field_node = _argument(node, 2, "field")
+                if isinstance(field_node, ast.Dict):
+                    for key, value in zip(field_node.keys, field_node.values):
+                        field = _const_str(key)
+                        if field:
+                            check_write(rel, key.lineno, doctype, field, value, "set_value")
+                else:
+                    field = _const_str(field_node)
+                    value_node = _argument(node, 3, "val")
+                    if field and value_node is not None:
+                        check_write(rel, node.lineno, doctype, field, value_node, "set_value")
+                # `dn` is "Document name for updating single record or filters for updating
+                # many records" (database.py:948), so a dict there is a filter.
+                name_node = _argument(node, 1, "dn")
+                if isinstance(name_node, ast.Dict):
+                    check_filters(rel, doctype, name_node, "set_value filter")
 
     return found
 
@@ -423,6 +623,189 @@ class SelectOptionsAreRespected(unittest.TestCase):
             2, len(found),
             "the pass found %d of the 2 planted violations: %r" % (len(found), found))
         self.assertEqual({"Project", "ToDo"}, {v[2] for v in found})
+
+
+class TheReachOfThisPassIsPinned(unittest.TestCase):
+    """What the pass can and cannot see, planted in real source and asserted.
+
+    Every case here was green before it was written: fault injection against real app source
+    (`tests/faultinject`, target `select_values`) found fourteen ways frappe writes or filters
+    a Select value that this pass did not read, three of them in frappe's own docstrings, and
+    three edits real frappe accepts that it reported. A detector's own fixtures only ever
+    answer "do you find what I thought of?", so these are kept as the record of what it was
+    once blind to -- a form that stops being read fails here, not silently.
+    """
+
+    def plant(self, body):
+        """`body` in a module inside the app tree; what the pass then reports."""
+        planted = os.path.join(MODULE_ROOT, "_select_reach_probe.py")
+        with open(planted, "w", encoding="utf-8") as handle:
+            handle.write("import frappe\n\n\ndef probe():\n    %s\n" % body)
+        try:
+            return [v for v in violations() if v[0].endswith("_select_reach_probe.py")]
+        finally:
+            os.remove(planted)
+
+    # -- filters, in every form frappe's get_filter accepts --------------
+    def test_every_filter_form_frappe_accepts_is_read(self):
+        impossible = "'Retired'"  # Project holds Opportunity/Estimate/Open/Archived
+        for label, body in (
+            ("dict", "frappe.get_all('Project', filters={'status': %s})" % impossible),
+            ("dict with operator",
+             "frappe.get_all('Project', filters={'status': ['!=', %s]})" % impossible),
+            ("list of three",
+             "frappe.get_all('Project', filters=[['status', '=', %s]])" % impossible),
+            ("list of four, naming its own doctype",
+             "frappe.get_all('Project', filters=[['Project', 'status', '=', %s]])" % impossible),
+            ("dict inside a list",
+             "frappe.get_all('Project', filters=[{'status': %s}])" % impossible),
+            ("in", "frappe.get_all('Project', filters={'status': ['in', ['Open', %s]]})"
+             % impossible),
+            ("or_filters", "frappe.get_all('Project', or_filters={'status': %s})" % impossible),
+            ("filters positional, after fields",
+             "frappe.get_all('Project', ['name'], {'status': %s})" % impossible),
+            ("or_filters positional",
+             "frappe.get_all('Project', ['name'], None, {'status': %s})" % impossible),
+        ):
+            with self.subTest(label):
+                self.assertEqual(1, len(self.plant(body)), label)
+
+    def test_every_query_entry_point_is_read(self):
+        for call, body in (
+            ("frappe.get_list", "frappe.get_list('Project', filters={'status': 'Retired'})"),
+            ("frappe.db.get_all", "frappe.db.get_all('Project', filters={'status': 'Retired'})"),
+            ("frappe.db.get_value", "frappe.db.get_value('Project', {'status': 'Retired'}, 'name')"),
+            ("frappe.db.get_values", "frappe.db.get_values('Project', {'status': 'Retired'}, 'name')"),
+            ("frappe.get_value", "frappe.get_value('Project', {'status': 'Retired'}, 'name')"),
+            ("frappe.db.exists", "frappe.db.exists('Project', {'status': 'Retired'})"),
+            ("frappe.db.count", "frappe.db.count('Project', {'status': 'Retired'})"),
+            ("frappe.get_last_doc", "frappe.get_last_doc('Project', filters={'status': 'Retired'})"),
+        ):
+            with self.subTest(call):
+                self.assertEqual(1, len(self.plant(body)), call)
+
+    def test_a_four_element_filter_is_judged_against_its_own_doctype(self):
+        """The DocType in the element wins, or the value meets the wrong options.
+
+        'Retired' is impossible for both, so the proof is in which options are reported.
+        """
+        found = self.plant(
+            "frappe.get_all('ToDo', filters=[['Project', 'status', '=', 'Retired']])")
+        self.assertEqual(1, len(found))
+        self.assertEqual("Project", found[0][2])
+        self.assertEqual({"Opportunity", "Estimate", "Open", "Archived"}, found[0][6])
+        # And a value valid for the named DocType but not the queried one is not a violation.
+        self.assertEqual(
+            [], self.plant(
+                "frappe.get_all('ToDo', filters=[['Project', 'status', '=', 'Archived']])"))
+
+    # -- writes ----------------------------------------------------------
+    def test_every_write_form_is_read(self):
+        for label, body in (
+            ("get_doc dict", "frappe.get_doc({'doctype': 'ToDo', 'status': 'Done'})"),
+            ("get_doc keywords", "frappe.get_doc(doctype='ToDo', status='Done')"),
+            ("new_doc().update()", "frappe.new_doc('ToDo').update({'status': 'Done'})"),
+            ("get_doc({}).update()",
+             "frappe.get_doc({'doctype': 'ToDo'}).update({'status': 'Done'})"),
+            ("set_value positional", "frappe.db.set_value('ToDo', 't', 'status', 'Done')"),
+            ("set_value keywords", "frappe.db.set_value('ToDo', 't', field='status', val='Done')"),
+            ("set_value dict of values", "frappe.db.set_value('ToDo', 't', {'status': 'Done'})"),
+            ("set_value dn as filters",
+             "frappe.db.set_value('ToDo', {'status': 'Done'}, 'description', 'x')"),
+        ):
+            with self.subTest(label):
+                self.assertEqual(1, len(self.plant(body)), label)
+
+    def test_a_child_row_in_a_get_doc_dict_is_read(self):
+        """`insert()` validates the children too, so a child Select aborts the parent's save."""
+        found = self.plant(
+            "frappe.get_doc({'doctype': 'Project', 'rows': "
+            "[{'doctype': 'ToDo', 'status': 'Done'}]})")
+        self.assertEqual(1, len(found))
+        self.assertEqual("ToDo", found[0][2])
+
+    # -- the three edits real frappe accepts, which this once reported ---
+    def test_a_write_is_judged_as_validate_selects_judges_it(self):
+        """base_document.py:892-920 is the authority; anything narrower flags correct code."""
+        for label, body in (
+            ("naming_series is exempt by name",
+             "frappe.get_doc({'doctype': 'Sales Invoice', 'naming_series': 'SINV-.YYYY.-'})"),
+            ("a falsy value is skipped",
+             "frappe.get_doc({'doctype': 'ToDo', 'status': ''})"),
+            ("the value is stripped before comparing",
+             "frappe.get_doc({'doctype': 'ToDo', 'status': 'Open '})"),
+        ):
+            with self.subTest(label):
+                self.assertEqual([], self.plant(body), label)
+
+    def test_a_filter_is_not_stripped_because_frappe_does_not_strip_one(self):
+        """The asymmetry is real: `_validate_selects` strips a write, nothing strips a filter.
+
+        `Engine._apply_filter` screens the filter name and passes the value through, so
+        ' Open' reaches the WHERE clause with its space and matches nothing.
+        """
+        self.assertEqual(1, len(self.plant(
+            "frappe.get_all('ToDo', filters={'status': 'Open '})")))
+
+    def test_an_operator_that_is_not_an_options_comparison_is_left_alone(self):
+        for body in (
+            "frappe.get_all('ToDo', filters={'status': ['like', '%pen%']})",
+            "frappe.get_all('ToDo', filters={'status': ['is', 'set']})",
+            "frappe.get_all('ToDo', filters={'date': ['between', ['2026-01-01', '2026-02-01']]})",
+        ):
+            with self.subTest(body):
+                self.assertEqual([], self.plant(body))
+
+    # -- what it still cannot see, named rather than implied -------------
+    def test_what_this_cannot_see_is_still_invisible(self):
+        """Each of these is a real regression this pass deliberately does not report.
+
+        They need the type of a local, or a value that does not exist until runtime. Guessing
+        either is what produced this file's original false positives, and silent over-reach is
+        the one failure a sweep cannot report -- a false positive at least argues with you.
+        This test exists so the list is a measurement and not a claim.
+        """
+        for label, body in (
+            ("attribute assignment on a local",
+             "doc = frappe.new_doc('ToDo')\n    doc.status = 'Done'"),
+            ("the value in a variable", "bad = 'Done'\n    "
+             "frappe.get_doc({'doctype': 'ToDo', 'status': bad})"),
+            ("the value from an f-string",
+             "frappe.get_doc({'doctype': 'ToDo', 'status': f'Do{chr(110)}e'})"),
+            ("the filters dict built elsewhere",
+             "where = {'status': 'Done'}\n    frappe.get_all('ToDo', filters=where)"),
+            ("a doctype that is not a literal",
+             "frappe.get_all(some_doctype, filters={'status': 'Done'})"),
+        ):
+            with self.subTest(label):
+                self.assertEqual([], self.plant(body), label)
+
+    def test_every_query_call_is_frappe_qualified(self):
+        """The tripwire for the one import style this pass cannot follow.
+
+        `from frappe import get_all` then a bare `get_all(...)` is ordinary Python and
+        `_dotted` would read it as `get_all`, which is in no table here. No call site in this
+        app is written that way. That is a measurement, and a measurement that is not a test is
+        just a sentence -- so this fails the day one is written, naming the file.
+        """
+        bare = set()
+        for path, rel in _python_files():
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                try:
+                    tree = ast.parse(handle.read())
+                except SyntaxError:
+                    continue
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.ImportFrom) and node.module == "frappe"
+                        and any(a.name in ("get_all", "get_list", "get_doc", "new_doc",
+                                           "get_value", "get_last_doc")
+                                for a in node.names)):
+                    bare.add("%s:%d" % (rel, node.lineno))
+        self.assertEqual(
+            set(), bare,
+            "a query or write call imported from frappe by name, which this pass reads only "
+            "as `frappe.<name>`: %r. Either qualify the call or teach _dotted the alias."
+            % (sorted(bare),))
 
 
 class ToDoStatusMirrorIsStated(unittest.TestCase):

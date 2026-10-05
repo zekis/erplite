@@ -1012,3 +1012,79 @@ One shape worth naming because it is the cheap kind of wrong: pass A used
 `os.path.exists`, which is true for a **directory**. `/assets/erplite/images`
 passes that check and 404s on the live site exactly like a missing file. It is
 `os.path.isfile` now, and the finding says which of the two it is.
+
+### `select_values` — `tests/offline/test_select_values.py`
+
+33 faults, 21 red, 3 false positives green, 5 controls green, 4 known blind
+spots green. The third **detector** target, and the one that makes the point
+cheapest: its subject is a narrow, decidable question — *is this one of the
+values the field is allowed to take?* — and the sweep asking it read **two** of
+the ways frappe writes or filters a Select value. Fourteen of the thirty-three
+faults were invisible to the file as it stood, and **three of those are in
+frappe's own docstrings**: `get_all`'s documents `filters` as a list of lists
+right beside the dict form, `db.set_value`'s says `field` may be "a dictionary
+of values to be updated", and its `dn` is "a document name **or filters** for
+updating many records". The app already uses the dict form of `set_value` in
+four live Xero writes.
+
+**Two minutes of probe predicted every one of them.** Before writing a fault,
+a throwaway script imported `violations()` and asked it about twenty candidate
+shapes planted one at a time. It named 18 blind spots and 3 false positives;
+checking each against frappe 15.52.0's source cut the 18 to 14 real ones — a
+flat three-element list is rejected by frappe itself (`get_filter`,
+`utils/data.py:1958`), `db.get_all_names` does not exist in v15, and
+`get_cached_value`'s second argument is a name, not filters. That is the
+procedure worth copying from this target: **ask the detector what it sees
+before you spend an hour proving what it doesn't, and check each answer against
+the framework's source before claiming it.** Three of the twenty candidates
+were my mistake, not the sweep's.
+
+**The general form, for any detector of a bug class: its reach is the set of
+syntaxes it reads, and a framework usually offers four or five ways to do the
+thing it is looking for.** `post_save_writes` read one of frappe's four ways to
+set a field; this read two of frappe's eleven query entry points and one of its
+four filter shapes. In both cases the detector's own tests were about the shape
+the author had in mind. The fix in both cases was one generic pass — here,
+following `get_filter` (`utils/data.py:1940-1975`), the single funnel every
+filter frappe accepts goes through — rather than an enumeration of call sites,
+which is why `or_filters`, `db.get_values` and the four-element filter came
+free.
+
+**A four-element filter names its own DocType** (`[doctype, fieldname,
+operator, value]`, `data.py:1963`), which need not be the one queried. A sweep
+that assumed the query's DocType would compare a value against the wrong
+field's options and be confidently wrong in both directions. There is a test
+for the precedence rather than a comment about it.
+
+**Three faults were FALSE POSITIVES — real frappe accepts the edit and the
+sweep reported it.** This is the `post_save_writes` lesson a second time: a
+green-expected fault going red can mean the detector is wrong, not the test.
+`_validate_selects` (`base_document.py:892-920`) is the authority on a write
+and it is narrower than "the value is in options" in three ways: it exempts
+`naming_series` by name, skips a falsy value, and **strips** the value before
+comparing. So `"status": ""` and `"status": "Draft "` are correct code, and this
+sweep flagged both. In a file whose own standing comment is *widen the mirror,
+do not narrow the app*, a guard that argues with correct code is the specific
+failure that teaches people to ignore it.
+
+And the asymmetry underneath, which is why the fix is two code paths and not
+one: **a write is stripped, a filter is not.** `_validate_selects` rewrites the
+field before comparing; nothing touches a filter value, which reaches the WHERE
+clause with its space and matches nothing. The same string is correct code on
+one side and a real finding on the other.
+
+**What this target does not reach**, named in the test file and asserted there
+by `test_what_this_cannot_see_is_still_invisible`, so the list is a measurement
+rather than a claim: attribute assignment on a local, a value held in a
+variable or built by an f-string, a filters dict built by a helper, and a
+DocType that is not a literal. Each needs the type of a local or a value that
+does not exist until runtime, and guessing either is what produced this file's
+original false positives. `.update()` is read only where the DocType is in the
+same expression (`new_doc("X").update({...})`) — the same boundary, drawn in
+the same place, rather than a special case.
+
+One tripwire for a case skipped on purpose, the habit from `string_refs`:
+`from frappe import get_all` then a bare `get_all(...)` is ordinary Python that
+`_dotted` reads as `get_all`, which is in no table. No call site in this app is
+written that way — and that measurement is now a test naming the file, because
+a measurement that is not a test is just a sentence.

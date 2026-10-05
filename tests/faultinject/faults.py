@@ -2144,6 +2144,266 @@ STRING_REFS = Target(
     ],
 )
 
+# -- select_values -----------------------------------------------------------
+#
+# `test_select_values.py` is the third *detector* in this tool, after
+# post_save_writes and string_refs. Its question is narrower than theirs: not
+# "does this name exist" but "is this one of the values the field is allowed to
+# take" -- decidable offline, because a Select carries its whole permitted set
+# in its own `options`.
+#
+# The two previous detector targets taught the question to ask, so every fault
+# here plants the real thing in real source: **what can real code do that this
+# cannot see?** The answer turned out to be most of frappe's filter API. The
+# sweep reads `filters={...}` and nothing else, and frappe's own get_all
+# docstring documents filters as a list of lists beside the dict form.
+#
+# Three verdicts beyond RED. `CONTROL` changes no behaviour and must stay
+# green. `FALSE POSITIVE` is an edit real frappe accepts that the sweep
+# reported -- green once the sweep is right, and it is the sweep that was
+# wrong, not the test. `KNOWN BLIND SPOT` is a real regression the sweep
+# deliberately cannot see, green for the opposite reason, each saying why
+# closing it would cost more than it buys.
+
+TODO_PAGE = "erplite/www/todo/index.py"
+PINV = "erplite/accounts/doctype/purchase_invoice/purchase_invoice.py"
+XERO_ACCOUNTS = "erplite/xero/accounts.py"
+PROJ_API = "erplite/projects/api.py"
+SCHED_API2 = "erplite/scheduler/api.py"
+TS_ENTRY = "erplite/projects/doctype/timesheet_entry/timesheet_entry.py"
+ROLE_PY = "erplite/scheduler/doctype/scheduler_role/scheduler_role.py"
+
+# The kanban's two reads of ToDo. The manager arm takes `filters=` alone; the
+# other arm is the app's one live `or_filters=`, which is the surface this
+# sweep never opened.
+TODO_MGR_FILTER = (
+    '            filters={"status": ["!=", "Cancelled"]},  '
+    '# Don\'t show cancelled by default\n')
+TODO_OR = (
+    '            or_filters={\n'
+    '                "allocated_to": current_user,\n'
+    '                "assigned_by": current_user,\n'
+    '                "owner": current_user\n'
+    '            },\n')
+
+# A planted call goes in front of a whitelisted endpoint's decorator, so the
+# indentation is nothing and the anchor is one line that occurs once.
+SCHED_ANCHOR = "@frappe.whitelist()\ndef get_projects_and_activities():\n"
+PROJ_ANCHOR = "@frappe.whitelist()\ndef get_timesheet_users():\n"
+ROLE_ANCHOR = "@frappe.whitelist()\ndef get_roles(status=\"Active\"):\n"
+
+
+def _planted(body, anchor=SCHED_ANCHOR):
+    """`body` as a module-level function planted in front of `anchor`."""
+    return "def _planted_probe():\n" + body + "\n\n" + anchor
+
+
+SELECT_VALUES = Target(
+    test="tests/offline/test_select_values.py",
+    faults=[
+        # -- What the sweep already bites: the dict filter and get_doc --------
+        # Symptom of a filter: valid SQL, the wrong set, in silence. `!=` an
+        # impossible value excludes nothing at all.
+        Fault("the kanban's ToDo status filter names a status ToDo cannot "
+              "hold", True,
+              [(TODO_PAGE, TODO_MGR_FILTER,
+                '            filters={"status": ["!=", "Done"]},  '
+                '# Don\'t show cancelled by default\n')]),
+        Fault("a Project status filter names a status Project cannot hold",
+              True,
+              [(SCHED_API2, '        filters={"status": ["!=", "Archived"]},\n',
+                '        filters={"status": ["!=", "Retired"]},\n')]),
+        Fault("one element of a `not in` list is not a ToDo status", True,
+              [(PROJ_API,
+                '                "status": ["not in", ["Cancelled", "Closed"]]\n',
+                '                "status": ["not in", ["Cancelled", "Done"]]\n')]),
+        Fault("a Resource status filter names a status Resource cannot hold",
+              True,
+              [(ROLE_PY,
+                '\tfilters={"name": ["in", resource_names], '
+                '"status": "Active"},\n',
+                '\tfilters={"name": ["in", resource_names], '
+                '"status": "Enabled"},\n')]),
+        # Symptom of a write: `_validate_selects` throws inside `_validate()`,
+        # after the controller's own hooks have run, so nothing can rescue it
+        # and the endpoint cannot create a record for any input.
+        Fault("a new ToDo is created with a status ToDo cannot hold", True,
+              [(TODO_PAGE,
+                '            "status": "Backlog",  # New todos start in backlog\n',
+                '            "status": "New",  # New todos start in backlog\n')]),
+        Fault("a new Timesheet Entry is created with an impossible status",
+              True,
+              [(TS_ENTRY, '            "status": "Draft"\n',
+                '            "status": "New"\n')]),
+        Fault("db.set_value writes an impossible status (field and value "
+              "positional)", True,
+              [(PINV,
+                '            frappe.db.set_value("Purchase Invoice", docname, '
+                '"status", "Submitted")\n',
+                '            frappe.db.set_value("Purchase Invoice", docname, '
+                '"status", "Sent")\n')]),
+
+        # -- The gap: frappe's filter API is wider than `filters={...}` -------
+        # Each of these is the SAME violation as the four above, written the
+        # way frappe's own documentation writes it.
+        Fault("the same filter written as a list of lists (frappe's get_all "
+              "docstring documents this form)", True,
+              [(TODO_PAGE, TODO_MGR_FILTER,
+                '            filters=[["status", "!=", "Done"]],\n')]),
+        Fault("the same filter as a four-element list (doctype, fieldname, "
+              "operator, value)", True,
+              [(TODO_PAGE, TODO_MGR_FILTER,
+                '            filters=[["ToDo", "status", "!=", "Done"]],\n')]),
+        Fault("a dict filter inside a list (build_filter_conditions wraps a "
+              "bare dict in one)", True,
+              [(TODO_PAGE, TODO_MGR_FILTER,
+                '            filters=[{"status": ["!=", "Done"]}],\n')]),
+        Fault("an impossible status in the app's one live `or_filters` -- a "
+              "surface the sweep never opened", True,
+              [(TODO_PAGE, TODO_OR,
+                '            or_filters={\n'
+                '                "allocated_to": current_user,\n'
+                '                "status": "Done",\n'
+                '                "owner": current_user\n'
+                '            },\n')]),
+        Fault("filters passed positionally to get_all (execute() takes "
+              "fields, then filters)", True,
+              [(TODO_PAGE,
+                '        todos = frappe.get_all("ToDo",\n' + TODO_MGR_FILTER +
+                '            fields=todo_fields,\n',
+                '        todos = frappe.get_all("ToDo", todo_fields, '
+                '{"status": "Done"},\n')]),
+        Fault("db.set_value's dict-of-values form, which four live Xero "
+              "writes already use", True,
+              [(XERO_ACCOUNTS,
+                '                frappe.db.set_value("Purchase Invoice", '
+                'purchase_invoice.name, {\n'
+                '                    "xero_invoice_id": invoice["InvoiceID"],\n',
+                '                frappe.db.set_value("Purchase Invoice", '
+                'purchase_invoice.name, {\n'
+                '                    "status": "Sent",\n'
+                '                    "xero_invoice_id": invoice["InvoiceID"],\n')]),
+        Fault("db.set_value's field and value given by keyword", True,
+              [(PINV,
+                '            frappe.db.set_value("Purchase Invoice", docname, '
+                '"status", "Submitted")\n',
+                '            frappe.db.set_value("Purchase Invoice", docname, '
+                'field="status", val="Sent")\n')]),
+        Fault("db.set_value's second argument as filters (documented: a name "
+              "or filters for many rows)", True,
+              [(PINV,
+                '            frappe.db.set_value("Purchase Invoice", docname, '
+                '"status", "Submitted")\n',
+                '            frappe.db.set_value("Purchase Invoice", '
+                '{"status": "Sent"}, "status", "Submitted")\n')]),
+        Fault("frappe.get_value, the documented alias for db.get_value, which "
+              "the app already calls three times", True,
+              [(SCHED_API2, SCHED_ANCHOR,
+                _planted('    return frappe.get_value("Project", '
+                         '{"status": "Retired"}, "name")'))]),
+        Fault("frappe.db.get_values, beside the get_value the sweep does "
+              "read", True,
+              [(SCHED_API2, SCHED_ANCHOR,
+                _planted('    return frappe.db.get_values("Project", '
+                         '{"status": "Retired"}, "name")'))]),
+        Fault("frappe.get_last_doc, which passes its filters straight to "
+              "get_all", True,
+              [(SCHED_API2, SCHED_ANCHOR,
+                _planted('    return frappe.get_last_doc("Project", '
+                         'filters={"status": "Retired"})'))]),
+        Fault("a child row inside a get_doc dict, carrying its own doctype",
+              True,
+              [(PROJ_API, PROJ_ANCHOR,
+                _planted('    return frappe.get_doc({"doctype": "Project", '
+                         '"rows": [{"doctype": "ToDo", "status": "Done"}]})',
+                         PROJ_ANCHOR))]),
+        Fault("get_doc's documented kwargs form", True,
+              [(PROJ_API, PROJ_ANCHOR,
+                _planted('    return frappe.get_doc(doctype="ToDo", '
+                         'status="Done")', PROJ_ANCHOR))]),
+        Fault("new_doc then update(), with the doctype in the same "
+              "expression", True,
+              [(PROJ_API, PROJ_ANCHOR,
+                _planted('    return frappe.new_doc("ToDo").update('
+                         '{"status": "Done"})', PROJ_ANCHOR))]),
+
+        # -- FALSE POSITIVE: real frappe accepts these; the sweep reported ---
+        # `_validate_selects` (base_document.py:892-920) is the authority on a
+        # write, and it exempts all three. A sweep that is wrong here teaches
+        # people to "fix" correct code, which is the one failure this file's
+        # own ToDo comment exists to prevent.
+        Fault("FALSE POSITIVE: naming_series, which _validate_selects exempts "
+              "by name (line 897)", False,
+              [(TS_ENTRY, '            "status": "Draft"\n',
+                '            "status": "Draft",\n'
+                '            "naming_series": "TSE-.YYYY.-"\n')]),
+        Fault("FALSE POSITIVE: an empty Select value, which frappe skips as "
+              "falsy (line 897)", False,
+              [(TS_ENTRY, '            "status": "Draft"\n',
+                '            "status": ""\n')]),
+        Fault("FALSE POSITIVE: a written value with trailing space, which "
+              "frappe strips before comparing (line 907)", False,
+              [(TS_ENTRY, '            "status": "Draft"\n',
+                '            "status": "Draft "\n')]),
+
+        # -- CONTROL: correct code, and it must stay correct after the fix ----
+        Fault("CONTROL: a `like` filter with a wildcard is not an options "
+              "comparison", False,
+              [(TODO_PAGE, TODO_MGR_FILTER,
+                '            filters={"status": ["like", "%pen%"]},\n')]),
+        Fault("CONTROL: a real status written as a list of lists -- the new "
+              "forms must not over-report", False,
+              [(TODO_PAGE, TODO_MGR_FILTER,
+                '            filters=[["status", "!=", "Cancelled"]],\n')]),
+        Fault("CONTROL: a four-element filter naming another doctype and a "
+              "value that doctype does hold", False,
+              [(TODO_PAGE, TODO_MGR_FILTER,
+                '            filters=[["Project", "status", "!=", '
+                '"Archived"]],\n')]),
+        Fault("CONTROL: reference_type 'Activity' on ToDo is a Link, not the "
+              "Select of the same name on Payment Entry", False,
+              [(PROJ_API, PROJ_ANCHOR,
+                _planted('    return frappe.get_all("ToDo", filters='
+                         '{"reference_type": "Activity"})', PROJ_ANCHOR))]),
+        Fault("CONTROL: a real ToDo status written through the dict form of "
+              "set_value", False,
+              [(XERO_ACCOUNTS,
+                '                frappe.db.set_value("Purchase Invoice", '
+                'purchase_invoice.name, {\n'
+                '                    "xero_invoice_id": invoice["InvoiceID"],\n',
+                '                frappe.db.set_value("Purchase Invoice", '
+                'purchase_invoice.name, {\n'
+                '                    "status": "Submitted",\n'
+                '                    "xero_invoice_id": invoice["InvoiceID"],\n')]),
+
+        # -- KNOWN BLIND SPOT: real regressions, deliberately invisible ------
+        # Each needs something a single-expression read cannot have: the type
+        # of a local, or a value that does not exist until runtime. Guessing
+        # is what produced this file's original false positives, and silent
+        # over-reach is the one failure a sweep cannot report.
+        Fault("KNOWN BLIND SPOT: attribute assignment on a local whose "
+              "doctype is not in the expression", False,
+              [(PROJ_API, PROJ_ANCHOR,
+                _planted('    doc = frappe.new_doc("ToDo")\n'
+                         '    doc.status = "Done"\n'
+                         '    return doc', PROJ_ANCHOR))]),
+        Fault("KNOWN BLIND SPOT: the value held in a variable first", False,
+              [(PROJ_API, PROJ_ANCHOR,
+                _planted('    bad = "Done"\n'
+                         '    return frappe.get_doc({"doctype": "ToDo", '
+                         '"status": bad})', PROJ_ANCHOR))]),
+        Fault("KNOWN BLIND SPOT: the value built by an f-string", False,
+              [(PROJ_API, PROJ_ANCHOR,
+                _planted('    return frappe.get_doc({"doctype": "ToDo", '
+                         '"status": f"Do{\'ne\'}"})', PROJ_ANCHOR))]),
+        Fault("KNOWN BLIND SPOT: the filters dict built by a helper", False,
+              [(PROJ_API, PROJ_ANCHOR,
+                _planted('    where = {"status": "Done"}\n'
+                         '    return frappe.get_all("ToDo", filters=where)',
+                         PROJ_ANCHOR))]),
+    ],
+)
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -2155,4 +2415,5 @@ TARGETS = {
     "trip_status": TRIP_STATUS,
     "post_save_writes": POST_SAVE_WRITES,
     "string_refs": STRING_REFS,
+    "select_values": SELECT_VALUES,
 }
