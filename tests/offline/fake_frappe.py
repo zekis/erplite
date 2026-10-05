@@ -79,6 +79,17 @@ class ValidationError(Exception):
     """What frappe.throw raises."""
 
 
+class TimestampMismatchError(ValidationError):
+    """frappe.TimestampMismatchError: the row moved after the document was read.
+
+    A ValidationError subclass, exactly as frappe declares it
+    (`frappe/exceptions.py:152`). That inheritance is the point rather than a
+    detail: an endpoint whose handler is `except Exception` cannot tell this
+    apart from a business-rule failure, so it re-labels a stale-write bug as
+    "Failed to send ... to Xero" and rolls the request back.
+    """
+
+
 class PermissionError(Exception):
     """frappe.PermissionError, raised by has_permission(throw=True).
 
@@ -307,6 +318,11 @@ class FakeFrappe(object):
         self.saves = []
         self.deletes = []
         self._names = {}
+        # Real `modified` values differ between two writes; a constant cannot
+        # model a stale-document check at all. This advances once per write so
+        # ordinary reads/writes behave as before while a second write to the
+        # same row becomes visible to the first reader.
+        self._clock = 0
         self.db = _FakeDb(self)
 
     # -- decorators and odds and ends the module touches at import time --
@@ -427,6 +443,11 @@ class FakeFrappe(object):
                 "writing %s %r with %s=%r, which %s.%s cannot hold. Options: %s"
                 % (doctype, data.get("name"), field, value, doctype, field,
                    ", ".join(sorted(allowed))))
+
+    def next_stamp(self):
+        """The next `modified` value. Monotonic, and shaped like frappe's."""
+        self._clock += 1
+        return "2026-10-06 09:%02d:%02d" % (self._clock // 60, self._clock % 60)
 
     def _find_row(self, doctype, name):
         for row in self.tables.get(doctype, []):
@@ -671,10 +692,17 @@ class _FakeDb(object):
         self._frappe._check_select_filters(doctype, updates, "set_value")
         for field, val in updates.items():
             self._frappe.values_set.append((doctype, name, field, val))
+        # `update_modified` defaults to True in real frappe, so a set_value
+        # moves the row out from under anything already holding it in memory.
+        # Modelling this is what lets a test see a stale save, instead of the
+        # stand-in silently making every stale save succeed.
+        bump = kwargs.get("update_modified", True) and "modified" not in updates
         for row in self._frappe.tables.get(doctype, []):
             if row.get("name") == name:
                 for field, val in updates.items():
                     row[field] = val
+                if bump:
+                    row["modified"] = self._frappe.next_stamp()
 
     def commit(self):
         self._frappe.commits += 1
@@ -828,11 +856,22 @@ class FakeStoredDoc(object):
             return self.insert()
         frappe = self._frappe
         frappe._check_select_values(self.doctype, self._data)
-        self._data["modified"] = self.STAMP
         row = frappe._find_row(self.doctype, self._data.get("name"))
         if row is None:
             raise DoesNotExistError(
                 "%s %r vanished before save" % (self.doctype, self._data.get("name")))
+        # frappe's check_if_latest (`model/document.py:372` calls it; `807-832`
+        # is the body): it reloads the row and compares its `modified` against
+        # the value the in-memory document was read with
+        # (`_original_modified`, set in set_user_and_timestamp at `:556`).
+        # Different means someone wrote in between, and it raises rather than
+        # overwriting their write.
+        if row.get("modified") != self._data.get("modified"):
+            raise TimestampMismatchError(
+                "Error: Document has been modified after you have opened it "
+                "(%s, %s). Please refresh to get the latest document."
+                % (row.get("modified"), self._data.get("modified")))
+        self._data["modified"] = frappe.next_stamp()
         row.update(self._data)
         frappe.saves.append(_dict(doctype=self.doctype, name=self._data.get("name")))
         return self

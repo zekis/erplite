@@ -647,17 +647,40 @@ That strictness earned itself immediately: it turned **16 tests in
 no rows loaded. A permissive stand-in would have returned True and said nothing,
 and the gate would have been tested only by the file written to test it.
 
-### What this does not fix, pinned as a test rather than a comment
+### The waiver that was here, and how it ended (rev_6c9dc08cf7)
 
-The contact path is still **not idempotent**. It posts to Xero first and `save()`s
-second, so a permitted user whose save fails for any other reason leaves a contact
-in Xero with its `xero_contact_id` unstored — which defeats the already-sent guard
-and duplicates the contact next time. The gate removes the *permission* reason for
-that save to fail, which is what was approved; the rest changes behaviour for
-users who are allowed to be there, so it is the owner's call.
-`test_a_permitted_save_failure_still_strands_the_contact` holds the hazard as it
-stands and **fails the day it is fixed**, in the same spirit as
-`AWAITING_OWNER_DECISION` above: a waiver must not outlive what it waives.
+This section used to record that the contact path was **not idempotent**, held by
+`test_a_permitted_save_failure_still_strands_the_contact`, which was written to
+**fail the day it was fixed**. On 5 Oct 2026 the owner approved the fix, that test
+failed exactly as designed, and it was replaced by its inverse,
+`TestTheContactIdIsRecordedAndSurvives`. The waiver did not outlive what it
+waived, which is the whole point of writing one that way.
+
+The defect was worse than the waiver said. It was filed as needing "a save to fail
+for some other reason", i.e. a narrow window. In fact
+`create_customer`/`create_supplier` **already** recorded `xero_contact_id` with
+`frappe.db.set_value` (`erplite/xero/accounts.py:511`, `:591`), and the endpoint
+then saved a document loaded *before* that write. `db.set_value` updates
+`modified`, so `check_if_latest` raised `TimestampMismatchError` — a
+`ValidationError`, so `except Exception` re-labelled it "Failed to send customer to
+Xero" and rolled the request back. **It failed every time the post succeeded.**
+The fix was therefore a removal: drop the stale `save()`, keep the commit, as
+`sales_invoice.py` already did.
+
+Two stand-in gaps let this hide, and both are now closed, because a test suite that
+cannot see a bug of this shape will not see the next one either:
+
+* `FakeLedger`'s four creators returned an id and wrote nothing, so the real
+  `db.set_value` in `accounts.py` was not modelled. They now record it.
+* `modified` was the constant `STAMP`, so no stale-document check could ever
+  fire. `_FakeDb.set_value` now advances it and `FakeStoredDoc.save` compares it,
+  raising `TimestampMismatchError` as frappe does.
+
+Taking the bug out and putting it back proves the point: with the fix reverted in
+one controller, 8 tests go red; with the stand-in's `modified` model *also*
+disabled, 2 still do — `test_nothing_saves_the_document_after_the_post` and the
+source-level `test_no_send_to_xero_saves_after_calling_the_creator`, neither of
+which depends on that model.
 
 Not claimed: who holds which role on the live site (the owner's data), and
 anything about the Xero wire format, which `test_xero_invoice_send.py` covers.

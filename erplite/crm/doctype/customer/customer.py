@@ -6,7 +6,6 @@ from __future__ import unicode_literals
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import now_datetime
 from erplite.xero.accounts import create_customer, get_customers_from_xero, import_customer_from_xero
 
 class Customer(Document):
@@ -57,10 +56,27 @@ def send_to_xero(docname):
         xero_contact_id = create_customer(customer)
         
         if xero_contact_id:
-            # Update customer with Xero details
-            customer.xero_contact_id = xero_contact_id
-            customer.xero_sync_date = now_datetime()
-            customer.save()
+            # The customer is already updated in the database by create_customer
+            # (erplite/xero/accounts.py:511 sets xero_contact_id and
+            # xero_sync_date with frappe.db.set_value before returning the id).
+            # No need to save the document again, just commit the transaction.
+            #
+            # Saving it again is not merely redundant, it cannot succeed, and
+            # that is the bug this removes. `customer` was loaded BEFORE that
+            # set_value; set_value updates `modified` by default
+            # (frappe/database/database.py:926-948), so frappe's own
+            # check_if_latest (model/document.py:372, body at 807-832) compares
+            # the row's new `modified` against the stale `_original_modified`
+            # the document was read with (:556), finds them different and
+            # raises TimestampMismatchError. That is a ValidationError
+            # (frappe/exceptions.py:152), so the `except Exception` below
+            # caught it, re-labelled it "Failed to send customer to Xero" and
+            # rolled the request back -- discarding the recorded id while the
+            # contact stayed in Xero. The `if customer.xero_contact_id` guard
+            # above then saw nothing, and the next attempt created a SECOND
+            # contact.
+            #
+            # sales_invoice.py already does this for the invoice path.
             
             frappe.db.commit()
             return True
