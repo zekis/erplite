@@ -2,23 +2,16 @@
 # Copyright (c) 2023, ERPLite and contributors
 # For license information, please see license.txt
 
-from __future__ import unicode_literals
-import frappe
 from frappe.model.document import Document
 
+# No document hooks here. Frappe never runs a child DocType's controller
+# methods: Document._validate() calls only its own _validate_* helpers on
+# get_all_children(), and run_method("validate") is called on the parent
+# (frappe/model/document.py). A validate() on this class looked like it was
+# computing amount and tax_amount, and never ran.
+# Purchase Invoice.calculate_totals() derives both, so nothing changed when
+# these methods were removed.
+
+
 class PurchaseInvoiceItem(Document):
-    def validate(self):
-        """Validate purchase invoice item"""
-        self.calculate_amount()
-        self.calculate_tax_amount()
-    
-    def calculate_amount(self):
-        """Calculate amount based on quantity and rate"""
-        self.amount = self.qty * self.rate
-    
-    def calculate_tax_amount(self):
-        """Calculate tax amount based on amount and tax rate"""
-        if self.tax_rate:
-            self.tax_amount = self.amount * (self.tax_rate / 100)
-        else:
-            self.tax_amount = 0
+    pass
