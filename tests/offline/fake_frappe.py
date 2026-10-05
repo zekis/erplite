@@ -71,6 +71,10 @@ class ImpossibleValue(Exception):
     """
 
 
+class DoesNotExistError(Exception):
+    """frappe.DoesNotExistError, raised by get_doc for a name that is not there."""
+
+
 class ValidationError(Exception):
     """What frappe.throw raises."""
 
@@ -152,6 +156,20 @@ TODO_SELECT_OPTIONS = {
     "priority": {"High", "Medium", "Low"},
 }
 
+# Two more Frappe DocTypes, listed here for the same reason ToDo is: they are
+# not ours, so doctype_fields() has no JSON to read. The todo kanban page reads
+# `Has Role` to decide who is a manager and `User` to fill its assignee list.
+HAS_ROLE_FIELDS = {
+    "name", "owner", "creation", "modified", "modified_by", "docstatus", "idx",
+    "parent", "parentfield", "parenttype", "role",
+}
+
+USER_FIELDS = {
+    "name", "owner", "creation", "modified", "modified_by", "docstatus", "idx",
+    "email", "first_name", "last_name", "full_name", "username", "user_image",
+    "enabled", "user_type", "time_zone",
+}
+
 ALIAS = re.compile(r"^\s*(?P<field>[\w.]+)\s+as\s+(?P<alias>[\w]+)\s*$", re.IGNORECASE)
 
 
@@ -211,6 +229,8 @@ class FakeFrappe(object):
             "Activity": doctype_fields("projects", "activity"),
             "Project": doctype_fields("projects", "project"),
             "ToDo": TODO_FIELDS,
+            "Has Role": HAS_ROLE_FIELDS,
+            "User": USER_FIELDS,
             "Division": doctype_fields("scheduler", "division"),
             "Timesheet Entry": doctype_fields("projects", "timesheet_entry"),
             "Schedule Entry": doctype_fields("scheduler", "schedule_entry"),
@@ -233,6 +253,10 @@ class FakeFrappe(object):
         self.assignments_added = []
         self.assignments_removed = []
         self.values_set = []
+        self.inserts = []
+        self.saves = []
+        self.deletes = []
+        self._names = {}
         self.db = _FakeDb(self)
 
     # -- decorators and odds and ends the module touches at import time --
@@ -259,6 +283,65 @@ class FakeFrappe(object):
     def throw(self, message, exc=None, **kwargs):
         """frappe.throw aborts the save; nothing after it runs."""
         raise (exc or ValidationError)(message)
+
+    def _check_select_values(self, doctype, data):
+        """Refuse to write a Select value the DocType cannot hold.
+
+        The real database does not enforce this -- the column is varchar -- so
+        a status the DocType never declared is written and read back happily.
+        That is precisely the bug class this suite exists to catch, so the
+        stand-in raises where Frappe would shrug.
+        """
+        allowed_by_field = self.select_options.get(doctype) or {}
+        for field, allowed in allowed_by_field.items():
+            value = data.get(field)
+            if value in (None, "") or value in allowed:
+                continue
+            raise ImpossibleValue(
+                "writing %s %r with %s=%r, which %s.%s cannot hold. Options: %s"
+                % (doctype, data.get("name"), field, value, doctype, field,
+                   ", ".join(sorted(allowed))))
+
+    def _find_row(self, doctype, name):
+        for row in self.tables.get(doctype, []):
+            if row.get("name") == name:
+                return row
+        return None
+
+    def get_doc(self, doctype, name=None, **kwargs):
+        """frappe.get_doc, in its two shapes.
+
+        `get_doc(dict)` builds a new, unsaved document; `get_doc(doctype,
+        name)` loads a stored one. The page under test uses both, which is why
+        neither could be called before this existed.
+        """
+        if isinstance(doctype, dict):
+            data = dict(doctype)
+            doctype = data.pop("doctype")
+            self._check_fields(doctype, list(data.keys()), "get_doc({...})")
+            return FakeStoredDoc(self, doctype, data, is_new=True)
+
+        row = self._find_row(doctype, name)
+        if row is None:
+            raise DoesNotExistError("%s %r not found" % (doctype, name))
+        # A copy, not the row: Frappe only writes on save(), so a test can tell
+        # an aborted save from a completed one.
+        return FakeStoredDoc(self, doctype, dict(row), is_new=False)
+
+    def get_cached_doc(self, doctype, name=None, **kwargs):
+        """Frappe's cached read. Same answer; the cache is not what is under test."""
+        return self.get_doc(doctype, name, **kwargs)
+
+    def delete_doc(self, doctype, name=None, **kwargs):
+        row = self._find_row(doctype, name)
+        if row is None:
+            raise DoesNotExistError("%s %r not found" % (doctype, name))
+        self.tables[doctype].remove(row)
+        self.deletes.append(_dict(doctype=doctype, name=name))
+
+    def next_name(self, doctype):
+        self._names[doctype] = self._names.get(doctype, 0) + 1
+        return "%s-%04d" % (doctype.upper().replace(" ", "-"), self._names[doctype])
 
     def parse_json(self, value):
         if isinstance(value, str):
@@ -328,10 +411,11 @@ class FakeFrappe(object):
 
     # -- the query API under test --
     def get_all(self, doctype, fields=None, filters=None, order_by=None,
-                pluck=None, limit=None, **kwargs):
+                pluck=None, limit=None, or_filters=None, **kwargs):
         self.queries.append(_dict(
             doctype=doctype, fields=list(fields or []),
-            filters=dict(filters or {}), order_by=order_by, pluck=pluck,
+            filters=dict(filters or {}), or_filters=dict(or_filters or {}),
+            order_by=order_by, pluck=pluck,
         ))
 
         requested = []          # (column, output_key)
@@ -347,6 +431,7 @@ class FakeFrappe(object):
 
         self._check_fields(doctype, [c for c, _ in requested], "fields")
         self._check_fields(doctype, list((filters or {}).keys()), "filters")
+        self._check_fields(doctype, list((or_filters or {}).keys()), "or_filters")
         if order_by:
             self._check_fields(doctype, [order_by.split()[0]], "order_by")
         self._check_select_filters(doctype, filters, "get_all")
@@ -354,6 +439,14 @@ class FakeFrappe(object):
 
         rows = [r for r in self.tables.get(doctype, [])
                 if all(_matches(r, k, v) for k, v in (filters or {}).items())]
+
+        if or_filters:
+            # Frappe ANDs the two groups and ORs within or_filters: filters go
+            # into `conditions` and or_filters into `grouped_or_conditions`,
+            # which DatabaseQuery joins with AND
+            # (frappe/model/db_query.py build_conditions).
+            rows = [r for r in rows
+                    if any(_matches(r, k, v) for k, v in or_filters.items())]
 
         if order_by:
             # Direction matters: `modified desc` is how the callers ask for
@@ -382,7 +475,26 @@ class _FakeDb(object):
         self._frappe = frappe
 
     def exists(self, doctype, name):
-        return any(r.get("name") == name for r in self._frappe.tables.get(doctype, []))
+        """frappe.db.exists(doctype, filters), where filters may be a name or a dict.
+
+        This used to compare `row["name"]` only, so the todo kanban page's
+
+            frappe.db.exists("Has Role", {"parent": user, "role": ["in", [...]]})
+
+        compared a name against a dict and answered False for everybody --
+        making every user a non-manager and quietly passing any test that did
+        not involve a manager. A stand-in that cannot express the question
+        gives the wrong answer rather than an error, which is the worst of the
+        two, so it matches real Frappe's signature now.
+        """
+        rows = self._frappe.tables.get(doctype, [])
+        if isinstance(name, dict):
+            self._frappe._check_fields(doctype, list(name.keys()), "db.exists")
+            for row in rows:
+                if all(_matches(row, k, v) for k, v in name.items()):
+                    return row.get("name")
+            return None
+        return any(r.get("name") == name for r in rows)
 
     def get_value(self, doctype, name=None, fieldname="name", **kwargs):
         # Real frappe's signature is get_value(doctype, filters=None,
@@ -507,6 +619,126 @@ class FakeDocumentBase(object):
         if not previous:
             return True
         return getattr(previous, fieldname, None) != getattr(self, fieldname, None)
+
+
+class FakeStoredDoc(object):
+    """What `get_doc` hands back: a document that can be inserted or saved.
+
+    Deliberately thin. It exists because the ToDo kanban page's endpoints are
+    written against get_doc/insert/save rather than db.set_value, so before
+    this there was no way to call them at all.
+
+    Two behaviours are copied from Frappe rather than invented, because tests
+    turn on them:
+
+      * `insert()` sets `owner` from the session user (Frappe does this in
+        BaseDocument.db_insert) and nothing afterwards changes it. That is why
+        `owner` is the durable record of who created a document, and why the
+        todo page can use it to keep a creator in touch with work they have
+        handed on.
+      * A save writes nothing until it is called. `get_doc` hands back a copy
+        of the row, so a `frappe.throw` part-way through an endpoint leaves the
+        stored document untouched -- which is what makes a refused update
+        testable rather than merely unobserved.
+
+    What it does NOT copy, so no test may assert on it: `fetch_from`. Frappe
+    fills `assigned_by_full_name` from `assigned_by.full_name` on save; this
+    does not. Nor does it enforce `reqd`; tests/offline/test_mandatory_fields_
+    on_insert.py checks that statically across every get_doc literal instead.
+    """
+
+    STAMP = "2026-10-06 09:00:00"
+
+    def __init__(self, frappe, doctype, data, is_new):
+        object.__setattr__(self, "_frappe", frappe)
+        object.__setattr__(self, "_data", data)
+        object.__setattr__(self, "_is_new", is_new)
+        object.__setattr__(self, "doctype", doctype)
+
+    def __getattr__(self, key):
+        # Only reached when normal lookup fails, so the real attributes set in
+        # __init__ never come through here.
+        data = object.__getattribute__(self, "_data")
+        if key in data:
+            return data[key]
+        doctype = object.__getattribute__(self, "doctype")
+        known = object.__getattribute__(self, "_frappe").fields.get(doctype) or set()
+        if key in known:
+            # A declared field that this row has no value for. Frappe's
+            # init_valid_columns gives it None rather than leaving it missing.
+            return None
+        raise AttributeError(
+            "%s has no field %r, so Frappe would not have it either" % (doctype, key))
+
+    def __setattr__(self, key, value):
+        self._frappe._check_fields(self.doctype, [key], "setting %s.%s" % (self.doctype, key))
+        self._data[key] = value
+
+    def as_dict(self):
+        return dict(self._data)
+
+    def get_db_value(self, fieldname):
+        """Frappe's Document.get_db_value: the stored value, not the in-memory one."""
+        row = self._frappe._find_row(self.doctype, self._data.get("name"))
+        return (row or {}).get(fieldname)
+
+    def insert(self, **kwargs):
+        frappe = self._frappe
+        data = self._data
+        data.setdefault("name", frappe.next_name(self.doctype))
+        data.setdefault("owner", frappe.session.user)
+        data.setdefault("creation", self.STAMP)
+        data.setdefault("docstatus", 0)
+        data.setdefault("idx", 0)
+        data["modified"] = self.STAMP
+        frappe._check_select_values(self.doctype, data)
+        frappe.tables.setdefault(self.doctype, []).append(_dict(data))
+        object.__setattr__(self, "_is_new", False)
+        frappe.inserts.append(_dict(doctype=self.doctype, name=data["name"]))
+        return self
+
+    def save(self, **kwargs):
+        if self._is_new:
+            return self.insert()
+        frappe = self._frappe
+        frappe._check_select_values(self.doctype, self._data)
+        self._data["modified"] = self.STAMP
+        row = frappe._find_row(self.doctype, self._data.get("name"))
+        if row is None:
+            raise DoesNotExistError(
+                "%s %r vanished before save" % (self.doctype, self._data.get("name")))
+        row.update(self._data)
+        frappe.saves.append(_dict(doctype=self.doctype, name=self._data.get("name")))
+        return self
+
+
+class FakeUtils(object):
+    """The handful of frappe.utils helpers the todo page formats dates with.
+
+    Real `formatdate` honours the site's date format and `getdate` accepts
+    several shapes. These do the least that lets the page run, and no test
+    asserts on the exact wording of a formatted date.
+    """
+
+    def getdate(self, value=None):
+        if value in (None, ""):
+            return datetime.date.today()
+        if isinstance(value, datetime.datetime):
+            return value.date()
+        if isinstance(value, datetime.date):
+            return value
+        return datetime.datetime.fromisoformat(str(value)[:19]).date()
+
+    def today(self):
+        return datetime.date.today().isoformat()
+
+    def formatdate(self, value=None, fmt=None):
+        if value in (None, ""):
+            return ""
+        return self.getdate(value).isoformat()
+
+    def get_system_timezone(self):
+        return "Australia/Perth"
 
 
 def make_doc(controller_class, doctype, module, doctype_dir, data=None):
