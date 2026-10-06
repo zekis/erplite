@@ -576,6 +576,64 @@ could not be saved at all).
 `TheSweepBites` holds 18 self-tests: every call shape and argument position that
 must be reported, and every expression that must not be.
 
+## `test_read_shapes.py` — the shape of a read, not the DocType's name
+
+`test_endpoint_wiring.py` asks whether a DocType literal names something that
+exists. This asks the next question: given that it does, is this the right way
+to read *that kind* of DocType? Three kinds behave differently enough that the
+same call is correct on one and fatal on another — an ordinary DocType with a
+table and one row per document, a **Single** (`issingle`) with no table at all,
+and a **child table** (`istable`) whose every row belongs to a parent.
+
+The kinds are read out of each DocType's own JSON, for the same reason
+`fake_frappe` reads field lists out of them: the app declares one Single
+(`Xero Settings`) and eight child tables today, and that is the owner's business
+to change. frappe's two are named instead, with the file each was read from,
+because their JSONs are not in this tree: `System Settings` (issingle) and
+`Has Role` (istable).
+
+**The names do not tell you which call is safe, and I got it backwards in
+writing before this file existed.** A comment on main said
+`frappe.get_all("System Settings")` "would return nothing rather than raise".
+The opposite, and the two halves are not symmetric:
+
+| call on a Single | what frappe does |
+| --- | --- |
+| `get_all` / `get_list`, either receiver | **raises** `TableMissingError` |
+| `db.get_value` / `get_value` | fine — falls back to the singles table |
+| `get_doc(dt)`, `get_doc(dt, anything)` | fine — `load_from_db` ignores the name |
+| `get_single`, `get_single_value` | fine — `get_single(dt)` *is* `get_doc(dt, dt)` |
+
+`get_all` and `get_list` go to `DatabaseQuery`, which asks for the table's
+columns (`db_query.py:422`) and re-raises `TableMissingError` unless `ignore_ddl`
+is set (`db_query.py:924-931`, `database.py:1344`). `frappe.db.get_all` and
+`frappe.db.get_list` are not separate implementations — `database.py:761-766`
+forwards both. `db.get_value` with no filters goes straight to
+`get_values_from_single`, and with filters catches the missing table and falls
+back, under a comment reading "table not found, look in singles"
+(`database.py:648-656`). Every safe shape in `SINGLE_SAFE` carries the line it
+was read from, and a shape that is on neither list **fails** rather than passing:
+unexamined is not the same as safe, and assuming it was is what produced the
+wrong comment.
+
+**The child-table half is a scope rule, not a crash.** An unparented child read
+returns rows belonging to every parent in the system, and nothing in the query
+layer narrows them: `frappe.get_all` skips permissions outright
+(`__init__.py:2044`), the `No permission to read` branch is guarded by
+`not istable` so it cannot fire for a child table (`db_query.py:1327-1337`), and
+the row-level parent condition applies only when a `parent_doctype` is passed
+(`db_query.py:1377`). So the filter is the only thing doing the scoping. The
+app's three child reads all do it — `supplier_quote.py:94` and the two `Has Role`
+checks in `www/todo/index.py` — and both of frappe's written filter forms count.
+
+**The two read-site counts are the part that earns its keep.** Nineteen sites
+name a Single, three name a child table, both measured. Driving the target found
+that the counts, not the shape rules, are what notice a read moving out of the
+walker's reach — behind `db = frappe.db`, into a variable, into raw SQL — because
+the read that left took the count with it. `tests/faultinject/README.md` has the
+table, including the two regressions this file does not notice and the one
+*correct* shape it wrongly reported before the probe found it.
+
 ## `test_xero_permission_gate.py` — who may write to the real Xero ledger
 
 The first surface in this folder that is about **permissions rather than

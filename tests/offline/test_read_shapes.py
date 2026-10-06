@@ -81,12 +81,54 @@ pins -- the fourth one is the one to worry about.
   not read frappe's source for each of them. An unclassified shape on a Single
   fails here, loudly, asking for the classification -- it does not pass quietly.
   Guessing is exactly the failure this file was written after.
-* **Reads through an alias.** Same blind spot as `test_endpoint_wiring.py`, and
-  its `test_no_module_aliases_frappe` is what keeps the blind spot empty.
-* **Non-literal DocType names.** A name in a variable is unreadable statically.
-* **Whether the parent filter is *correct*.** `filters={"parent": x}` is counted
-  as parented whatever `x` is. The claim is that the read is scoped to a parent,
-  not that it is scoped to the right one.
+* **Whether the parent filter is *correct*.** `filters={"parent": x}` and
+  `filters=[["parent", "=", x]]` both count as parented whatever `x` is. The
+  claim is that the read is scoped to *a* parent, not to the right one.
+* **Raw SQL.** `frappe.db.sql` names a table, not a DocType, and nothing here
+  reaches it. `test_raw_sql.py` is where that lives.
+* **A field that does not exist on the Single.** The shape can be right and the
+  field wrong; `test_undeclared_attributes.py` and `test_query_fields.py` judge
+  names inside the read.
+
+## The blind spots, measured rather than assumed
+
+Written as a probe (`probe_shapes.py` in the working notes, not kept), each one
+a real edit applied to real source and restored:
+
+| regression | noticed | by |
+| --- | --- | --- |
+| a Single read becomes `get_all` | yes | the shape rule |
+| ... written as `frappe.db.get_list` | yes | the shape rule |
+| ... moved behind `db = frappe.db` | yes | **the count floor** |
+| ... its DocType moved into a variable | yes | **the count floor** |
+| ... called via `from frappe import get_all` | yes | **the count floor** |
+| a child read loses its `parent` filter | yes | the shape rule |
+| a child read's filters are built elsewhere | yes | the shape rule |
+| a child table read with raw SQL instead | yes | **the count floor** |
+| an *added* unparented read behind an alias | **no** | - |
+| an *added* unparented read, DocType in a variable | **no** | - |
+
+Three things follow, and the first two are why the floors are not decoration.
+
+**The floors catch what the walker cannot see.** An aliased or variable-named
+read is invisible to both rules, and in every case above the floor still went
+red -- because the read it replaced *left* the walker's reach, so the count fell.
+That is a better reason for the floor than the one I first wrote ("a new one
+arrived"), and it is measured rather than argued.
+
+**But only when a read leaves.** Add an aliased unparented child read and leave
+the existing one alone, and the count still says three and nothing goes red.
+That is the residual hole, and it is the same hole
+`test_endpoint_wiring.test_no_module_aliases_frappe` exists to keep empty: the
+app has no `x = frappe.db` anywhere, and that test is what keeps it that way.
+This file's rules rest on that one.
+
+**One finding was about this file, not the app.** `_is_parented` first read only
+dict filters, so `filters=[["parent", "=", quote.name]]` -- a correct, parented
+read in frappe's other written form -- was reported as a violation. A missed
+regression costs nothing; a confident false finding sends somebody to rewrite
+working code. Both forms are now read, and
+`test_the_parent_scope_check_can_say_no` pins each of them.
 
 Runs without a bench.
 """
@@ -250,9 +292,32 @@ def _is_parented(node):
             filters = keyword.value
     if filters is None and len(node.args) > 1:
         filters = node.args[1]
-    if not isinstance(filters, ast.Dict):
-        return False
-    return any(_literal(key) in PARENT_KEYS for key in filters.keys)
+    return _filters_name_a_parent(filters)
+
+
+def _filters_name_a_parent(filters):
+    """True if a readable `filters` argument names `parent` or `parenttype`.
+
+    Both of frappe's written forms count. A dict (`{"parent": x}`) is the one
+    the app uses; a list of conditions (`[["parent", "=", x]]`, or the bare
+    `["parent", "=", x]`) is just as valid, and reading only dicts reported a
+    correctly parented read as a violation. That was found by probing this file
+    rather than by reading it -- see the README -- and it is the failure mode
+    worth the most care here: an unnoticed regression costs nothing, while a
+    confident false finding sends somebody to rewrite working code.
+
+    Anything this cannot read returns False. A filter built elsewhere is exactly
+    the read a person should look at.
+    """
+    if isinstance(filters, ast.Dict):
+        return any(_literal(key) in PARENT_KEYS for key in filters.keys)
+    if isinstance(filters, (ast.List, ast.Tuple)):
+        parts = list(filters.elts)
+        # The bare `["parent", "=", x]` form: a condition, not a list of them.
+        if _literal(parts[0] if parts else None) in PARENT_KEYS:
+            return True
+        return any(_filters_name_a_parent(part) for part in parts)
+    return False
 
 
 class TestKindsAreReadOffTheDoctypes(unittest.TestCase):
@@ -445,6 +510,26 @@ class TestChildTableReadShapes(unittest.TestCase):
         self.assertFalse(_is_parented(parsed(
             'frappe.get_all("Sales Invoice Item", filters=built_elsewhere)')),
             "a filters value this cannot read must not be assumed parented")
+
+        # frappe's other written form. Reading only dicts called a correctly
+        # parented read a violation, which is the expensive direction to be
+        # wrong in, so each list shape is pinned rather than left to the sweep.
+        self.assertTrue(_is_parented(parsed(
+            'frappe.get_all("Sales Invoice Item", filters=[["parent", "=", x]])')),
+            "a list of conditions naming parent is parented")
+        self.assertTrue(_is_parented(parsed(
+            'frappe.get_all("Sales Invoice Item", filters=["parent", "=", x])')),
+            "a bare condition naming parent is parented")
+        self.assertTrue(_is_parented(parsed(
+            'frappe.get_all("Sales Invoice Item", '
+            'filters=[["item_name", "like", n], ["parenttype", "=", t]])')),
+            "parent named in the second condition counts too")
+        self.assertFalse(_is_parented(parsed(
+            'frappe.get_all("Sales Invoice Item", filters=[["item_name", "=", n]])')),
+            "a list of conditions naming no parent is not parented")
+        self.assertFalse(_is_parented(parsed(
+            'frappe.get_all("Sales Invoice Item", filters=[])')),
+            "an empty filter list is not parented")
 
 
 if __name__ == "__main__":

@@ -233,8 +233,15 @@ breaking the code.
 
 ## Targets
 
-Nineteen so far, 543 injections: edits applied to the app's real source, with
+Twenty-one so far, 569 injections: edits applied to the app's real source, with
 `run.py` watching one test file go red.
+
+Those two numbers are counted from `faults.py`, not kept by hand. They said
+"Nineteen so far, 543" until the twenty-first target was added, by which point
+there were twenty and 557 -- `endpoint_wiring` arrived without a section here
+and `raw_sql`'s own paragraph already called itself the eighteenth. **There is
+still no section below for `endpoint_wiring`**, and it is not written here from
+memory: driving that target is a job of its own.
 
 **That list of files doing fault injection of their own is now empty.**
 `test_projects_api.py` was the last of them — it planted shapes in its own
@@ -272,6 +279,65 @@ were green anyway** — because that half asks the rule one question, about one
 field, at one call site, and the nine live everywhere else. Driving a file that
 tests itself is not redundant with the file testing itself. It is the only way
 to find out what the file's own questions do not cover.
+
+### `read_shapes` — `tests/offline/test_read_shapes.py`
+
+The twenty-first target, and the one written to correct a claim I had made
+myself. `test_endpoint_wiring.py` judges whether a DocType literal names
+something real; this judges whether the *call* fits the kind of DocType it
+names. A Single has no table of its own, a child table's rows each belong to a
+parent, and the same call is correct on one kind and fatal on another.
+
+Twelve injections, eight red and four controls: a Single read turned into
+`get_all` and into `frappe.db.get_list`, a Single read moved to a shape nobody
+has verified, the read-site floor pushed in both directions, the app's one
+child-table list read stripped of its `parent` filter and then given filters
+built elsewhere, and the `Has Role` manager check stripped of its parent.
+**All twelve went as expected on the first run, which is the reason the probe
+below was written rather than a reason to stop.**
+
+**What the twelve faults did not establish.** A target whose faults all land
+first time has measured its author's imagination. So each regression the file
+*might* miss was written as a probe, applied to real source and restored:
+
+| regression | noticed | by |
+| --- | --- | --- |
+| a Single read moved behind `db = frappe.db` | yes | **the count floor** |
+| ... its DocType moved into a variable | yes | **the count floor** |
+| ... called via `from frappe import get_all` | yes | **the count floor** |
+| a child table read with raw SQL instead | yes | **the count floor** |
+| an *added* unparented read behind an alias | **no** | - |
+| an *added* unparented read, DocType in a variable | **no** | - |
+| a parented read written `filters=[["parent", "=", x]]` | **yes, wrongly** | - |
+
+**The floors turned out to be the instrument, not the bookkeeping.** Three of
+the four shapes the walker cannot read still went red, and in every case it was
+the measured read-site count that caught them: the read they replaced left the
+walker's reach, so the count fell. The floor's docstring said it was there in
+case "a new one arrived". That is the weaker half of what it does.
+
+**It only fires when a read leaves.** Add an aliased unparented child read and
+leave the existing one in place and the count still says three. That hole is
+`test_endpoint_wiring.test_no_module_aliases_frappe`'s to keep empty — the app
+has no `x = frappe.db` anywhere — and `read_shapes` rests on it rather than
+duplicating it.
+
+**One probe was a false positive, and that is the expensive direction.**
+`_is_parented` read only dict filters, so `filters=[["parent", "=", quote.name]]`
+— frappe's other written form, and correct — was reported as an unparented read.
+Nobody would have found that by adding faults, because the app does not use that
+form; it took asking what *correct* code this file would reject. Both forms are
+read now and each is pinned in `test_the_parent_scope_check_can_say_no`.
+
+**Why one Single read is edited and not nineteen.** This README's own rule is to
+cover every instance of a rule rather than a sample, and the Single faults
+deliberately do not: seventeen of the nineteen sites are `frappe.get_single` on
+`Xero Settings` at the same receiver in the same module, so a fault per copy
+would measure one claim seventeen times. The floor is what covers the other
+eighteen — it is the test that fails if any of them changes shape or goes away.
+The child-table faults do cover every instance: both the app's own
+(`Supplier Quote Item`) and frappe's (`Has Role`), because those two are read
+through different methods and the rule has to hold for both.
 
 ### `raw_sql` — `tests/offline/test_raw_sql.py`
 
