@@ -3556,6 +3556,20 @@ MANDATORY_FIELDS = Target(
                   (MFI_ACC,
                    '                    "customer_type": "Company",\n', '')]),
 
+        # Isolating the two exemptions. The pair above remove a key from a
+        # dict that this file's own self-injection asserts is passed, so their
+        # RED may be that assertion rather than the sweep. Xero Sync Log is in
+        # no self-test, so here only the sweep can speak.
+        Fault("ISOLATED: company made reqd on Xero Sync Log with an "
+              "empty-string default -- skipped by the sweep, never applied by "
+              "frappe", True, [
+                  (MFI_XSL_JSON, MFI_COMPANY_ANCHOR,
+                   MFI_COMPANY_ANCHOR + '   "reqd": 1,\n   "default": "",\n')]),
+        Fault("ISOLATED: company made reqd and read_only on Xero Sync Log -- "
+              "skipped by the sweep, not exempt from mandatory validation",
+              True, [
+                  (MFI_XSL_JSON, MFI_COMPANY_ANCHOR,
+                   MFI_COMPANY_ANCHOR + '   "reqd": 1,\n   "read_only": 1,\n')]),
         # --- a reqd field appearing on a DocType an insert site misses ----
         # The rule's stated value is that it "goes red the day somebody adds a
         # reqd field to a DocType that an existing insert site does not pass".
