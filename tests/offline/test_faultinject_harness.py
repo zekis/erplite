@@ -90,7 +90,6 @@ UNDRIVEN_OFFLINE_FILES = {
     #     the offline suite green. Five more faults and one more class now pin
     #     it. The first target whose faults all passed and which still found
     #     something, because a file's premises are not what its tests exercise.
-    "tests/offline/test_client_scripts.py": "no target yet",
     "tests/offline/test_dashboard_widgets.py": "no target yet",
 }
 faults_mod = _load("fi_faults", os.path.join(FI, "faults.py"))

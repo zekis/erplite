@@ -38,6 +38,28 @@ Each guard was reachable because the condition protecting it tested the same mis
 on an undeclared field is always false -- and was removed too, since an unreachable call to a
 throwing path is still not something to leave lying about.
 
+WHICH CALLS THE SWEEP SEES. Measured, not assumed, and pinned below by
+`test_the_detector_sees_the_call_forms_it_claims_to` so it cannot narrow again in silence.
+
+The receiver must be a form: `frm`, `cur_frm`, or `frm` reached through something else
+(`this.frm`, `me.frm`). The fieldname may be in single quotes, double quotes or a backtick
+template string, and the call may be wrapped across lines, because each file is read whole
+rather than a line at a time.
+
+The first version of this sweep was `\\bfrm\\.set_value\\(` applied line by line, and it was
+blind to three forms: `cur_frm.set_value('x', ...)`, which is an ordinary Frappe idiom; a
+backtick fieldname; and a call wrapped after the opening paren, which is how a formatter
+breaks a long one. None of the three was present in the app, so this file was green -- and a
+file blind to all three would have been green too. That is exactly the state a guard cannot
+report about itself, which is why the forms are now asserted rather than described.
+
+One alias stays invisible on purpose-by-accident, and it is worth knowing which way round:
+`d.set_value('x', ...)` is not matched. Both live instances (timesheet_entry_list.js:141 and
+timesheet_entry.js:240) are a `frappe.ui.Dialog`, whose fields are declared in the dialog's
+own `fields` array and not in any DocType JSON, so skipping them is correct. But the sweep
+skips them for being aliased, not for being dialogs. Assign a real `frm` to a short name and
+this guard says nothing about it.
+
 WHAT THIS GUARD DELIBERATELY DOES NOT COVER, so the next reader knows where to look:
 
   * `frm.doc.<field>` READS of removed fields. There are still 13 in activity.js and one
@@ -75,7 +97,7 @@ STD_FIELDS = {
     "amended_from", "naming_series",
 }
 
-SET_VALUE = re.compile(r"""\bfrm\.set_value\(\s*['"](\w+)['"]""")
+SET_VALUE = re.compile(r"""\b\w*frm\.set_value\(\s*['"`](\w+)['"`]""")
 
 
 def _client_scripts():
@@ -113,21 +135,23 @@ class ClientScriptFieldsTest(unittest.TestCase):
         """frm.set_value('<removed field>', ...) shows the user an error and aborts the handler."""
         offenders = []
         for path, doctype, declared in _client_scripts():
+            # Read whole, not line by line: `frm.set_value(` and its fieldname are on
+            # separate lines whenever the call is long enough for a formatter to wrap it.
             with open(path, encoding="utf-8", errors="replace") as fh:
-                for lineno, line in enumerate(fh, 1):
-                    for m in SET_VALUE.finditer(line):
-                        field = m.group(1)
-                        if field not in declared:
-                            offenders.append(
-                                "%s:%d  frm.set_value('%s', ...) but %s does not declare '%s'"
-                                % (
-                                    os.path.relpath(path, APP_ROOT),
-                                    lineno,
-                                    field,
-                                    doctype,
-                                    field,
-                                )
-                            )
+                source = fh.read()
+            for m in SET_VALUE.finditer(source):
+                field = m.group(1)
+                if field not in declared:
+                    offenders.append(
+                        "%s:%d  %s but %s does not declare '%s'"
+                        % (
+                            os.path.relpath(path, APP_ROOT),
+                            source.count("\n", 0, m.start()) + 1,
+                            m.group(0).split("(")[0] + "('%s', ...)" % field,
+                            doctype,
+                            field,
+                        )
+                    )
 
         self.assertEqual(
             [], offenders,
@@ -136,6 +160,42 @@ class ClientScriptFieldsTest(unittest.TestCase):
             "each of these is a modal error dialog on a real user action -- not dead code.\n  "
             + "\n  ".join(offenders),
         )
+
+    def test_the_detector_sees_the_call_forms_it_claims_to(self):
+        """The sweep above can only report what SET_VALUE matches, and nothing else here
+        would notice it narrowing: the app contains no `cur_frm`, no backtick fieldname and
+        no wrapped call today, so every one of these forms could stop being seen with all
+        the other tests in this file green. Each row is a form someone may reasonably write
+        tomorrow; the three marked below were genuinely missed until 7 Oct 2026.
+        """
+        caught = [
+            ("plain single quotes", "frm.set_value('gone', 1);"),
+            ("plain double quotes", 'frm.set_value("gone", 1);'),
+            ("space after the paren", "frm.set_value( 'gone', 1);"),
+            ("a prefix on the statement", "return frm.set_value('gone', 1);"),
+            ("frm reached through an object", "this.frm.set_value('gone', 1);"),
+            ("cur_frm (was missed)", "cur_frm.set_value('gone', 1);"),
+            ("backtick fieldname (was missed)", "frm.set_value(`gone`, 1);"),
+            ("wrapped after the paren (was missed)",
+             "frm.set_value(\n            'gone', 1);"),
+        ]
+        for label, snippet in caught:
+            self.assertEqual(
+                ["gone"], SET_VALUE.findall(snippet),
+                "the sweep no longer sees a fieldname set this way (%s): %r" % (label, snippet))
+
+        not_caught = [
+            ("the object form: frappe guards it and it cannot throw",
+             "frm.set_value({gone: 1});"),
+            ("an aliased receiver: the two live ones are frappe.ui.Dialog, not a form",
+             "d.set_value('gone', 1);"),
+            ("a variable that merely ends in a word containing frm",
+             "confirm.set_value('gone', 1);"),
+        ]
+        for why, snippet in not_caught:
+            self.assertEqual(
+                [], SET_VALUE.findall(snippet),
+                "the sweep now matches something it does not mean to (%s): %r" % (why, snippet))
 
     def test_no_client_script_names_the_removed_project_manager(self):
         """The regression net for the four client-side query sites.
@@ -153,11 +213,23 @@ class ClientScriptFieldsTest(unittest.TestCase):
         pins the one field instead. It is narrow on purpose: it cannot report a
         pre-existing violation it was not written for, and it fails the moment
         the removed field comes back anywhere in a client script.
+
+        A line that is nothing but a `//` comment is skipped, and that is not
+        tidiness. This repo records a removal in prose beside where it used to
+        be -- activity.js explains that it no longer sets `estimated_hours` and
+        why -- so the same sentence written about `project_manager` made this
+        test red on a correct file. A guard that refuses the house style of
+        explaining a removal is one somebody switches off, and then there is no
+        guard. A trailing comment after code on the same line is still reported:
+        there is no JS parser here, and a line with code on it is not worth
+        guessing about.
         """
         offenders = []
         for path, _doctype, _declared in _client_scripts():
             with open(path, encoding="utf-8", errors="replace") as fh:
                 for lineno, line in enumerate(fh, 1):
+                    if line.lstrip().startswith("//"):
+                        continue
                     if "project_manager" in line:
                         offenders.append(
                             "%s:%d  %s"
