@@ -62,11 +62,11 @@ from fake_frappe import (  # noqa: E402
     FakeFrappe, FakeUtils, ValidationError, _dict,
 )
 
-CREATOR = "ellis@tierneymorris.com.au"
-ASSIGNEE = "maya@tierneymorris.com.au"
-THIRD = "alex@tierneymorris.com.au"
-STRANGER = "robin@tierneymorris.com.au"
-BOSS = "zeke@tierneymorris.com.au"
+CREATOR = "ellis@company.test"
+ASSIGNEE = "maya@company.test"
+THIRD = "alex@company.test"
+STRANGER = "robin@company.test"
+BOSS = "zeke@company.test"
 
 PAGE = os.path.join(APP_ROOT, "erplite", "www", "todo", "index.py")
 DATA_MANAGER = os.path.join(

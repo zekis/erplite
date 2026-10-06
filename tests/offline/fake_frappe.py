@@ -290,7 +290,7 @@ def _matches(row, key, condition):
 
 
 class FakeFrappe(object):
-    def __init__(self, session_user="zeke@tierneymorris.com.au", roles=None):
+    def __init__(self, session_user="zeke@company.test", roles=None):
         self.session = _dict(user=session_user)
         self._roles = roles if roles is not None else ["System Manager"]
         self.tables = {}

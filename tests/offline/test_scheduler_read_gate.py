@@ -93,7 +93,7 @@ from fake_frappe import (  # noqa: E402
     FakeFrappe, PermissionError as FakePermissionError, _dict,
 )
 
-USER = "zeke@tierneymorris.com.au"
+USER = "zeke@company.test"
 SCHEDULER_API = os.path.join(APP_ROOT, "erplite", "scheduler", "api.py")
 
 

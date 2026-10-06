@@ -69,8 +69,8 @@ from test_afterz_timesheet_workflow import (  # noqa: E402
 )
 from test_projects_api import load_api  # noqa: E402
 
-YOU = "zeke@tierneymorris.com.au"
-COLLEAGUE = "someone.else@tierneymorris.com.au"
+YOU = "zeke@company.test"
+COLLEAGUE = "someone.else@company.test"
 
 def attach_new_doc(frappe):
     """Give the stand-in a `new_doc` that returns the **real** controller.

@@ -38,7 +38,7 @@ sys.path.insert(0, HERE)
 
 from fake_frappe import FakeFrappe, _dict  # noqa: E402
 
-USER = "zeke@tierneymorris.com.au"
+USER = "zeke@company.test"
 
 # The columns that were removed from the DocTypes and must not be queried again.
 ORPHANED = (

@@ -29,8 +29,8 @@ sys.path.insert(0, HERE)
 import fake_frappe  # noqa: E402
 from fake_frappe import FakeFrappe, FakeAssignTo, UnknownField, _dict  # noqa: E402
 
-USER = "zeke@tierneymorris.com.au"
-OTHER = "someone.else@tierneymorris.com.au"
+USER = "zeke@company.test"
+OTHER = "someone.else@company.test"
 
 
 def load_api(frappe):

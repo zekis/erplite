@@ -47,7 +47,7 @@ from fake_frappe import (  # noqa: E402
     doctype_fields, make_doc, _dict,
 )
 
-USER = "zeke@tierneymorris.com.au"
+USER = "zeke@company.test"
 
 
 def load_schedule_entry(frappe):

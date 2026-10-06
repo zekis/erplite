@@ -50,8 +50,8 @@ sys.path.insert(0, HERE)
 
 from fake_frappe import FakeFrappe, UnknownField, _dict  # noqa: E402
 
-USER = "zeke@tierneymorris.com.au"
-OTHER = "someone.else@tierneymorris.com.au"
+USER = "zeke@company.test"
+OTHER = "someone.else@company.test"
 
 # Removed from Timesheet Entry by the Task -> Activity rename and by 8126278.
 ORPHANED_ON_TIMESHEET_ENTRY = ("task", "date")
@@ -195,7 +195,7 @@ class TestGetTimesheetWidgetData(WidgetTestCase):
         )
 
     def test_a_user_with_no_entries_gets_nothing_rather_than_an_error(self):
-        self.frappe.session.user = "nobody@tierneymorris.com.au"
+        self.frappe.session.user = "nobody@company.test"
         data = self.widgets.get_timesheet_widget_data()
         self.assertIsNone(data["active_timesheet"])
         self.assertEqual(data["recent_timesheets"], [])

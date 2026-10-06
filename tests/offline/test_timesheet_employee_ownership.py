@@ -31,7 +31,7 @@ reason they are safe -- `TestTheRuleCannotReachASave` fails if the `is_new()`
 guard is dropped or the rule is moved to a hook that runs on every save.
 
 The two addresses below stand for "you" and "a second person". Neither is a
-claim about who works here; `approver@tierneymorris.com.au` is used the same way
+claim about who works here; `approver@company.test` is used the same way
 in test_afterz_timesheet_workflow.py.
 
 These tests run without a bench. See fake_frappe.py for the stand-in.
@@ -64,8 +64,8 @@ CONTROLLER = os.path.join(
     APP_ROOT, "erplite", "projects", "doctype", "timesheet_entry", "timesheet_entry.py")
 API = os.path.join(APP_ROOT, "erplite", "projects", "api.py")
 
-YOU = "zeke@tierneymorris.com.au"
-COLLEAGUE = "approver@tierneymorris.com.au"
+YOU = "zeke@company.test"
+COLLEAGUE = "approver@company.test"
 
 
 def controller_source():
