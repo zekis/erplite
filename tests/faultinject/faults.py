@@ -4180,6 +4180,127 @@ RAW_SQL = Target(
 )
 
 
+# --- Scheduler Role delete ------------------------------------------------
+# PR #44: `Scheduler Role.on_trash` opened with a `frappe.get_all("Resource
+# Role", ...)` against a DocType that has no table, and `get_table_columns`
+# raises `TableMissingError` before any SQL runs -- so `on_trash` threw on
+# every delete, for every role, and the `Schedule Row` integrity check below
+# it was never reached. The dead read is gone; the `Schedule Row` check stays.
+#
+# The file guards both halves, and a third thing: the two reporting endpoints
+# that still read the missing DocType are pinned by name, so the scope of the
+# change is recorded rather than remembered.
+#
+# `scheduler_role.py` is tab-indented and CRLF; patterns here are written with
+# tabs and `\n`, and `harness.nl` translates the endings.
+
+ROLE_CTL = "erplite/scheduler/doctype/scheduler_role/scheduler_role.py"
+
+# The integrity read, verbatim -- note the trailing space after the DocType.
+SRD_READ = (
+    '\t\tschedule_rows_using_role = frappe.get_all("Schedule Row", \n'
+    '\t\t\tfilters={"role": self.name},\n'
+    '\t\t\tfields=["name"]\n'
+    '\t\t)\n'
+)
+
+SRD_GUARD = (
+    '\t\tif schedule_rows_using_role:\n'
+    '\t\t\tfrappe.throw(f"Cannot delete role. It is used in '
+    '{len(schedule_rows_using_role)} schedule entries")\n'
+)
+
+# The lines PR #44 removed, as they stood.
+SRD_DEAD_READ = (
+    '\t\tresources_using_role = frappe.get_all("Resource Role", \n'
+    '\t\t\tfilters={"role": self.name},\n'
+    '\t\t\tfields=["parent"]\n'
+    '\t\t)\n'
+    '\t\t\n'
+)
+
+SRD_FILTER = '\t\t\tfilters={"role": self.name},\n'
+
+SRD_ACTIVE_ROLES = '\troles = frappe.get_list("Scheduler Role",\n'
+
+SRD_RESOURCES_READ = (
+    '\tresource_roles = frappe.get_all("Resource Role",\n'
+    '\t\tfilters={"role": role},\n'
+    '\t\tfields=["parent"]\n'
+    '\t)\n'
+)
+
+SCHEDULER_ROLE_DELETE = Target("tests/offline/test_scheduler_role_delete.py", [
+    # -- the regression the change was made to stop --
+    Fault("the dead Resource Role read comes back", True,
+          [(ROLE_CTL, SRD_READ, SRD_DEAD_READ + SRD_READ)]),
+
+    Fault("the hook frappe calls on delete is renamed, so nothing runs", True,
+          [(ROLE_CTL, '\tdef on_trash(self):\n', '\tdef on_delete(self):\n')]),
+
+    # -- the guard that was kept must keep biting --
+    Fault("the Schedule Row guard is gone", True,
+          [(ROLE_CTL, SRD_GUARD, '')]),
+
+    Fault("the guard is inverted", True,
+          [(ROLE_CTL, '\t\tif schedule_rows_using_role:\n',
+            '\t\tif not schedule_rows_using_role:\n')]),
+
+    Fault("the refusal becomes a message, so the delete proceeds", True,
+          [(ROLE_CTL, '\t\t\tfrappe.throw(f"Cannot delete role.',
+            '\t\t\tfrappe.msgprint(f"Cannot delete role.')]),
+
+    Fault("the count in the refusal is a constant", True,
+          [(ROLE_CTL, '{len(schedule_rows_using_role)} schedule entries',
+            '1 schedule entries')]),
+
+    # -- the read the guard rests on --
+    Fault("the guard counts every schedule row, whosever role it names", True,
+          [(ROLE_CTL, SRD_FILTER, '\t\t\tfilters={},\n')]),
+
+    Fault("the guard filters on the wrong column", True,
+          [(ROLE_CTL, SRD_FILTER, '\t\t\tfilters={"project": self.name},\n')]),
+
+    Fault("the guard filters on the label, not the link target", True,
+          [(ROLE_CTL, SRD_FILTER,
+            '\t\t\tfilters={"role": self.role_name},\n')]),
+
+    Fault("the guard reads a DocType that exists but holds nothing", True,
+          [(ROLE_CTL, 'frappe.get_all("Schedule Row", ',
+            'frappe.get_all("Schedule Entry", ')]),
+
+    Fault("the integrity read consults the deleting user's read rows", True,
+          [(ROLE_CTL, 'schedule_rows_using_role = frappe.get_all(',
+            'schedule_rows_using_role = frappe.get_list(')]),
+
+    # -- the recorded scope: which functions still read the missing DocType --
+    Fault("a third function starts reading the missing DocType", True,
+          [(ROLE_CTL, SRD_ACTIVE_ROLES,
+            '\tfrappe.get_all("Resource Role", filters={}, fields=["parent"])\n'
+            + SRD_ACTIVE_ROLES)]),
+
+    Fault("one of the two known-broken endpoints is quietly fixed", True,
+          [(ROLE_CTL, SRD_RESOURCES_READ, '\tresource_roles = []\n')]),
+
+    # -- controls: real edits to the source that change no behaviour --
+    Fault("CONTROL the local variable is renamed", False,
+          [(ROLE_CTL, '\t\tschedule_rows_using_role = frappe.get_all',
+            '\t\trows_using_role = frappe.get_all'),
+           (ROLE_CTL, SRD_GUARD,
+            '\t\tif rows_using_role:\n'
+            '\t\t\tfrappe.throw(f"Cannot delete role. It is used in '
+            '{len(rows_using_role)} schedule entries")\n')]),
+
+    Fault("CONTROL the read asks for one more column", False,
+          [(ROLE_CTL, '\t\t\tfields=["name"]\n',
+            '\t\t\tfields=["name", "role"]\n')]),
+
+    Fault("CONTROL the keyword arguments swap places", False,
+          [(ROLE_CTL,
+            '\t\t\tfilters={"role": self.name},\n\t\t\tfields=["name"]\n',
+            '\t\t\tfields=["name"],\n\t\t\tfilters={"role": self.name}\n')]),
+])
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -4199,4 +4320,5 @@ TARGETS = {
     "mandatory_fields": MANDATORY_FIELDS,
     "projects_api": PROJECTS_API,
     "raw_sql": RAW_SQL,
+    "scheduler_role_delete": SCHEDULER_ROLE_DELETE,
 }
