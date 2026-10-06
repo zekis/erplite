@@ -248,7 +248,7 @@ breaking the code.
 
 ## Targets
 
-Twenty-nine so far, 724 injections: edits applied to the app's real source,
+Thirty so far, 751 injections: edits applied to the app's real source,
 with `run.py` watching one test file go red.
 
 Those two numbers are counted from `faults.py`, not kept by hand. They said
@@ -2778,3 +2778,57 @@ so the pin had never been shown to fire. It has one now, which is why that
 target is eight faults rather than seven. **Checking whether a neighbour already
 covers something is worth doing for the answer; it was also worth doing for what
 it turned up about the neighbour.**
+### `child_doctype_hooks` — `tests/offline/test_child_doctype_hooks.py`
+
+27 faults across 9 files: 19 expected red, 8 controls. Every fault's colour was
+predicted before the run and all 27 matched on the first run — the only target
+so far where nothing written for the file's own checks misbehaved. It still
+found something, and that is the point worth keeping.
+
+**The file has two halves that cannot cover for each other**, so each needs its
+own faults. The whole-app sweep catches a hook *replanted* on a child
+controller and would not notice the parent's fix being reverted; the regression
+tests catch the fix being reverted and would not notice a replanted hook,
+because they drive a hook-free stand-in child row rather than the real Supplier
+Quote Item controller. Both were measured, not assumed.
+
+**The controls are most of the value.** This guard reports code by its shape,
+and four shapes look exactly like a hook without being one: a `def` nested
+inside another method, a module-level `def validate(doc, method)` (the
+`hooks.py` doc_event shape, which does run), a method named `after_save` (which
+frappe calls on nothing), and a hook on a DocType that is not a child, where
+hooks run normally. All four stayed green. A guard that fails on correct code
+does not get fixed, it gets deleted.
+
+**What it found: the premises, not the checks.** The docstring removes the same
+dead `validate()`/`calculate_amount()` pair from Sales Invoice Item and
+Purchase Invoice Item, giving as the reason that "both parents already derive
+`amount` and `tax_amount` themselves, so these were harmless duplicates".
+That sentence is what made the removal safe, and nothing was holding it.
+Reinstating the exact Supplier Quote bug in **both** parents —
+`item.amount = item.amount or 0` — left this file's 21 tests green and the whole
+offline suite's 687 green.
+
+> A file's tests exercise what it checks. Its **premises** are the sentences it
+> reasons *from*, and those are a separate list — written down, believed, and
+> quite possibly unchecked. This file's premise was about two documents it does
+> not test.
+
+`SiblingParentsDeriveTheirOwnLineAmounts` pins it for both parents, and five
+faults drive it — each applied to both files at once, because a claim made
+about a pair is not pinned by half of it.
+
+**And pinning it turned up a live difference the docstring flattens.**
+`supplier_quote.py` casts both operands with `flt()`; the two invoice parents
+multiply the raw attributes. So a line with no rate yet totals zero on a
+Supplier Quote and raises `TypeError` on either invoice, and a string rate from
+the REST API writes `"250.0250.0"` onto the row before the accumulation raises
+one line later. Both are characterised as today's behaviour rather than fixed:
+changing invoice totals is the owner's call, not a test's. The tests are named
+so the asymmetry is readable
+(`test_a_line_with_no_rate_raises_here_but_not_on_a_supplier_quote`).
+
+One of my own faults was wrong before the code was: I predicted the string rate
+would be *concatenated and totalled*, and it raises instead, one line further
+on. The row still gets the bad value, so the test pins both halves — the value
+that lands and the raise that stops it reaching the database.
