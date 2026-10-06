@@ -38,6 +38,27 @@ def _load(name, path):
 
 
 harness = _load("fi_harness", os.path.join(FI, "harness.py"))
+
+# Offline test files that no target in faults.py drives, with why. Measured, not
+# assembled from memory: 9 of 33 on 6 Oct 2026. A file here has never been shown
+# capable of going red, so it reports a safety nothing has checked.
+UNDRIVEN_OFFLINE_FILES = {
+    # Cannot be: it is the harness's own guard file. A target for it would be a
+    # target for the thing that decides whether targets mean anything.
+    "tests/offline/test_faultinject_harness.py": "drives the harness; nothing drives it",
+    # Not yet, and this one is an omission rather than a decision: the file shipped
+    # with the twenty-third target's PR and no target of its own.
+    "tests/offline/test_status_literals.py": "no target; next one to write",
+    # Not yet. Each predates the harness and sweeps metadata or wiring rather than a
+    # behaviour, so a fault for it is an edit to a JSON or a hook, not to a function.
+    "tests/offline/test_child_doctype_hooks.py": "no target yet",
+    "tests/offline/test_client_scripts.py": "no target yet",
+    "tests/offline/test_dashboard_widgets.py": "no target yet",
+    "tests/offline/test_doctype_metadata.py": "no target yet",
+    "tests/offline/test_schedule_entry.py": "no target yet",
+    "tests/offline/test_scheduler_api.py": "no target yet",
+    "tests/offline/test_shadowed_imports.py": "no target yet",
+}
 faults_mod = _load("fi_faults", os.path.join(FI, "faults.py"))
 TARGETS = faults_mod.TARGETS
 
@@ -153,6 +174,37 @@ class TestEveryTargetIsWorthTrusting(unittest.TestCase):
                     os.path.exists(os.path.join(REPO, target.test)),
                     "target %s names %s, which does not exist"
                     % (key, target.test))
+
+    def test_the_offline_files_no_target_drives_are_the_ones_pinned(self):
+        """A test file with no target has never been shown to be able to fail.
+
+        `run.py` answers "does this test file bite?" one target at a time, and nothing
+        asked the question the other way round: which test files is nobody asking it
+        about? Nine, when this was pinned -- and the list was not visible anywhere, so a
+        new test file joined it by being written and no one was told.
+
+        This is not an exemption list. It is a floor in the other direction: adding a
+        test file to the suite now forces a choice between writing it a target and
+        naming it here, and shrinking the list is the work. Each entry says why it has
+        not been driven, because "not yet" and "cannot be" are different states and the
+        set is useless if it conflates them.
+        """
+        driven = {target.test for target in TARGETS.values()}
+        offline = os.path.join(REPO, "tests", "offline")
+        found = {
+            "tests/offline/" + name
+            for name in os.listdir(offline)
+            if name.startswith("test_") and name.endswith(".py")
+        }
+        undriven = found - driven
+        self.assertEqual(
+            undriven, set(UNDRIVEN_OFFLINE_FILES),
+            "the set of offline test files that no fault-injection target drives has "
+            "changed.\n  no longer undriven (good -- remove it from "
+            "UNDRIVEN_OFFLINE_FILES): %s\n  newly undriven (either write it a target "
+            "or add it with a reason): %s"
+            % (sorted(set(UNDRIVEN_OFFLINE_FILES) - undriven),
+               sorted(undriven - set(UNDRIVEN_OFFLINE_FILES))))
 
     def test_each_target_has_at_least_one_negative_control(self):
         """Without a control, "every fault went red" can mean the test file is
