@@ -3182,6 +3182,262 @@ QUERY_FIELDS = Target(
 )
 
 
+
+# --- the whole-app undeclared-attribute sweep ------------------------------
+# tests/offline/test_undeclared_attributes.py holds three whole-app sweeps:
+# `self.<x>` read in a controller (split into hot -- reachable from a hook that
+# runs on a document built in memory, so it raises -- and cold), `<doc>.<y>`
+# read off a document built in memory, and `<doc>.<y> = v` written on any
+# document however it was obtained.
+#
+# Unlike test_query_fields.py this file has no self-tests at all, so nothing has
+# ever asked whether these sweeps reach the shapes they claim. The two names
+# used most below are the app's own historical mistakes -- `Timesheet Entry.date`
+# and `Schedule Row.task`, both named in the file's docstring as what it exists
+# to stop -- so a fault that puts one back is a regression, not an invention.
+
+UA_TSE = "erplite/projects/doctype/timesheet_entry/timesheet_entry.py"
+UA_SROW = "erplite/scheduler/doctype/schedule_row/schedule_row.py"
+UA_SROW_JSON = "erplite/scheduler/doctype/schedule_row/schedule_row.json"
+UA_PAPI = "erplite/projects/api.py"
+UA_ACC = "erplite/accounts/doctype/account/account.py"
+UA_CUR = "erplite/setup/doctype/currency/currency.py"
+
+UNDECLARED_ATTRS = Target(
+    test="tests/offline/test_undeclared_attributes.py",
+    faults=[
+        # --- test 1: `self.<x>` read in a DocType's own controller ---------
+        Fault("a hook reads self.date, the removed Timesheet Entry field "
+              "(hot: runs on a new document, so the save raises)", True, [
+                  (UA_TSE,
+                   '        if self.check_in_time and self.check_out_time:\n'
+                   '            self.duration_hours = time_diff_in_hours(self.check_out_time, self.check_in_time)',
+                   '        if self.date and self.check_out_time:\n'
+                   '            self.duration_hours = time_diff_in_hours(self.check_out_time, self.date)')]),
+        Fault("a helper two self-calls from validate() reads an undeclared "
+              "field (so the hot set has to follow self-call edges)", True, [
+                  (UA_TSE,
+                   '        if self.check_in_time and self.check_out_time:\n'
+                   '            if get_datetime(self.check_in_time) >= get_datetime(self.check_out_time):',
+                   '        if self.entry_date and self.check_out_time:\n'
+                   '            if get_datetime(self.entry_date) >= get_datetime(self.check_out_time):')]),
+        Fault("a read naming a field that IS declared -- on another DocType "
+              "(so the sweep has to resolve per DocType, not app-wide)", True, [
+                  (UA_TSE,
+                   '                "employee": self.employee,\n'
+                   '                "is_active": 1,',
+                   '                "employee": self.resource_name,\n'
+                   '                "is_active": 1,')]),
+        Fault("a cold read: on_trash() runs only on a loaded document, so it "
+              "is a stale orphan column rather than a raise", True, [
+                  (UA_ACC,
+                   'frappe.throw(_("Cannot delete account {0} as it has child accounts").format(self.name))',
+                   'frappe.throw(_("Cannot delete account {0} as it has child accounts").format(self.account_label))')]),
+        # The file's stated position is that a controller may invent its own
+        # attributes: `scan.assigned` is added to the known set, so reading one
+        # back is legitimate. This control holds that position to it.
+        Fault("CONTROL: a transient the controller assigns itself, then reads "
+              "back -- no behaviour change, and declared nowhere", False, [
+                  (UA_TSE,
+                   '            self.is_active = 1\n'
+                   '            self.duration_hours = 0',
+                   '            self._open_entry = 1\n'
+                   '            self.is_active = self._open_entry\n'
+                   '            self.duration_hours = 0')]),
+
+        # --- test 2: a read off a document built in memory -----------------
+        Fault("get_doc({\"doctype\": ...}) then reads the removed `date` "
+              "field, so check-in raises instead of returning", True, [
+                  (UA_TSE,
+                   '            "timesheet_id": timesheet.name\n',
+                   '            "timesheet_id": timesheet.name,\n'
+                   '            "date": timesheet.date\n')]),
+        Fault("new_doc(\"Schedule Row\") then reads an undeclared field as a "
+              "fallback, so creating a row raises", True, [
+                  (UA_SROW,
+                   '    doc.resource = resource\n',
+                   '    doc.resource = resource or doc.default_resource\n')]),
+        # include_loaded=False is deliberate and the docstring argues it: a
+        # loaded document is populated from SELECT *, so an orphan column is
+        # present and reading it returns a stale value instead of raising.
+        # This is that documented scope limit, not a control.
+        Fault("SCOPE LIMIT: a read off a document LOADED by get_doc(\"X\", "
+              "name) -- stale, not a raise, deliberately out of scope", False, [
+                  (UA_TSE,
+                   '        if timesheet.employee != frappe.session.user:',
+                   '        if timesheet.booked_for != frappe.session.user:')]),
+        # One function, two bindings of one name: the update branch LOADS a
+        # Timesheet Entry and the insert branch NEW_DOCs one. The read sweep
+        # drops the whole variable because the loaded binding is unresolved
+        # under include_loaded=False -- although the new-doc branch is still
+        # there and still raises.
+        Fault("a read in the new_doc branch of a function whose other branch "
+              "loads the same DocType into the same name", True, [
+                  (UA_PAPI,
+                   '                timesheet_doc.status = "Draft"\n'
+                   '                timesheet_doc.insert()\n'
+                   '                saved_entries.append({\n'
+                   '                    "temp_id": entry.get(\'temp_id\'),\n'
+                   '                    "id": timesheet_doc.name,\n'
+                   '                    "project": project,\n'
+                   '                    "activity": activity,\n'
+                   '                    "date": date,',
+                   '                timesheet_doc.status = "Draft"\n'
+                   '                timesheet_doc.insert()\n'
+                   '                saved_entries.append({\n'
+                   '                    "temp_id": entry.get(\'temp_id\'),\n'
+                   '                    "id": timesheet_doc.name,\n'
+                   '                    "project": project,\n'
+                   '                    "activity": activity,\n'
+                   '                    "date": timesheet_doc.date,')]),
+
+        # --- test 3: a write dropped on save ------------------------------
+        Fault("Schedule Row.task is written again -- the exact regression this "
+              "file was written after: the row saves with no work attached", True, [
+                  (UA_SROW,
+                   '    activity = activity or task\n'
+                   '    if activity:\n',
+                   '    doc.task = task\n'
+                   '    activity = activity or task\n'
+                   '    if activity:\n')]),
+        Fault("a write on a document LOADED by get_doc(\"X\", name) -- the "
+              "load-then-modify shape, which is most of the app", True, [
+                  (UA_TSE,
+                   '        timesheet.check_out_time = now_datetime()\n',
+                   '        timesheet.check_out_time = now_datetime()\n'
+                   '        timesheet.closed_on = now_datetime()\n')]),
+        Fault("a write naming a field declared on another DocType, on a new "
+              "document (so the write sweep resolves per DocType too)", True, [
+                  (UA_SROW,
+                   '    doc.daily_entries = "{}"\n',
+                   '    doc.schedule_date = "{}"\n')]),
+        # --- the shapes a write can take that are not `doc.x = v` ----------
+        # `self.db_set("x", v)` is the one the app actually writes: five of the
+        # six db_set sites in the tree are this form, in DocType controllers.
+        Fault("a write through self.db_set(\"x\", v) with a fieldname the "
+              "DocType does not declare", True, [
+                  (UA_CUR,
+                   '            self.db_set("is_base_currency", 1)\n',
+                   '            self.db_set("is_base_currency_flag", 1)\n')]),
+        # Nothing in the app writes an undeclared attribute on `self` today --
+        # measured, zero sites -- so this costs no noise to guard.
+        Fault("a controller writes self.<undeclared> = v: the hours are "
+              "computed, dropped on save, and the entry still saves", True, [
+                  (UA_TSE,
+                   '            self.duration_hours = time_diff_in_hours(self.check_out_time, self.check_in_time)\n',
+                   '            self.total_hours = time_diff_in_hours(self.check_out_time, self.check_in_time)\n')]),
+        Fault("a write through setattr(doc, \"task\", task) rather than an "
+              "attribute assignment", True, [
+                  (UA_SROW,
+                   '    doc.daily_entries = "{}"\n',
+                   '    setattr(doc, "task", task)\n'
+                   '    doc.daily_entries = "{}"\n')]),
+        Fault("a write through doc.update({...}) with an undeclared key", True, [
+                  (UA_SROW,
+                   '    doc.daily_entries = "{}"\n',
+                   '    doc.update({"task": task})\n'
+                   '    doc.daily_entries = "{}"\n')]),
+        # frappe's Document.set(fieldname, value) is the fourth shape the walker reads. No
+        # site in the app writes this way today, so these two cost nothing in noise -- but a
+        # shape the walker claims to cover and nothing measures is the hole this target is
+        # about, so both halves (on `self` and on a local) are planted.
+        Fault("a write through self.set(\"x\", v) with a fieldname the DocType "
+              "does not declare", True, [
+                  (UA_CUR,
+                   '            self.db_set("exchange_rate", 1)\n',
+                   '            self.set("exchange_rate_value", 1)\n')]),
+        Fault("a write through doc.set(\"x\", v) on a document built in memory", True, [
+                  (UA_SROW,
+                   '    doc.daily_entries = "{}"\n',
+                   '    doc.set("task", task)\n'
+                   '    doc.daily_entries = "{}"\n')]),
+
+        # --- whether the sweep READ the file the violation is in -----------
+        # Same class as the third finding in test_query_fields.py: a sweep that
+        # reads nothing passes exactly like a sweep that finds nothing.
+        Fault("a real violation in a DocType controller the sweep cannot "
+              "parse: red, but from the SyntaxError, not from the finding", True, [
+                  (UA_SROW,
+                   '    activity = activity or task\n'
+                   '    if activity:\n',
+                   '    doc.task = task\n'
+                   '    activity = activity or task\n'
+                   '    if activity:\n'),
+                  (UA_SROW,
+                   'from typing import Dict, Any',
+                   'from typing import Dict, Any\n(((')]),
+        # The schema side of the same question, and the worse half: the
+        # DocType's declared-field list is what "undeclared" is measured
+        # against, and a JSON the sweep cannot read drops the DocType from the
+        # map entirely -- so every violation on it becomes unreportable.
+        Fault("a real violation on a DocType whose JSON cannot be parsed (the "
+              "declared-field list silently becomes unknown)", True, [
+                  (UA_SROW,
+                   '    activity = activity or task\n'
+                   '    if activity:\n',
+                   '    doc.task = task\n'
+                   '    activity = activity or task\n'
+                   '    if activity:\n'),
+                  (UA_SROW_JSON,
+                   ' "field_order": [',
+                   ' "field_order": [[')]),
+
+        # The fault above went red, but from the FIRST sweep hitting a
+        # SyntaxError rather than from the violation being found: that sweep
+        # calls ast.parse with no handler, and schedule_row.py happens to be a
+        # DocType controller. These two measure the same question in a file no
+        # controller sweep opens.
+        Fault("a write violation in projects/api.py, to pin the pair below", True, [
+                  (UA_PAPI,
+                   '                timesheet_doc.is_active = 0\n',
+                   '                timesheet_doc.date = date\n'
+                   '                timesheet_doc.is_active = 0\n')]),
+        Fault("the same violation in the same file, which the sweep now cannot "
+              "parse: no controller sweep opens it, so nothing is red", True, [
+                  (UA_PAPI,
+                   '                timesheet_doc.is_active = 0\n',
+                   '                timesheet_doc.date = date\n'
+                   '                timesheet_doc.is_active = 0\n'),
+                  (UA_PAPI,
+                   'import frappe\n',
+                   'import frappe\n(((\n')]),
+        # --- controls ------------------------------------------------------
+        Fault("CONTROL: the local holding the new document is renamed "
+              "throughout create_schedule_row", False, [
+                  (UA_SROW,
+                   '    doc = frappe.new_doc("Schedule Row")\n'
+                   '    doc.project = project\n',
+                   '    row = frappe.new_doc("Schedule Row")\n'
+                   '    row.project = project\n'),
+                  (UA_SROW,
+                   '        doc.activity = activity\n'
+                   '    doc.resource = resource\n'
+                   '    doc.daily_entries = "{}"\n'
+                   '    doc.insert()\n'
+                   '    \n'
+                   '    return doc.name',
+                   '        row.activity = activity\n'
+                   '    row.resource = resource\n'
+                   '    row.daily_entries = "{}"\n'
+                   '    row.insert()\n'
+                   '    \n'
+                   '    return row.name')]),
+        # The conservative rule the file documents: a name that does not
+        # resolve to one DocType on every path is dropped, so a disagreement is
+        # never reported. A violation hidden behind a disagreement is the price.
+        Fault("SCOPE LIMIT: the violation is on a name also bound from a "
+              "different DocType in the same function, so it is dropped", False, [
+                  (UA_SROW,
+                   '    activity = activity or task\n'
+                   '    if activity:\n',
+                   '    doc.task = task\n'
+                   '    if not project:\n'
+                   '        doc = frappe.new_doc("Schedule Entry")\n'
+                   '    activity = activity or task\n'
+                   '    if activity:\n')]),
+    ],
+)
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -3197,4 +3453,5 @@ TARGETS = {
     "todo_status_patch": TODO_STATUS_PATCH,
     "afterz_workflow": AFTERZ_WORKFLOW,
     "query_fields": QUERY_FIELDS,
+    "undeclared_attrs": UNDECLARED_ATTRS,
 }

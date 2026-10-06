@@ -85,8 +85,7 @@ def _client_scripts():
     the script for the DocType defined by <x>.json beside it. That is what makes this check exact
     rather than a grep -- no name matching, no guessing.
     """
-    doctypes = _app_doctypes()
-    paths = doctypes.pop("__paths__", {})
+    doctypes, paths, _unreadable = _app_doctypes()
     by_dir = {os.path.abspath(p): n for n, p in paths.items()}
 
     out = []
