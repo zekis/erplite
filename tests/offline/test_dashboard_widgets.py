@@ -90,7 +90,7 @@ class WidgetTestCase(unittest.TestCase):
     def setUp(self):
         self.frappe = FakeFrappe(session_user=USER, roles=["System Manager"])
         self.frappe.tables["Project"] = [
-            _dict(name="5gofgdoomv", project_name="Novalith", status="Open",
+            _dict(name="5gofgdoomv", project_name="Northwind", status="Open",
                   project_lead=USER, timesheet_approver=USER),
         ]
         self.frappe.tables["Timesheet Entry"] = [

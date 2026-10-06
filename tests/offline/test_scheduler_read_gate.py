@@ -138,12 +138,12 @@ def populate(frappe):
               color="#3b82f6", description="", is_active=1),
     ]
     frappe.tables["Project"] = [
-        _dict(name="5gofgdoomv", project_name="Novalith", status="Open",
+        _dict(name="5gofgdoomv", project_name="Northwind", status="Open",
               project_lead=USER, division="div_eng"),
     ]
     frappe.tables["Activity"] = [
         _dict(name="g68cfomvvu", project="5gofgdoomv", status="Open",
-              activity_name="PO-0392 - CCTP Systems Engineering support"),
+              activity_name="PO-0001 - Systems engineering support"),
     ]
     frappe.tables["Resource"] = [
         _dict(name="res_pat", resource_name="Pat", resource_type="Person",

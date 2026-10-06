@@ -195,7 +195,7 @@ class WorkflowTestCase(unittest.TestCase):
         self.counter = 0
         self.frappe.tables["Timesheet Entry"] = []
         self.frappe.tables["Project"] = [
-            _dict(name="5gofgdoomv", project_name="Novalith", status="Open",
+            _dict(name="5gofgdoomv", project_name="Northwind", status="Open",
                   timesheet_approver=APPROVER),
         ]
         # The controller's module-level functions use frappe.get_doc; the stand-in
@@ -302,7 +302,7 @@ class WorkflowTestCase(unittest.TestCase):
         """afterz_api.create_timesheet_entry (:44 at caa000d): get_doc({...}).insert()."""
         data = dict(employee=EMPLOYEE, project="5gofgdoomv", activity="g68cfomvvu",
                     check_in_time=DAY_IN, check_out_time=DAY_OUT,
-                    duration_hours=1, description="Working on: PO-0392",
+                    duration_hours=1, description="Working on: PO-0001",
                     status="Draft")
         data.update(overrides)
         doc = self._get_doc(dict(doctype="Timesheet Entry", **data))
@@ -463,7 +463,7 @@ class TestAfterzWorkflow(WorkflowTestCase):
         week = ("2026-10-05 00:00:00", "2026-10-11 23:59:59")
         seen = [self.stored(doc.name).status]
 
-        self.afterz_update(doc.name, description="PO-0392 systems engineering")
+        self.afterz_update(doc.name, description="PO-0001 systems engineering")
         seen.append(self.stored(doc.name).status)
         self.afterz_submit_week(EMPLOYEE, *week)
         seen.append(self.stored(doc.name).status)
@@ -629,7 +629,7 @@ class TestTheApprovalGate(WorkflowTestCase):
         # APPROVER == EMPLOYEE in this file; the gate only means anything when
         # the approver is somebody other than whoever filled the timesheet in.
         self.frappe.tables["Project"] = [
-            _dict(name="5gofgdoomv", project_name="Novalith", status="Open",
+            _dict(name="5gofgdoomv", project_name="Northwind", status="Open",
                   timesheet_approver=self.STRANGER),
         ]
         self.frappe_pkg.has_permission = lambda *a, **k: False

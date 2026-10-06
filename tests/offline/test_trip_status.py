@@ -216,7 +216,7 @@ class TripTestCase(unittest.TestCase):
 
     # -- the driver ----------------------------------------------------------
     def new_trip(self, **data):
-        base = dict(name="TRIP-2026-00001", trip_name="Novalith site visit",
+        base = dict(name="TRIP-2026-00001", trip_name="Northwind site visit",
                     destination="Perth", primary_traveler="Pat Quinn",
                     status="Planned", naming_series="TRIP-.YYYY.-")
         base.update(data)

@@ -113,7 +113,7 @@ class SchedulerQueryTestCase(unittest.TestCase):
             _dict(name="div_eng", division_name="Engineering", color="#3b82f6"),
         ]
         self.frappe.tables["Project"] = [
-            _dict(name="5gofgdoomv", project_name="Novalith", status="Open",
+            _dict(name="5gofgdoomv", project_name="Northwind", status="Open",
                   project_lead=USER, division="div_eng"),
             _dict(name="other01", project_name="Another project", status="Open",
                   project_lead=None, division=None),
@@ -124,7 +124,7 @@ class SchedulerQueryTestCase(unittest.TestCase):
         ]
         self.frappe.tables["Activity"] = [
             _dict(name="g68cfomvvu", project="5gofgdoomv", status="Open",
-                  activity_name="PO-0392 - CCTP Systems Engineering support"),
+                  activity_name="PO-0001 - Systems engineering support"),
             # The id deliberately sorts AFTER g68cfomvvu while its title sorts
             # before it, so sorting by `name` and sorting by `activity_name`
             # give different answers. With an "act_" id they agreed, and
@@ -150,7 +150,7 @@ class TestGetProjectsAndActivities(SchedulerQueryTestCase):
         titles = {a["name"]: a["activity_name"] for a in activities}
 
         self.assertEqual(
-            "PO-0392 - CCTP Systems Engineering support", titles["g68cfomvvu"]
+            "PO-0001 - Systems engineering support", titles["g68cfomvvu"]
         )
         for name, title in titles.items():
             self.assertIsNotNone(title, "%s has no title" % name)

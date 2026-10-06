@@ -195,7 +195,7 @@ class FakeXero(object):
         return _Response(200, {"Invoices": found})
 
 
-def xero_invoice(number, type_="ACCREC", contact="Novalith Technologies",
+def xero_invoice(number, type_="ACCREC", contact="Northwind Technologies",
                  status="DRAFT", invoice_id="xero-pre"):
     """An invoice Xero already holds before the test starts."""
     return {"InvoiceID": invoice_id, "InvoiceNumber": number, "Type": type_,
@@ -299,17 +299,17 @@ def world(doctype, module, doctype_dir, row):
     return frappe
 
 
-def sales_row(status="Draft", name="SINV-00042", customer="Novalith Technologies"):
+def sales_row(status="Draft", name="SINV-00042", customer="Northwind Technologies"):
     return Doc(name=name, customer="CUST-0001", customer_name=customer,
                posting_date=datetime.date(2026, 10, 1),
                due_date=datetime.date(2026, 10, 31),
                status=status, xero_invoice_id=None, xero_invoice_number=None,
                xero_status=None, xero_sync_date=None,
-               items=[Doc(description="CCTP Systems Engineering support",
+               items=[Doc(description="Systems engineering support",
                           item_name="Engineering", qty=100, rate=140.0, tax_rate=10)])
 
 
-def purchase_row(status="Draft", name="PINV-00007", supplier="Novalith Technologies",
+def purchase_row(status="Draft", name="PINV-00007", supplier="Northwind Technologies",
                  supplier_invoice_number="INV-001"):
     return Doc(name=name, supplier="SUPP-0001", supplier_name=supplier,
                supplier_invoice_number=supplier_invoice_number,
@@ -507,11 +507,11 @@ class RetryTests(unittest.TestCase):
         purchase.send_to_xero("PINV-00007")
 
         self.assertEqual(xero.posts, 1)
-        self.assertEqual(xero.posted[-1]["Contact"]["Name"], "Novalith Technologies")
+        self.assertEqual(xero.posted[-1]["Contact"]["Name"], "Northwind Technologies")
 
     def test_the_same_number_from_the_same_supplier_does_block_a_bill(self):
         xero = FakeXero(holding=[xero_invoice("INV-001", type_="ACCPAY",
-                                              contact="Novalith Technologies")])
+                                              contact="Northwind Technologies")])
         frappe = world("Purchase Invoice", "accounts", "purchase_invoice", purchase_row())
         _accounts, _sales, purchase = load_under_test(frappe, xero)
 
