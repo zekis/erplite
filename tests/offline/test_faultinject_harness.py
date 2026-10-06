@@ -53,11 +53,12 @@ UNDRIVEN_OFFLINE_FILES = {
     # say. Each predates the harness and sweeps metadata or wiring rather than a
     # behaviour, so a fault for one is an edit to a JSON, a hook or a text file rather
     # than to a function body. The harness drives exactly those already: on 7 Oct 2026,
-    # 12 of the 27 targets inject into .json, hooks.py or patches.txt, and
-    # doctype_json_validation injects into nothing else -- 7 faults, 7 JSON edits, and
-    # it bites. test_a_target_can_be_driven_entirely_by_non_python_edits below keeps
-    # that from going quietly stale. So these five are undriven because nobody has
-    # written them, which is the work; the file kind is not the obstacle.
+    # 14 of the 29 targets inject into .json, hooks.py or patches.txt, and two of them --
+    # doctype_json_validation and doctype_metadata -- inject into nothing else: 31 JSON
+    # edits between them and both bite. test_a_target_can_be_driven_entirely_by_non_python
+    # _edits below keeps that from going quietly stale. So these three are undriven
+    # because nobody has written them, which is the work; the file kind is not the
+    # obstacle.
     #
     # Three files have left this list, and all three paid for the trip on the way
     # out -- which is the argument for the four below, because each left under a green
@@ -74,10 +75,15 @@ UNDRIVEN_OFFLINE_FILES = {
     #     fixtures could not detect; and a sweep for calls on the removed Task
     #     DocType that could not see a call split across two lines and counted a
     #     trailing comment and a docstring as calls.
+    #   test_doctype_metadata.py (7 Oct): one, and it was the blind spot the file
+    #     had written down. Its docstring said four fetch_from references into
+    #     frappe core DocTypes "were checked by hand ... and all resolve", and
+    #     nothing held them to it: email.sender could become email.sendr with all
+    #     five tests green. The four are a pinned map now, so the blind spot
+    #     cannot grow or shift in silence. The other 22 faults behaved.
     "tests/offline/test_child_doctype_hooks.py": "no target yet",
     "tests/offline/test_client_scripts.py": "no target yet",
     "tests/offline/test_dashboard_widgets.py": "no target yet",
-    "tests/offline/test_doctype_metadata.py": "no target yet",
 }
 faults_mod = _load("fi_faults", os.path.join(FI, "faults.py"))
 TARGETS = faults_mod.TARGETS
