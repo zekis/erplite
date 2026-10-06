@@ -445,10 +445,10 @@ READS = [
      '\ttemplates = frappe.get_list("Schedule Template",\n'),
 ]
 
-# The internal reads that must keep bypassing permissions. Tabs, and
-# `on_trash` in scheduler_role.py reads twice.
+# The internal reads that must keep bypassing permissions. Tabs. `on_trash` in
+# scheduler_role.py read twice until the dead `Resource Role` read was removed
+# (tests/offline/test_scheduler_role_delete.py); it now has the one read below.
 DIV_ON_TRASH = '\t\tprojects_using_division = frappe.get_all("Project", \n'
-ROLE_ON_TRASH_RESOURCES = '\t\tresources_using_role = frappe.get_all("Resource Role", \n'
 ROLE_ON_TRASH_ROWS = '\t\tschedule_rows_using_role = frappe.get_all("Schedule Row", \n'
 ENTRY_PROGRESS = '        entries = frappe.get_all("Schedule Entry",\n'
 
@@ -500,10 +500,9 @@ SCHEDULER_READ_GATE = Target(
         Fault("Division.on_trash made to read as the caller, so a user without "
               "read rows can delete a division that is still in use", True,
               [_forward_to_get_list(DIVISION, DIV_ON_TRASH)]),
-        Fault("Scheduler Role.on_trash made to read as the caller, both of its "
-              "reads", True,
-              [_forward_to_get_list(SCHED_ROLE, ROLE_ON_TRASH_RESOURCES),
-               _forward_to_get_list(SCHED_ROLE, ROLE_ON_TRASH_ROWS)]),
+        Fault("Scheduler Role.on_trash made to read as the caller, so a user "
+              "without read rows can delete a role a schedule still uses", True,
+              [_forward_to_get_list(SCHED_ROLE, ROLE_ON_TRASH_ROWS)]),
         Fault("Schedule Entry.get_activity_progress made to read as the "
               "caller, so progress is measured over the rows the caller may "
               "see instead of the activity", True,
@@ -3160,8 +3159,11 @@ QUERY_FIELDS = Target(
         Fault("CONTROL: a local renamed in a swept file, same query, same "
               "fields", False, [
                   (QF_SROLE,
-                   '\t\t\tresource_names = list(set([r.parent for r in resources_using_role]))\n\t\t\tfrappe.throw(f"Cannot delete role. It is used by resources: {\', \'.join(resource_names)}")',
-                   '\t\t\tused_by = list(set([r.parent for r in resources_using_role]))\n\t\t\tfrappe.throw(f"Cannot delete role. It is used by resources: {\', \'.join(used_by)}")')]),
+                   '\t\tschedule_rows_using_role = frappe.get_all("Schedule Row", \n',
+                   '\t\trows_using_role = frappe.get_all("Schedule Row", \n'),
+                  (QF_SROLE,
+                   '\t\tif schedule_rows_using_role:\n\t\t\tfrappe.throw(f"Cannot delete role. It is used in {len(schedule_rows_using_role)} schedule entries")',
+                   '\t\tif rows_using_role:\n\t\t\tfrappe.throw(f"Cannot delete role. It is used in {len(rows_using_role)} schedule entries")')]),
         Fault("CONTROL: a declared field added to a fields list", False, [
                   (QF_SAPI,
                    '        fields=["name", "project_name", "status", "project_lead", "division"],',
