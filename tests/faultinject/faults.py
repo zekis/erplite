@@ -4427,6 +4427,121 @@ ENDPOINT_WIRING = Target("tests/offline/test_endpoint_wiring.py", [
             '{len(rows_using_role)} schedule entries")\n')]),
 ])
 
+# --- the shape of a read, not the name --------------------------------------
+# tests/offline/test_read_shapes.py. A Single has no table of its own, so
+# `get_all` on one raises; a child row belongs to a parent, so an unparented
+# read returns everybody's. The three sites edited below are every child read
+# the app has plus one of its nineteen Single reads -- the other eighteen are
+# the same shape at the same receiver, and a fault per copy would measure the
+# same claim eighteen times.
+
+AUTH_SINGLE = ('def get_access_token():\n'
+               '    """Get access token using client credentials flow"""\n'
+               '    settings = frappe.get_single("Xero Settings")\n')
+
+SQ_CHILD_READ = (
+    '\t\t\tquote_items = frappe.get_all("Supplier Quote Item",\n'
+    '\t\t\t\tfilters={"parent": quote.name, "item_name": ["like", f"%{item_name}%"]},\n'
+    '\t\t\t\tfields=["item_name", "rate", "amount"]\n'
+    '\t\t\t)\n')
+
+TODO_HAS_ROLE = ('    return bool(frappe.db.exists("Has Role", {\n'
+                 '        "parent": user,\n'
+                 '        "role": ["in", MANAGER_ROLES]\n'
+                 '    }))\n')
+
+READ_SHAPES = Target("tests/offline/test_read_shapes.py", [
+    # -- a row query against a DocType that has no table --
+    Fault("a Single is read with frappe.get_all -- the mistake this file was "
+          "written after", True,
+          [(XERO_AUTH, AUTH_SINGLE,
+            'def get_access_token():\n'
+            '    """Get access token using client credentials flow"""\n'
+            '    settings = frappe.get_all("Xero Settings")[0]\n')]),
+
+    Fault("the same read through frappe.db, which forwards to the same "
+          "function", True,
+          [(XERO_AUTH, AUTH_SINGLE,
+            'def get_access_token():\n'
+            '    """Get access token using client credentials flow"""\n'
+            '    settings = frappe.db.get_list("Xero Settings")[0]\n')]),
+
+    # -- a shape nobody has read frappe's source for --
+    Fault("a Single is read with a shape that is neither verified safe nor "
+          "known fatal", True,
+          [(XERO_AUTH, AUTH_SINGLE,
+            'def get_access_token():\n'
+            '    """Get access token using client credentials flow"""\n'
+            '    settings = frappe.db.count("Xero Settings")\n')]),
+
+    # -- the floor, in both directions --
+    Fault("a twentieth Single read arrives and nobody looks at its shape", True,
+          [(XERO_AUTH, AUTH_SINGLE,
+            'def get_access_token():\n'
+            '    """Get access token using client credentials flow"""\n'
+            '    settings = frappe.get_single("Xero Settings")\n'
+            '    frappe.get_single("Xero Settings")\n')]),
+
+    Fault("a Single read is dropped, so the rule quietly covers one less", True,
+          [(XERO_AUTH, AUTH_SINGLE,
+            'def get_access_token():\n'
+            '    """Get access token using client credentials flow"""\n'
+            '    settings = _settings_from_somewhere_else()\n')]),
+
+    # -- a child read that stops naming a parent --
+    Fault("the app's only child-table list read loses its parent filter, so it "
+          "returns every quote's items", True,
+          [(SQ, SQ_CHILD_READ,
+            '\t\t\tquote_items = frappe.get_all("Supplier Quote Item",\n'
+            '\t\t\t\tfilters={"item_name": ["like", f"%{item_name}%"]},\n'
+            '\t\t\t\tfields=["item_name", "rate", "amount"]\n'
+            '\t\t\t)\n')]),
+
+    Fault("a child read's filters are built elsewhere, where the sweep cannot "
+          "see whether a parent is named", True,
+          [(SQ, SQ_CHILD_READ,
+            '\t\t\titem_filters = {"item_name": ["like", f"%{item_name}%"]}\n'
+            '\t\t\tquote_items = frappe.get_all("Supplier Quote Item",\n'
+            '\t\t\t\tfilters=item_filters,\n'
+            '\t\t\t\tfields=["item_name", "rate", "amount"]\n'
+            '\t\t\t)\n')]),
+
+    Fault("the Has Role read stops naming a parent, so holding the role under "
+          "any user at all passes the manager check", True,
+          [(TODO_PAGE, TODO_HAS_ROLE,
+            '    return bool(frappe.db.exists("Has Role", {\n'
+            '        "role": ["in", MANAGER_ROLES]\n'
+            '    }))\n')]),
+
+    # -- controls: real edits to the source that change no behaviour --
+    Fault("CONTROL a Single read swaps get_single for the get_doc it is "
+          "defined as", False,
+          [(XERO_AUTH, AUTH_SINGLE,
+            'def get_access_token():\n'
+            '    """Get access token using client credentials flow"""\n'
+            '    settings = frappe.get_doc("Xero Settings")\n')]),
+
+    Fault("CONTROL a Single read's DocType arrives as a keyword argument",
+          False,
+          [(XERO_AUTH, AUTH_SINGLE,
+            'def get_access_token():\n'
+            '    """Get access token using client credentials flow"""\n'
+            '    settings = frappe.get_single(doctype="Xero Settings")\n')]),
+
+    Fault("CONTROL a child read's filter keys swap places", False,
+          [(SQ, SQ_CHILD_READ,
+            '\t\t\tquote_items = frappe.get_all("Supplier Quote Item",\n'
+            '\t\t\t\tfilters={"item_name": ["like", f"%{item_name}%"], "parent": quote.name},\n'
+            '\t\t\t\tfields=["item_name", "rate", "amount"]\n'
+            '\t\t\t)\n')]),
+
+    Fault("CONTROL the child read is written on one line instead of four",
+          False,
+          [(SQ, SQ_CHILD_READ,
+            '\t\t\tquote_items = frappe.get_all("Supplier Quote Item", filters={"parent": quote.name, "item_name": ["like", f"%{item_name}%"]}, fields=["item_name", "rate", "amount"])\n')]),
+])
+
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -4448,4 +4563,5 @@ TARGETS = {
     "raw_sql": RAW_SQL,
     "scheduler_role_delete": SCHEDULER_ROLE_DELETE,
     "endpoint_wiring": ENDPOINT_WIRING,
+    "read_shapes": READ_SHAPES,
 }
