@@ -13,9 +13,15 @@ frappe.listview_settings['Timesheet Entry'] = {
             return [__("Pending Approval"), "orange", "status,=,Submitted"];
         } else if (doc.status === "Rejected") {
             return [__("Rejected"), "red", "status,=,Rejected"];
-        } else {
+        } else if (doc.status === "Draft") {
             return [__("Draft"), "gray", "status,=,Draft"];
         }
+        // Scheduled and Processed are real statuses and are deliberately
+        // not named here. Returning nothing lets frappe render the status
+        // itself with a filter that matches it (indicator.js:89 skips a
+        // falsy return, :100 renders doc.status). A catch-all that said
+        // "Draft" labelled both of them wrongly and filtered to a set the
+        // reader had not clicked on.
     },
     
     onload: function(listview) {

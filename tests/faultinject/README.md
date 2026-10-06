@@ -233,7 +233,7 @@ breaking the code.
 
 ## Targets
 
-Twenty-four so far, 604 injections: edits applied to the app's real source, with
+Twenty-four so far, 606 injections: edits applied to the app's real source, with
 `run.py` watching one test file go red.
 
 Those two numbers are counted from `faults.py`, not kept by hand. They said
@@ -2269,6 +2269,18 @@ on the live site, not the version-15 branch:
   does the `validate_fields(self)` on `doctype.py:203`. That is nine checks.
 * The other fourteen are skipped a second time and on purpose: `validate_fields`
   guards them with `if not frappe.flags.in_migrate` (`doctype.py:1646`, `:1659`).
+* **A third mechanism, found when the two `states` faults were added**, and worth
+  reading because it contradicts the obvious generalisation of the first one. Not
+  every check is reached through `validate`: `_validate()` is called on
+  `document.py:296`, **after** `run_before_save_methods()` has already returned
+  early, so it runs on a migrate and reaches the child rows
+  (`document.py:601` runs `d._validate_selects()` for every child). The guard is
+  inside the method instead — `base_document.py:878` is
+  `if frappe.flags.in_import: return`, and `import_file.py:212` sets
+  `frappe.flags.in_import = True` immediately before the `doc.insert()` on
+  `:239`. So the Select check on a `states` colour runs, arrives, and returns
+  without looking. **`ignore_validate` is not the only way a check gets skipped
+  here, and a check being outside `validate` does not mean it fires.**
 
 So these checks only ever fire when a **human saves the DocType in the Desk in
 developer mode**. That is how most of these JSONs were written, which is why the
@@ -2276,7 +2288,7 @@ app is clean. It is also why the exposure is real: every one of these files is
 ordinary JSON in git, and a rename or a merge resolution that touches one passes
 no check of any kind between the editor and production.
 
-The four faults are chosen for four different symptoms, because the checks look
+The six faults are chosen for six different symptoms, because the checks look
 interchangeable and are not:
 
 * **`flags` as a fieldname** shadows an attribute `Document` sets on every
@@ -2290,6 +2302,24 @@ interchangeable and are not:
 * **a permission row with `cancel` and no `submit`** is the one that matters
   most, because it does not fail at all. It grants or withholds access, quietly,
   in production.
+* **a `states` entry whose `title` is not a status the field can hold** is the
+  silent class again, one level further out. `indicator.js:82` finds a state by
+  `d.title === doc.status`, so a title that matches no option is never found by
+  any document: the state is inert and the status falls through to
+  `guess_colour` on `:100` — a colour guessed from the words, which is the
+  condition a `states` block is added to replace. Frappe checks this nowhere.
+  `states` appears in `doctype.py` once, as a type annotation on `:169`.
+* **a `states` entry coloured `Black`** is the one with two costs rather than
+  one, and the only fault here aimed at a check frappe does make and skips by
+  the third mechanism above. The Desk stops being able to save the DocType
+  (`_validate_selects` throws on a row nobody touched), and
+  `indicator.js:84` hands `frappe.scrub(state.color, "-")` straight out as a
+  class, so the pill renders as `.indicator-pill.black` — which the `@each` loop
+  on `indicator.scss:51` never generates, because `black` is not one of its
+  twelve colours. **`Black` was picked for this fault because it is the colour
+  the author of the check wrongly believed was available**, which is the whole
+  argument for checking the ten in the Select rather than trusting a recollection
+  of them.
 
 **What this target found when it was written.** One real exception, and it is a
 decision rather than a mistake: `Currency.exchange_rate` is a Float with

@@ -8,8 +8,11 @@ has twenty-three such checks already written, in `validate_fields` and `validate
 app's DocTypes, ever, and the reason is worth reading once because it is not an oversight
 and it will not be fixed upstream.
 
-**Nothing validates a shipped DocType JSON on deploy.** Two separate mechanisms, each
-verified against frappe 15.52.0 -- the version on the live site, not the version-15 branch:
+**Nothing validates a shipped DocType JSON on deploy.** Three separate mechanisms, each
+verified against frappe 15.52.0 -- the version on the live site, not the version-15 branch.
+The third was found later than the other two, by `TheStatesBlockIsUsable` below, and it is
+the one that stops the obvious generalisation: **not every skipped check is skipped by
+`ignore_validate`, and a check reached outside `validate` is not therefore reached.**
 
   1. `bench migrate` imports each `<doctype>.json` through
      `frappe/model/sync.py:111` -> `import_file_by_path(...)`, which leaves `data_import`
@@ -24,6 +27,14 @@ verified against frappe 15.52.0 -- the version on the live site, not the version
      authors decided migrate-time is the wrong moment to refuse a deploy over a field
      property -- which is a defensible call, and it is why this file exists. If the framework
      has decided not to check at deploy time, the repository is the only place left.
+  3. A check can also be skipped from the inside, with `ignore_validate` never consulted.
+     `_validate()` is called on `document.py:296`, *after* `run_before_save_methods()` has
+     returned early, so it does run on a migrate, and it does reach child rows --
+     `document.py:601` is `d._validate_selects()` for every child. What stops it is a guard
+     within the method: `base_document.py:878` is `if frappe.flags.in_import: return`, and
+     `import_file.py:212` sets `frappe.flags.in_import = True` just before the `doc.insert()`
+     on `:239`. `TheStatesBlockIsUsable.test_every_state_colour_is_one_frappe_renders` is the
+     check standing where that leaves a hole.
 
 The consequence is that these checks only ever fire when a **human saves the DocType in the
 Desk UI in developer mode**. That is how most of these JSONs were first written, which is why
@@ -110,6 +121,22 @@ DEPENDS_ON_PATTERN = re.compile(r'[\w\.:_]+\s*={1}\s*[\w\.@\'"]+')
 GUEST_ROLE = "Guest"
 ALL_USER_ROLE = "All"
 SYSTEM_USER_ROLE = "Desk User"
+# frappe/core/doctype/doctype_state/doctype_state.json, the `color` Select's options.
+# Ten, and the list is worth reading rather than recalling: there is no Black, and there
+# is a Light Blue. Both halves of that caught the author of this check.
+DOCTYPE_STATE_COLORS = {
+    "Blue", "Cyan", "Gray", "Green", "Light Blue", "Orange", "Pink", "Purple", "Red",
+    "Yellow",
+}
+# frappe/public/scss/common/indicator.scss:50, $indicator-colors. Twelve, generated into
+# `.indicator.<colour>` and `.indicator-pill.<colour>` by the @each loop on :51. This is
+# the second, independent reason the set above is not advisory: a colour outside it
+# reaches the DOM as a class with no rule behind it. `grey` and `darkgrey` are here and
+# not in the Select, so the Select is the narrower authority and the one to check.
+INDICATOR_CSS_COLORS = {
+    "green", "cyan", "blue", "orange", "yellow", "gray", "grey", "red", "pink",
+    "darkgrey", "purple", "light-blue",
+}
 # doctype.py:1515, the four keys check_illegal_depends_on_conditions reads
 DEPENDS_ON_KEYS = (
     "depends_on", "collapsible_depends_on", "mandatory_depends_on", "read_only_depends_on",
@@ -142,6 +169,12 @@ LINK_TARGETS_OUTSIDE_THIS_APP = {
 # is the owner's call, not this file's. Raised for that decision; until it is made, the sweep
 # records the one it knows about and would still catch a second.
 KNOWN_PRECISION_EXCEPTIONS = {("Currency", "exchange_rate"): "9"}
+
+# An exact floor for the states sweep, measured. Only two DocTypes coloured their own
+# statuses when this was written -- Activity (5 rows) and Project (4) -- so both checks
+# below would pass on an empty sweep, which is the one way they could fail silently.
+EXPECTED_STATE_ROWS = 9
+EXPECTED_DOCTYPES_WITH_STATES = {"Activity", "Project"}
 
 # What is not reimplemented here, and why. Pinned so the list cannot grow in silence.
 NOT_REIMPLEMENTED = {
@@ -638,6 +671,113 @@ class PermissionRules(unittest.TestCase):
                     bad.append("%s has amend but the DocType is not submittable" % where)
                 if row.get("import") and not importable:
                     bad.append("%s has import but the DocType is not importable" % where)
+        self.assertEqual(bad, [], "\n".join(bad))
+
+
+class TheStatesBlockIsUsable(unittest.TestCase):
+    """The `states` block, which frappe does not check at all and the Desk half-checks.
+
+    `states` is how a DocType colours its own status, and `frappe.get_indicator` reads it
+    **before** any `get_indicator` a list view defines: `indicator.js:82` is
+    `doc.status && meta.states && meta.states.find((d) => d.title === doc.status)`, and
+    `:88` is the custom hook. So this block is the authority on a status's colour in every
+    view -- list, form heading, report, link preview -- not just the list.
+
+    Nothing in `doctype.py` validates it. `states` appears there exactly once, as the type
+    annotation `states: DF.Table[DocTypeState]` on `:169`. There is no `check_states`, which
+    is why the title half below stands in for no frappe function and is justified on its
+    consequence instead.
+
+    The colour half does have a frappe check, and it is skipped on deploy by a **third**
+    mechanism, separate from the two this file's docstring describes. `color` on DocType
+    State is a Select, and child rows are validated: `document.py:601` runs
+    `d._validate_selects()` for every child. That is not gated by `ignore_validate` --
+    `_validate()` is called on `document.py:296`, *after* `run_before_save_methods()` has
+    already returned early. The guard is inside the method instead:
+    `base_document.py:878` is `if frappe.flags.in_import: return`, and
+    `import_file.py:212` sets `frappe.flags.in_import = True` immediately before
+    `doc.insert()` on `:239`. So the check runs, reaches the states rows, and returns
+    without looking at them.
+    """
+
+    def test_the_sweep_still_reaches_the_states_blocks(self):
+        """Both checks below iterate `states`, so an app with none passes them for free."""
+        rows = [s for _n, (d, _p) in DOCTYPES.items() for s in (d.get("states") or [])]
+        named = {n for n, (d, _p) in DOCTYPES.items() if d.get("states")}
+        self.assertEqual(
+            len(rows), EXPECTED_STATE_ROWS,
+            "found %d state rows, expected %d. If a DocType gained or lost a states block, "
+            "update EXPECTED_STATE_ROWS; if it dropped to 0, the two checks below are "
+            "passing without reading anything." % (len(rows), EXPECTED_STATE_ROWS))
+        self.assertEqual(named, EXPECTED_DOCTYPES_WITH_STATES)
+
+    def test_every_state_names_a_status_the_field_can_hold(self):
+        """No frappe equivalent: `states` is unvalidated (`doctype.py:169` is the only
+        mention). The consequence is the silent-no-op class, and it is exact rather than
+        likely. `indicator.js:82` finds a state by `d.title === doc.status`, so a title that
+        is not one of the status field's options can never match any document. The state is
+        inert, the search falls through to `guess_colour(doc.status)` on `:100`, and the
+        status gets a colour guessed from its words -- which is the condition the block was
+        added to replace. Nothing raises, nothing logs, and the list looks deliberate.
+        """
+        bad = []
+        for name, (doc, path) in sorted(DOCTYPES.items()):
+            states = doc.get("states") or []
+            if not states:
+                continue
+            status = next((f for f in _fields(doc) if f.get("fieldname") == "status"), None)
+            if status is None:
+                bad.append("%s: %s has %d states but no status field for them to match"
+                           % (_rel(path), name, len(states)))
+                continue
+            if status.get("fieldtype") != "Select":
+                bad.append("%s: %s has states but status is a %s, not a Select"
+                           % (_rel(path), name, status.get("fieldtype")))
+                continue
+            options = (status.get("options") or "").split("\n")
+            for state in states:
+                title = state.get("title")
+                if title not in options:
+                    bad.append("%s: %s state %r is not one of status's options %r"
+                               % (_rel(path), name, title, options))
+        self.assertEqual(bad, [], "a state whose title is not a status the field can hold is "
+                                  "never found by indicator.js:82, so it silently does "
+                                  "nothing:\n" + "\n".join(bad))
+
+    def test_every_state_colour_is_one_frappe_renders(self):
+        """Stands in for `_validate_selects` (`base_document.py:877`) on the states child
+        rows, skipped on deploy by `frappe.flags.in_import` (`:878`, set at
+        `import_file.py:212`).
+
+        Two consequences, both measured, because either alone would be worth the check:
+
+          * **The Desk stops being able to save the DocType.** `_validate_selects` throws
+            when a human opens it in developer mode and presses Update -- on a row they did
+            not touch. This is the same cost as `KNOWN_PRECISION_EXCEPTIONS` above, and it
+            arrives the same way: from a file that deployed cleanly.
+          * **The pill loses its colour in the browser.** `indicator.js:84` is
+            `frappe.scrub(state.color, "-")` and hands the result straight out as the
+            colour class. `.indicator-pill.<colour>` only exists for the twelve in
+            `INDICATOR_CSS_COLORS`, generated by the `@each` loop on
+            `indicator.scss:51`. A colour outside them renders as a class with no rule.
+        """
+        bad = []
+        for name, (doc, path) in sorted(DOCTYPES.items()):
+            for state in doc.get("states") or []:
+                colour = state.get("color")
+                where = "%s: %s state %r" % (_rel(path), name, state.get("title"))
+                if not colour:
+                    bad.append("%s has no colour, so indicator.js:84 scrubs %r into the "
+                               "class attribute" % (where, colour))
+                    continue
+                if colour not in DOCTYPE_STATE_COLORS:
+                    bad.append("%s has colour %r, which is not one of DocType State's "
+                               "options %r" % (where, colour, sorted(DOCTYPE_STATE_COLORS)))
+                    continue
+                scrubbed = colour.lower().replace(" ", "-")
+                if scrubbed not in INDICATOR_CSS_COLORS:
+                    bad.append("%s has colour %r, which scrubs to %r and has no CSS rule"
+                               % (where, colour, scrubbed))
         self.assertEqual(bad, [], "\n".join(bad))
 
 

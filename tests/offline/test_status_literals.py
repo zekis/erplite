@@ -122,8 +122,8 @@ sys.path.insert(0, HERE)
 # The floor: what a sweep of the tree found on 6 Oct 2026. Asserted so that a site cannot
 # stop being judged in silence -- the failure this suite keeps meeting is a check that still
 # passes after it has stopped looking at anything.
-EXPECTED_SITES = {"compare": 16, "map": 3}
-EXPECTED_TOTAL = 19
+EXPECTED_SITES = {"compare": 17, "map": 3}
+EXPECTED_TOTAL = 20
 
 # doc.<field> or frm.doc.<field> tested against a string literal, either direction of
 # equality. An empty literal is allowed through: `status != ''` is a presence test, not a
@@ -275,9 +275,9 @@ class TheSweepStillReachesTheClientScripts(unittest.TestCase):
         """Both floors can be met while every site is skipped as a non-Select."""
         judged = [s for s in SITES if s[4] in s[6]]
         self.assertGreaterEqual(
-            len(judged), 18,
+            len(judged), 19,
             "only %d of %d sites name a declared Select field, so the rule below is nearly "
-            "vacuous; 18 of 19 did on 6 Oct 2026" % (len(judged), len(SITES)))
+            "vacuous; 19 of 20 did on 6 Oct 2026" % (len(judged), len(SITES)))
 
 
 class AClientScriptNamesOnlyValuesItsFieldCanHold(unittest.TestCase):
