@@ -5391,6 +5391,353 @@ SCHEDULER_API = Target(
 
 
 
+# --- the Schedule Entry controller after the Task -> Activity rename ---------
+# tests/offline/test_schedule_entry.py.
+# 98e9b04 renamed this DocType's `task` field to `activity` and repointed it at
+# Activity; 8126278 then removed the Task DocType and Activity's
+# `progress_percent`. The controller was not brought along, so `validate()`
+# read `self.task` on every save -- an attribute a document has no field for --
+# and `on_update` wrote `progress_percent` back to `tabTask`. Creating an entry
+# from the scheduler came back as `{"success": false, "message": "'ScheduleEntry'
+# object has no attribute 'task'"}` and went to the error log.
+#
+# So the faults come in two halves. The first restores the old names, which is
+# the regression that happened. The second is the more interesting one: what the
+# link check and the progress calculation now *decide*, which the rename made no
+# claim about and which nothing else in the app pins.
+
+SE = "erplite/scheduler/doctype/schedule_entry/schedule_entry.py"
+SE_JSON = "erplite/scheduler/doctype/schedule_entry/schedule_entry.json"
+ACT_JSON = "erplite/projects/doctype/activity/activity.json"
+PROJ_CONFIG = "erplite/config/projects.py"
+
+# schedule_entry.py and schedule_entry.json are CRLF, activity.json is LF.
+# Nothing below records that: harness.read asks each file.
+
+SE_LOOKUP = ('            activity_project = frappe.db.get_value("Activity", '
+             'self.activity, "project")\n')
+SE_LINK_GUARD = "        if self.activity and self.project:\n"
+SE_LINK_COMPARE = "            if activity_project != self.project:\n"
+SE_LINK_THROW = ('                frappe.throw(_("Activity {0} does not belong '
+                 'to project {1}").format(self.activity, self.project))\n')
+SE_VALIDATE_CALL = "        self.validate_activity_project_link()\n"
+
+SE_LINK_BLOCK = (
+    "    def validate_activity_project_link(self):\n"
+    '        """Validate that the activity belongs to the selected project"""\n'
+    + SE_LINK_GUARD + SE_LOOKUP + SE_LINK_COMPARE + SE_LINK_THROW
+)
+
+SE_ON_UPDATE = (
+    "        # get_activity_progress(); restore the write here once Activity has a\n"
+    "        # field to hold it.\n"
+    "        pass\n"
+)
+SE_ON_CANCEL = (
+    "    def on_cancel(self):\n"
+    '        """Actions on cancel"""\n'
+    "        pass\n"
+)
+
+SE_ACT_GUARD = "        if not self.activity:\n            return None\n"
+SE_NO_ENTRIES = "        if not entries:\n            return None\n"
+SE_NO_HOURS = "        if not total_hours:\n            return None\n"
+SE_FILTERS = ('            filters={"activity": self.activity, '
+              '"docstatus": ["!=", 2]},\n')
+SE_COMPLETED = (
+    "        completed_hours = sum(\n"
+    '            entry.duration or 0 for entry in entries if entry.status == "Completed")\n'
+)
+SE_CLAMP = "        return min(100, (completed_hours / total_hours) * 100)\n"
+
+# The whole body, for the restructuring control. The lines holding eight spaces
+# and nothing else are in the source and the pattern must carry them.
+SE_PROGRESS_BODY = (
+    '        entries = frappe.get_all("Schedule Entry",\n'
+    + SE_FILTERS
+    + '            fields=["status", "duration"])\n'
+    "        \n"
+    + SE_NO_ENTRIES
+    + "        \n"
+    "        total_hours = sum(entry.duration or 0 for entry in entries)\n"
+    + SE_NO_HOURS
+    + "        \n"
+    + SE_COMPLETED
+    + "        \n"
+    + SE_CLAMP
+)
+
+SE_SQL_SELECT = "            SELECT name, start_time, end_time, project\n"
+SE_SQL_FROM = "            FROM `tabSchedule Entry`\n"
+
+SE_JSON_ACTIVITY_FIELD = (
+    "  {\n"
+    '   "fieldname": "activity",\n'
+    '   "fieldtype": "Link",\n'
+    '   "in_list_view": 1,\n'
+    '   "label": "Activity",\n'
+    '   "options": "Activity",\n'
+    '   "reqd": 1\n'
+    "  },\n"
+)
+ACT_JSON_PROJECT_FIELD = (
+    "  {\n"
+    '   "fieldname": "project",\n'
+    '   "fieldtype": "Link",\n'
+    '   "in_list_view": 1,\n'
+    '   "in_standard_filter": 1,\n'
+    '   "label": "Project",\n'
+    '   "options": "Project",\n'
+    '   "reqd": 1\n'
+    "  },\n"
+)
+FIELDS_OPEN = ' "fields": [\n'
+
+PROJ_ACTIVITY_ITEM = (
+    "                {\n"
+    '                    "type": "doctype",\n'
+    '                    "name": "Activity",\n'
+    '                    "label": _("Activity"),\n'
+    '                    "description": _("Create and manage project activities")\n'
+    "                }\n"
+)
+
+
+SCHEDULE_ENTRY = Target(
+    test="tests/offline/test_schedule_entry.py",
+    faults=[
+        # --- the regression itself, in each of the three places it lived -----
+        Fault("the link check reads self.task again, which is what took "
+              "creation down", True, [
+                  (SE, SE_LOOKUP,
+                   '            activity_project = frappe.db.get_value("Activity", '
+                   'self.task, "project")\n')]),
+        Fault("the link check looks the project up on the Task DocType again", True, [
+            (SE, SE_LOOKUP,
+             '            activity_project = frappe.db.get_value("Task", '
+             'self.activity, "project")\n')]),
+        Fault("the whole pre-rename method back, verbatim", True, [
+            (SE, SE_LINK_BLOCK,
+             "    def validate_task_project_link(self):\n"
+             '        """Validate that the task belongs to the selected project"""\n'
+             "        if self.task and self.project:\n"
+             '            task_project = frappe.db.get_value("Task", self.task, "project")\n'
+             "            if task_project != self.project:\n"
+             '                frappe.throw(_("Task {0} does not belong to project '
+             '{1}").format(self.task, self.project))\n')]),
+        Fault("the progress write back in on_update, at Activity", True, [
+            (SE, SE_ON_UPDATE,
+             "        if self.activity:\n"
+             '            frappe.db.set_value("Activity", self.activity,\n'
+             '                "progress_percent", self.get_activity_progress())\n')]),
+        Fault("the progress write back in on_update, at the Task DocType -- the "
+              "failure the validate() fix would have moved here", True, [
+                  (SE, SE_ON_UPDATE,
+                   "        if self.activity:\n"
+                   '            frappe.db.set_value("Task", self.activity,\n'
+                   '                "progress_percent", self.get_activity_progress())\n')]),
+        Fault("update_task_progress restored as a method and called", True, [
+            (SE, SE_ON_UPDATE,
+             "        self.update_task_progress()\n"
+             "    \n"
+             "    def update_task_progress(self):\n"
+             '        """Update progress on the linked task"""\n'
+             "        if self.task:\n"
+             '            frappe.db.set_value("Task", self.task,\n'
+             '                "progress_percent", self.get_activity_progress())\n')]),
+        Fault("the removed task column back in the overlap query's SELECT", True, [
+            (SE, SE_SQL_SELECT,
+             "            SELECT name, start_time, end_time, project, task\n")]),
+        Fault("the overlap query reads tabTask", True, [
+            (SE, SE_SQL_FROM, "            FROM `tabTask`\n")]),
+
+        # --- what the link check decides -------------------------------------
+        # The rename made no claim about this: a check that reads the right
+        # field and then decides the wrong thing is the quieter regression,
+        # because creation works and the wrong rows are accepted.
+        Fault("the mismatch no longer throws", True, [
+            (SE, SE_LINK_COMPARE + SE_LINK_THROW, "            pass\n")]),
+        Fault("the comparison inverted, so a matching pair is rejected", True, [
+            (SE, SE_LINK_COMPARE,
+             "            if activity_project == self.project:\n")]),
+        Fault("the activity's project compared against the activity id", True, [
+            (SE, SE_LINK_COMPARE,
+             "            if activity_project != self.activity:\n")]),
+        Fault("the lookup asks Activity for its status, not its project", True, [
+            (SE, SE_LOOKUP,
+             '            activity_project = frappe.db.get_value("Activity", '
+             'self.activity, "status")\n')]),
+        Fault("the guard drops the activity, so an entry with no activity is "
+              "looked up and rejected", True, [
+                  (SE, SE_LINK_GUARD, "        if self.project:\n")]),
+        Fault("the link check unwired from validate(), so nothing checks it on "
+              "a save", True, [(SE, SE_VALIDATE_CALL, "")]),
+
+        # --- what the progress calculation decides ---------------------------
+        Fault("cancelled entries counted again", True, [
+            (SE, SE_FILTERS,
+             '            filters={"activity": self.activity},\n')]),
+        Fault("filtered on task rather than activity", True, [
+            (SE, SE_FILTERS,
+             '            filters={"task": self.activity, "docstatus": ["!=", 2]},\n')]),
+        Fault("the activity filter dropped, so every activity's hours count", True, [
+            (SE, SE_FILTERS,
+             '            filters={"docstatus": ["!=", 2]},\n')]),
+        Fault("every status counted as completed", True, [
+            (SE, SE_COMPLETED,
+             "        completed_hours = sum(\n"
+             "            entry.duration or 0 for entry in entries)\n")]),
+        Fault('completed counted as "Complete", which Schedule Entry.status '
+              "cannot hold", True, [
+                  (SE, SE_COMPLETED,
+                   "        completed_hours = sum(\n"
+                   '            entry.duration or 0 for entry in entries if entry.status == "Complete")\n')]),
+        Fault("no entries reported as nought per cent rather than nothing to "
+              "measure", True, [(SE, SE_NO_ENTRIES,
+                                 "        if not entries:\n            return 0\n")]),
+        Fault("nothing scheduled reported as nought per cent", True, [
+            (SE, SE_NO_HOURS, "        if not total_hours:\n            return 0\n")]),
+        Fault("the zero-hours guard removed, so an unscheduled activity divides "
+              "by nought", True, [(SE, SE_NO_HOURS, "")]),
+        Fault("the no-activity guard removed, so an entry with no activity is "
+              "queried for", True, [(SE, SE_ACT_GUARD, "")]),
+        Fault("the clamp at a hundred removed", True, [
+            (SE, SE_CLAMP,
+             "        return (completed_hours / total_hours) * 100\n")]),
+        # The clamp's docstring rests on validate_duration refusing a negative
+        # duration, so that claim is driven too rather than asserted. `< -10`
+        # rather than deleting the guard: the test must fail because -4 is
+        # accepted, not because the method stopped existing.
+        Fault("a negative duration accepted, which is the only input that "
+              "reaches the clamp", True, [
+                  (SE, "        if self.duration <= 0:\n",
+                   "        if self.duration < -10:\n")]),
+
+        # --- the sweep for what is left of the Task DocType ------------------
+        Fault("a Task lookup back in a controller method nothing else tests", True, [
+            (SE, SE_ON_CANCEL,
+             "    def on_cancel(self):\n"
+             '        """Actions on cancel"""\n'
+             '        frappe.db.get_value("Task", self.activity, "project")\n')]),
+        Fault("the same Task lookup with its arguments on the next line", True, [
+            (SE, SE_ON_CANCEL,
+             "    def on_cancel(self):\n"
+             '        """Actions on cancel"""\n'
+             "        frappe.db.get_value(\n"
+             '            "Task", self.activity, "project")\n')]),
+        Fault("a Link field pointed back at the Task DocType", True, [
+            (SE_JSON, SE_JSON_ACTIVITY_FIELD,
+             "  {\n"
+             '   "fieldname": "activity",\n'
+             '   "fieldtype": "Link",\n'
+             '   "in_list_view": 1,\n'
+             '   "label": "Activity",\n'
+             '   "options": "Task",\n'
+             '   "reqd": 1\n'
+             "  },\n")]),
+        Fault("the Projects workspace lists the Task DocType again", True, [
+            (PROJ_CONFIG, PROJ_ACTIVITY_ITEM,
+             "                {\n"
+             '                    "type": "doctype",\n'
+             '                    "name": "Task",\n'
+             '                    "label": _("Task"),\n'
+             '                    "description": _("Create and manage project tasks")\n'
+             "                }\n")]),
+
+        # --- the premises, which are read out of the DocType JSONs -----------
+        # These three are what the fix rests on. A JSON is the one kind of file
+        # `bench migrate` applies without validating (see doctype_json_validation),
+        # so a field coming back is an edit nothing else here would notice.
+        Fault("the task field back on Schedule Entry", True, [
+            (SE_JSON, FIELDS_OPEN,
+             ' "fields": [\n'
+             "  {\n"
+             '   "fieldname": "task",\n'
+             '   "fieldtype": "Link",\n'
+             '   "label": "Task",\n'
+             '   "options": "Activity"\n'
+             "  },\n"),
+            (SE_JSON, '\n  "activity",\n  "role",\n',
+             '\n  "activity",\n  "task",\n  "role",\n')]),
+        Fault("progress_percent back on Activity", True, [
+            (ACT_JSON, FIELDS_OPEN,
+             ' "fields": [\n'
+             "  {\n"
+             '   "fieldname": "progress_percent",\n'
+             '   "fieldtype": "Percent",\n'
+             '   "label": "Progress"\n'
+             "  },\n")]),
+        Fault("project taken off Activity, so the link check has no successor "
+              "to read", True, [(ACT_JSON, ACT_JSON_PROJECT_FIELD, "")]),
+
+        # --- controls: real edits, no behaviour changed, must stay green ------
+        Fault("the link check's local renamed (activity_project -> "
+              "linked_project)", False, [
+                  (SE, SE_LOOKUP + SE_LINK_COMPARE,
+                   '            linked_project = frappe.db.get_value("Activity", '
+                   'self.activity, "project")\n'
+                   "            if linked_project != self.project:\n")]),
+        Fault("the link check restructured to an early return", False, [
+            (SE, SE_LINK_BLOCK,
+             "    def validate_activity_project_link(self):\n"
+             '        """Validate that the activity belongs to the selected project"""\n'
+             "        if not self.activity or not self.project:\n"
+             "            return\n"
+             '        activity_project = frappe.db.get_value("Activity", self.activity, "project")\n'
+             "        if activity_project != self.project:\n"
+             '            frappe.throw(_("Activity {0} does not belong to project '
+             '{1}").format(self.activity, self.project))\n')]),
+        Fault("the guard's two conditions swapped", False, [
+            (SE, SE_LINK_GUARD, "        if self.project and self.activity:\n")]),
+        Fault("the progress sums rewritten as one loop over rows", False, [
+            (SE, SE_PROGRESS_BODY,
+             '        rows = frappe.get_all("Schedule Entry",\n'
+             + SE_FILTERS
+             + '            fields=["status", "duration"])\n'
+             "        \n"
+             "        if not rows:\n"
+             "            return None\n"
+             "        \n"
+             "        total_hours = 0\n"
+             "        completed_hours = 0\n"
+             "        for row in rows:\n"
+             "            hours = row.duration or 0\n"
+             "            total_hours += hours\n"
+             '            if row.status == "Completed":\n'
+             "                completed_hours += hours\n"
+             "        \n"
+             "        if not total_hours:\n"
+             "            return None\n"
+             "        \n"
+             "        return min(100, (completed_hours / total_hours) * 100)\n")]),
+
+        # The three below are the controls that matter, because the sweep for
+        # Task calls reads source text rather than running anything, and its
+        # whole claim is that a *comment* naming the old call is not a call.
+        # That claim is load-bearing today: on_update carries one.
+        Fault("a comment on its own line naming a Task lookup", False, [
+            (SE, SE_ON_CANCEL,
+             "    def on_cancel(self):\n"
+             '        """Actions on cancel"""\n'
+             '        # frappe.db.get_value("Task", self.activity, "project")\n'
+             "        pass\n")]),
+        Fault("the same comment at the end of a line of code", False, [
+            (SE, SE_ON_CANCEL,
+             "    def on_cancel(self):\n"
+             '        """Actions on cancel"""\n'
+             '        pass  # frappe.db.get_value("Task", self.activity, "project")\n')]),
+        Fault("a docstring naming the Task lookup it replaced", False, [
+            (SE, SE_ON_CANCEL,
+             "    def on_cancel(self):\n"
+             '        """Actions on cancel.\n'
+             "\n"
+             '        Used to be frappe.db.get_value("Task", self.task, "project").\n'
+             '        """\n'
+             "        pass\n")]),
+    ],
+)
+
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -5419,4 +5766,5 @@ TARGETS = {
     "status_literals": STATUS_LITERALS,
     "shadowed_imports": SHADOWED_IMPORTS,
     "scheduler_api": SCHEDULER_API,
+    "schedule_entry": SCHEDULE_ENTRY,
 }
