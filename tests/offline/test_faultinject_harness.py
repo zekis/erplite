@@ -40,15 +40,12 @@ def _load(name, path):
 harness = _load("fi_harness", os.path.join(FI, "harness.py"))
 
 # Offline test files that no target in faults.py drives, with why. Measured, not
-# assembled from memory: 9 of 33 on 6 Oct 2026. A file here has never been shown
+# assembled from memory: 8 of 33 on 6 Oct 2026. A file here has never been shown
 # capable of going red, so it reports a safety nothing has checked.
 UNDRIVEN_OFFLINE_FILES = {
     # Cannot be: it is the harness's own guard file. A target for it would be a
     # target for the thing that decides whether targets mean anything.
     "tests/offline/test_faultinject_harness.py": "drives the harness; nothing drives it",
-    # Not yet, and this one is an omission rather than a decision: the file shipped
-    # with the twenty-third target's PR and no target of its own.
-    "tests/offline/test_status_literals.py": "no target; next one to write",
     # Not yet. Each predates the harness and sweeps metadata or wiring rather than a
     # behaviour, so a fault for it is an edit to a JSON or a hook, not to a function.
     "tests/offline/test_child_doctype_hooks.py": "no target yet",

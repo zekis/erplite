@@ -2360,7 +2360,7 @@ either a real new dependency or the typo the check is for.
 ### `status_literals` — `tests/offline/test_status_literals.py`
 
 Twenty-fifth target, and it closes an omission of mine. This test file shipped
-in PR #56 with four tests, reporting a safety nothing had checked, and **no
+in `3000436` with four tests, reporting a safety nothing had checked, and **no
 target to drive it** — one of the nine files `ea35eb6` counted as undriven, and
 the only one of those whose missing target was the fault of whoever wrote the
 test.
