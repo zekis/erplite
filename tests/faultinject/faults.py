@@ -3833,6 +3833,353 @@ PROJECTS_API = Target("tests/offline/test_projects_api.py", [
              '            }\n')]),
 ])
 
+# --- the whole-app raw-SQL literal guard -----------------------------------
+# tests/offline/test_raw_sql.py is the app's only *security* guard: the first
+# argument to frappe.db.sql (and sql_list / sql_value / multisql) must be a
+# plain string literal, because only the `values` argument is escaped. Anything
+# spliced into the query string is SQL syntax, not data.
+#
+# The faults below are the six non-literal shapes `classify_query_arg` names,
+# each written at a real db.sql site in this app and each splicing a value that
+# a caller can reach -- so every one of them is the bug the guard was written
+# for (`get_activity_summary`, fixed), put back somewhere else.
+#
+# Two of them ask the question the file's own "known blind spots" section
+# raises and does not answer: a query handed to a `.sql()` on a receiver the
+# walker declines to recognise. The docstring says those are "listed by the
+# pass as skipped rather than silently dropped, so the count is visible". They
+# are not: `skipped` is collected in the sweep and never read.
+
+RS_SAPI = "erplite/scheduler/api.py"
+RS_RES = "erplite/scheduler/doctype/resource/resource.py"
+RS_SENT = "erplite/scheduler/doctype/schedule_entry/schedule_entry.py"
+RS_FY = "erplite/setup/doctype/fiscal_year/fiscal_year.py"
+RS_FB = "erplite/setup/doctype/finance_book/finance_book.py"
+RS_CUR = "erplite/setup/doctype/currency/currency.py"
+RS_SLOG = "erplite/scheduler/doctype/scheduler_log/scheduler_log.py"
+RS_STMPL = "erplite/scheduler/doctype/schedule_template/schedule_template.py"
+
+# The utilisation query, as it stands: parameterised, both values in `values`.
+RS_UTIL_OLD = (
+    '    result = frappe.db.sql("""\n'
+    '        SELECT COALESCE(SUM(duration), 0) as total_hours\n'
+    '        FROM `tabSchedule Entry`\n'
+    '        WHERE resource = %s AND schedule_date = %s AND docstatus != 2\n'
+    '    """, (resource, date))'
+)
+# ... and spliced, which is the shape of the bug this guard exists to stop.
+RS_UTIL_FSTRING = (
+    '        SELECT COALESCE(SUM(duration), 0) as total_hours\n'
+    '        FROM `tabSchedule Entry`\n'
+    "        WHERE resource = '{resource}' AND schedule_date = '{date}' "
+    'AND docstatus != 2\n'
+)
+
+RS_CAPACITY_OLD = (
+    '        scheduled_hours = frappe.db.sql("""\n'
+    '            SELECT COALESCE(SUM(duration), 0) as total_hours\n'
+    '            FROM `tabSchedule Entry`\n'
+    '            WHERE resource = %s AND schedule_date = %s AND docstatus != 2\n'
+    '        """, (self.name, date))[0][0]'
+)
+
+RS_OVERLAP_OLD = (
+    '        overlapping = frappe.db.sql("""\n'
+    '            SELECT name, start_time, end_time, project\n'
+    '            FROM `tabSchedule Entry`\n'
+    '            WHERE resource = %s \n'
+    '            AND schedule_date = %s \n'
+    '            AND name != %s\n'
+    '            AND docstatus != 2\n'
+    '            AND (\n'
+    '                (start_time <= %s AND end_time > %s) OR\n'
+    '                (start_time < %s AND end_time >= %s) OR\n'
+    '                (start_time >= %s AND end_time <= %s)\n'
+    '            )\n'
+    '        """, (\n'
+    '            self.resource, self.schedule_date, self.name or "",\n'
+    '            self.start_time, self.start_time,\n'
+    '            self.end_time, self.end_time,\n'
+    '            self.start_time, self.end_time\n'
+    '        ), as_dict=True)'
+)
+
+RS_FY_OLD = (
+    '        existing_fiscal_years = frappe.db.sql("""\n'
+    '            SELECT name FROM `tabFiscal Year`\n'
+    '            WHERE (\n'
+    '                (%(start_date)s BETWEEN start_date AND end_date)\n'
+    '                OR (%(end_date)s BETWEEN start_date AND end_date)\n'
+    '                OR (start_date BETWEEN %(start_date)s AND %(end_date)s)\n'
+    '            ) AND name != %(name)s\n'
+    '            """, {\n'
+    '                "start_date": self.start_date,\n'
+    '                "end_date": self.end_date,\n'
+    '                "name": self.name or "No Name"\n'
+    '            }, as_dict=True)'
+)
+
+RS_FB_OLD = (
+    '            frappe.db.sql("""\n'
+    '                UPDATE `tabFinance Book` SET is_default = 0\n'
+    '                WHERE is_default = 1 AND name != %s\n'
+    '            """, (self.name))'
+)
+
+RS_CUR_OLD = (
+    '            frappe.db.sql("""\n'
+    '                UPDATE `tabCurrency` SET is_base_currency = 0\n'
+    '                WHERE is_base_currency = 1 AND name != %s\n'
+    '            """, (self.name))'
+)
+
+RS_SLOG_OLD = (
+    '\trows = frappe.db.sql("""\n'
+    '\t\tSELECT COUNT(*) FROM `tabScheduler Log`\n'
+    '\t\tWHERE DATE(timestamp) < %s\n'
+    '\t""", (cutoff_date,))\n'
+    '\tdeleted_count = rows[0][0] if rows else 0'
+)
+
+RS_STMPL_OLD = (
+    '\t\t\tmax_sort_order = frappe.db.sql(\n'
+    '\t\t\t\t"SELECT COALESCE(MAX(sort_order), 0) FROM `tabSchedule Template`"\n'
+    '\t\t\t)[0][0]'
+)
+
+RAW_SQL = Target(
+    test="tests/offline/test_raw_sql.py",
+    faults=[
+        # --- the six shapes classify_query_arg names, at real sites --------
+        Fault("an f-string splices a whitelisted endpoint's two arguments "
+              "into the utilisation query", True, [
+                  (RS_SAPI, RS_UTIL_OLD,
+                   '    result = frappe.db.sql(f"""\n'
+                   + RS_UTIL_FSTRING +
+                   '    """)')]),
+        Fault(".format() splices self.resource into the overlap query, which "
+              "decides whether a booking is allowed", True, [
+                  (RS_SENT, RS_OVERLAP_OLD,
+                   '        overlapping = frappe.db.sql("""\n'
+                   '            SELECT name, start_time, end_time, project\n'
+                   '            FROM `tabSchedule Entry`\n'
+                   "            WHERE resource = '{res}' \n"
+                   '            AND schedule_date = %s \n'
+                   '            AND name != %s\n'
+                   '            AND docstatus != 2\n'
+                   '            AND (\n'
+                   '                (start_time <= %s AND end_time > %s) OR\n'
+                   '                (start_time < %s AND end_time >= %s) OR\n'
+                   '                (start_time >= %s AND end_time <= %s)\n'
+                   '            )\n'
+                   '        """.format(res=self.resource), (\n'
+                   '            self.schedule_date, self.name or "",\n'
+                   '            self.start_time, self.start_time,\n'
+                   '            self.end_time, self.end_time,\n'
+                   '            self.start_time, self.end_time\n'
+                   '        ), as_dict=True)')]),
+        Fault("%-formatting splices the resource name and date into the "
+              "capacity query", True, [
+                  (RS_RES, RS_CAPACITY_OLD,
+                   '        scheduled_hours = frappe.db.sql("""\n'
+                   '            SELECT COALESCE(SUM(duration), 0) as total_hours\n'
+                   '            FROM `tabSchedule Entry`\n'
+                   "            WHERE resource = '%s' AND schedule_date = '%s' "
+                   'AND docstatus != 2\n'
+                   '        """ % (self.name, date))[0][0]')]),
+        Fault("concatenation splices a document name into an UPDATE -- an "
+              "apostrophe in a currency name is enough to break it", True, [
+                  (RS_CUR, RS_CUR_OLD,
+                   '            frappe.db.sql(\n'
+                   '                "UPDATE `tabCurrency` SET is_base_currency = 0 "\n'
+                   '                "WHERE is_base_currency = 1 AND name != \'" '
+                   '+ self.name + "\'"\n'
+                   '            )')]),
+        Fault("the query is built with % into a local and the call is handed "
+              "the variable, so the splice is a line away from the call", True, [
+                  (RS_FY, RS_FY_OLD,
+                   '        query = """\n'
+                   '            SELECT name FROM `tabFiscal Year`\n'
+                   '            WHERE (\n'
+                   "                ('%s' BETWEEN start_date AND end_date)\n"
+                   "                OR ('%s' BETWEEN start_date AND end_date)\n"
+                   "                OR (start_date BETWEEN '%s' AND '%s')\n"
+                   "            ) AND name != '%s'\n"
+                   '            """ % (self.start_date, self.end_date,\n'
+                   '                   self.start_date, self.end_date,\n'
+                   '                   self.name or "No Name")\n'
+                   '        existing_fiscal_years = frappe.db.sql(query, as_dict=True)')]),
+        Fault("a conditional expression picks between a spliced query and a "
+              "literal one, so one arm is safe and the other is not", True, [
+                  (RS_FB, RS_FB_OLD,
+                   '            frappe.db.sql(\n'
+                   '                f"UPDATE `tabFinance Book` SET is_default = 0 "\n'
+                   '                f"WHERE name != \'{self.name}\'"\n'
+                   '                if self.name else\n'
+                   '                "UPDATE `tabFinance Book` SET is_default = 0"\n'
+                   '            )')]),
+        # --- shapes that reach the classifier's other branches -------------
+        Fault("a dict of queries, called by subscript -- reaches the "
+              "classifier's fallback branch, which no self-test covers", True, [
+                  (RS_RES,
+                   '        # Get total scheduled hours for this resource on the given date\n'
+                   + RS_CAPACITY_OLD,
+                   '        # Get total scheduled hours for this resource on the given date\n'
+                   '        queries = {\n'
+                   '            "capacity": f"""\n'
+                   '            SELECT COALESCE(SUM(duration), 0) as total_hours\n'
+                   '            FROM `tabSchedule Entry`\n'
+                   "            WHERE resource = '{self.name}' "
+                   "AND schedule_date = '{date}' AND docstatus != 2\n"
+                   '            """,\n'
+                   '        }\n'
+                   '        scheduled_hours = frappe.db.sql(queries["capacity"])[0][0]')]),
+        Fault("an f-string wrapped in .strip(), so the query argument is a "
+              "call and the splice is inside it", True, [
+                  (RS_SAPI, RS_UTIL_OLD,
+                   '    result = frappe.db.sql(f"""\n'
+                   + RS_UTIL_FSTRING +
+                   '    """.strip())')]),
+        Fault("the query is passed by keyword and is an f-string -- the "
+              "keyword path is self-tested only with a literal", True, [
+                  (RS_STMPL, RS_STMPL_OLD,
+                   '\t\t\ttable = "Schedule Template"\n'
+                   '\t\t\tmax_sort_order = frappe.db.sql(\n'
+                   '\t\t\t\tquery=f"SELECT COALESCE(MAX(sort_order), 0) '
+                   'FROM `tab{table}`"\n'
+                   '\t\t\t)[0][0]')]),
+        # --- the other three methods in SQL_METHODS ------------------------
+        Fault("sql_list with an f-string: the log-clearing endpoint's cutoff "
+              "goes into the query text", True, [
+                  (RS_SLOG, RS_SLOG_OLD,
+                   '\trows = frappe.db.sql_list(f"""\n'
+                   '\t\tSELECT COUNT(*) FROM `tabScheduler Log`\n'
+                   "\t\tWHERE DATE(timestamp) < '{cutoff_date}'\n"
+                   '\t""")\n'
+                   '\tdeleted_count = rows[0] if rows else 0')]),
+        Fault("sql_value with .format() building a table name -- the one case "
+              "the file says cannot be parameterised at all", True, [
+                  (RS_STMPL, RS_STMPL_OLD,
+                   '\t\t\tmax_sort_order = frappe.db.sql_value(\n'
+                   '\t\t\t\t"SELECT COALESCE(MAX(sort_order), 0) FROM `tab{doctype}`"'
+                   '.format(doctype=self.doctype)\n'
+                   '\t\t\t)')]),
+        Fault("CONTROL: multisql called correctly -- a dict of two literals, "
+              "which is the only shape multisql accepts", False, [
+                  (RS_CUR, RS_CUR_OLD,
+                   '            frappe.db.multisql({\n'
+                   '                "mariadb": """\n'
+                   '                    UPDATE `tabCurrency` SET is_base_currency = 0\n'
+                   '                    WHERE is_base_currency = 1 AND name != %s\n'
+                   '                """,\n'
+                   '                "postgres": """\n'
+                   '                    UPDATE "tabCurrency" SET is_base_currency = 0\n'
+                   '                    WHERE is_base_currency = 1 AND name != %s\n'
+                   '                """,\n'
+                   '            }, (self.name))')]),
+        Fault("an f-string in multisql's mariadb arm -- the real hazard, "
+              "which until the fix was red for the same reason a correct "
+              "multisql was", True, [
+                  (RS_CUR, RS_CUR_OLD,
+                   '            frappe.db.multisql({\n'
+                   '                "mariadb": f"""\n'
+                   '                    UPDATE `tabCurrency` SET is_base_currency = 0\n'
+                   "                    WHERE is_base_currency = 1 AND name != '{self.name}'\n"
+                   '                """,\n'
+                   '                "postgres": """\n'
+                   '                    UPDATE "tabCurrency" SET is_base_currency = 0\n'
+                   '                    WHERE is_base_currency = 1 AND name != %s\n'
+                   '                """,\n'
+                   '            })')]),
+        Fault("a dialect map built into a local and passed to multisql by "
+              "name, so there is nothing in the call for the sweep to read",
+              True, [
+                  (RS_CUR, RS_CUR_OLD,
+                   '            dialects = {\n'
+                   '                "mariadb": f"""\n'
+                   '                    UPDATE `tabCurrency` SET is_base_currency = 0\n'
+                   "                    WHERE is_base_currency = 1 AND name != '{self.name}'\n"
+                   '                """,\n'
+                   '            }\n'
+                   '            frappe.db.multisql(dialects)')]),
+        # --- the walker's scope, exercised through app code ----------------
+        # `_looks_like_db_handle` recognises `<anything>.db` and the bare name
+        # `db`. Every other alias is dropped into `skipped`, which the sweep
+        # collects and never reports.
+        Fault("the handle is put in a local called `handle` first, so the "
+              "spliced query is on a receiver the walker drops", True, [
+                  (RS_SAPI, RS_UTIL_OLD,
+                   '    handle = frappe.db\n'
+                   '    result = handle.sql(f"""\n'
+                   + RS_UTIL_FSTRING +
+                   '    """)')]),
+        Fault("the handle is cached on the document as self.handle, so the "
+              "receiver is an attribute the walker drops", True, [
+                  (RS_RES, RS_CAPACITY_OLD,
+                   '        self.handle = frappe.db\n'
+                   '        scheduled_hours = self.handle.sql(f"""\n'
+                   '            SELECT COALESCE(SUM(duration), 0) as total_hours\n'
+                   '            FROM `tabSchedule Entry`\n'
+                   "            WHERE resource = '{self.name}' "
+                   "AND schedule_date = '{date}' AND docstatus != 2\n"
+                   '        """)[0][0]')]),
+        Fault("`from frappe import db` then db.sql(f...) -- the one alias the "
+              "walker does recognise, proved through app code", True, [
+                  (RS_SAPI, RS_UTIL_OLD,
+                   '    from frappe import db\n'
+                   '    result = db.sql(f"""\n'
+                   + RS_UTIL_FSTRING +
+                   '    """)')]),
+        # --- the blunt rule's own cost, stated rather than hidden ----------
+        Fault("BY DESIGN: a hoisted local holding the identical literal is "
+              "rejected too -- no behaviour change, and the file argues for "
+              "exactly this rather than attempting dataflow", True, [
+                  (RS_FB, RS_FB_OLD,
+                   '            query = """\n'
+                   '                UPDATE `tabFinance Book` SET is_default = 0\n'
+                   '                WHERE is_default = 1 AND name != %s\n'
+                   '            """\n'
+                   '            frappe.db.sql(query, (self.name))')]),
+        # --- controls ------------------------------------------------------
+        Fault("CONTROL: one literal split into two adjacent literals, which "
+              "the parser joins -- safe, and not concatenation", False, [
+                  (RS_STMPL,
+                   '\t\t\t\t"SELECT COALESCE(MAX(sort_order), 0) FROM `tabSchedule Template`"\n',
+                   '\t\t\t\t"SELECT COALESCE(MAX(sort_order), 0) "\n'
+                   '\t\t\t\t"FROM `tabSchedule Template`"\n')]),
+        Fault("CONTROL: an f-string in the `values` argument, which is the "
+              "one place a value belongs", False, [
+                  (RS_RES,
+                   '        """, (self.name, date))[0][0]',
+                   '        """, (f"{self.name}", date))[0][0]')]),
+        Fault("CONTROL: the query text reformatted inside the literal -- the "
+              "guard judges the shape, not the SQL", False, [
+                  (RS_SENT,
+                   '            WHERE resource = %s \n'
+                   '            AND schedule_date = %s \n',
+                   '            WHERE resource = %s\n'
+                   '            AND schedule_date = %s\n')]),
+        Fault("CONTROL: the local holding the result renamed", False, [
+                  (RS_FY,
+                   '        existing_fiscal_years = frappe.db.sql("""\n',
+                   '        clashes = frappe.db.sql("""\n'),
+                  (RS_FY,
+                   '        if existing_fiscal_years:\n'
+                   '            fiscal_years = ", ".join([d.name for d in existing_fiscal_years])',
+                   '        if clashes:\n'
+                   '            fiscal_years = ", ".join([d.name for d in clashes])')]),
+        Fault("CONTROL: the remedy the failure message recommends -- named "
+              "placeholders and a values dict -- must not itself be a finding",
+              False, [
+                  (RS_FB, RS_FB_OLD,
+                   '            frappe.db.sql("""\n'
+                   '                UPDATE `tabFinance Book` SET is_default = 0\n'
+                   '                WHERE is_default = 1 AND name != %(name)s\n'
+                   '            """, {"name": self.name})')]),
+    ],
+)
+
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -3851,4 +4198,5 @@ TARGETS = {
     "undeclared_attrs": UNDECLARED_ATTRS,
     "mandatory_fields": MANDATORY_FIELDS,
     "projects_api": PROJECTS_API,
+    "raw_sql": RAW_SQL,
 }

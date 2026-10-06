@@ -233,7 +233,7 @@ breaking the code.
 
 ## Targets
 
-Seventeen so far, 504 injections: edits applied to the app's real source, with
+Eighteen so far, 527 injections: edits applied to the app's real source, with
 `run.py` watching one test file go red.
 
 **That list of files doing fault injection of their own is now empty.**
@@ -272,6 +272,92 @@ were green anyway** — because that half asks the rule one question, about one
 field, at one call site, and the nine live everywhere else. Driving a file that
 tests itself is not redundant with the file testing itself. It is the only way
 to find out what the file's own questions do not cover.
+
+### `raw_sql` — `tests/offline/test_raw_sql.py`
+
+The eighteenth target, and the first whose subject is a **security** rule: the
+first argument to `frappe.db.sql` (and `sql_list` / `sql_value` / `multisql`)
+must be a plain string literal, because only the `values` argument is escaped.
+Twelve `db.sql` sites in the app today, all literal; thirteen when the file was
+written.
+
+Twenty-three injections: the six non-literal shapes the classifier names, each
+written at a real call site and each splicing a value a caller can reach, plus
+the two classifier branches no self-test covered, the other three methods in
+`SQL_METHODS`, and six controls. **Twenty went as expected and three did not.**
+
+**A guard that reads the app cannot be driven by its own self-tests.** This file
+has a second pass of self-tests over synthetic snippets — the walker's
+boundaries, sixteen of them, and good ones. Everything found below was found by
+breaking the *app*, not the snippets, and the same distinction cost
+`query_fields` three claims and `string_refs` twelve.
+
+**1. A mitigation the docstring described and the code did not do.** Under
+"known blind spots": a `.sql()` on a receiver the walker declines to recognise
+(`handle = frappe.db` then `handle.sql(...)`) is not read, and *"those are
+listed by the pass as skipped rather than silently dropped, so the count is
+visible"*. They were not. `skipped` was summed into a local in the sweep and
+never read — no assertion, no message, no count. Injecting exactly that shape
+at two real sites, with the caller's value spliced into the query text:
+
+| injected at | what the sweep said |
+| --- | --- |
+| `scheduler/api.py:374`, `get_resource_utilization` — `handle = frappe.db` | 12 calls swept, 0 findings |
+| `resource.py:63`, `Resource.get_available_capacity` — `self.handle = frappe.db` | 12 calls swept, 0 findings |
+
+Both are SQL injection through a document name and a date, and the guard whose
+entire purpose is to find them reported the app clean. Note what the count hid:
+the swept total *fell* from 12 to 11 and nothing watches that number except
+`assertGreater(total, 0)`.
+
+Fixed by `NoSqlCallIsLeftUnjudged`, which fails on any `.sql()` the sweep could
+not read, against an `ALLOWED_UNJUDGED` list that is empty and documented as
+empty. **Widening `_looks_like_db_handle` would have been the wrong fix**:
+deciding whether some object is a database handle needs exactly the dataflow
+that the literal-only rule exists to avoid, and it would be wrong in both
+directions. Refusing to be silent needs no dataflow at all. The file had already
+made that argument once — "the right move is an explicit documented exception,
+not a looser rule" — about queries, and not applied it to receivers.
+
+**2. `multisql` was in the set of methods and the rule applied to it was not its
+rule.** `multisql(sql_dict, values=(), **kwargs)` takes a *dialect map*, not a
+query: `frappe/database/database.py:1382` does `query = sql_dict.get(dialect)`
+and hands that to `self.sql`. So the dict is never SQL and every value in it is.
+`classify_query_arg` saw an `ast.Dict`, fell through to `type(arg).__name__`,
+and returned `"Dict"` — not `"literal"`, therefore a finding. Which means:
+
+| `frappe.db.multisql(...)` | before | after |
+| --- | --- | --- |
+| `{"mariadb": "...%s", "postgres": "...%s"}`, correct | **finding: `Dict`** | accepted |
+| `{"mariadb": f"...{self.name}"}`, injection | finding: `Dict` | finding: `f-string` |
+
+A correct call was reported as a security violation, and the one real hazard was
+reported with the same words — so the guard could not distinguish a
+parameterised dialect map from one with a splice in it, and the control is how
+that surfaced. **A false positive and a right answer for the wrong reason are
+the same defect here**: both are red, and the only thing that could have told
+them apart is a control that asserts the correct shape is accepted. There are no
+`multisql` calls in the app, so neither red had ever been seen.
+
+Fixed with `classify_multisql_arg`, which classifies the map's values and leaves
+the fallback alone for a map passed by name. `sql_dict` joins `query` in the
+keyword names, so `multisql(sql_dict=...)` is read rather than classified
+`missing`, and five self-tests now pin the shapes.
+
+**What the controls earned, since five of six were written to fail.** The remedy
+the failure message recommends — named placeholders and a `values` dict — must
+not itself be a finding, and is not. An f-string in the `values` argument, which
+is the one place a value belongs, is not a finding: the guard judges the query
+argument, not the presence of an f-string near `db.sql`. One literal split into
+two adjacent literals is a single `ast.Constant` and not concatenation.
+Reformatting the SQL *inside* a literal changes the string and not the shape.
+
+**One red is correct and worth stating, because it looks like a defect.** A
+hoisted local holding the *identical* literal (`query = """..."""` then
+`db.sql(query, (self.name))`) is rejected, with no behaviour change at all. That
+is the blunt rule working: literal-or-not is decidable from the AST and
+"does caller input reach this" is not. The cost is now measured rather than
+asserted, which is the only honest way to carry a rule that rejects safe code.
 
 ### `projects_api` — `tests/offline/test_projects_api.py`
 
