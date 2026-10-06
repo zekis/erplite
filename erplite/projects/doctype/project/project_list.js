@@ -4,17 +4,15 @@
 frappe.listview_settings['Project'] = {
     add_fields: ["status", "timesheet_approver", "customer"],
     
-    get_indicator: function(doc) {
-        if (doc.status === "Active") {
-            return [__("Active"), "green", "status,=,Active"];
-        } else if (doc.status === "Completed") {
-            return [__("Completed"), "blue", "status,=,Completed"];
-        } else if (doc.status === "On Hold") {
-            return [__("On Hold"), "orange", "status,=,On Hold"];
-        } else if (doc.status === "Cancelled") {
-            return [__("Cancelled"), "red", "status,=,Cancelled"];
-        }
-    },
+    // No get_indicator here on purpose. The one that used to be here tested for
+    // "Active", "Completed", "On Hold" and "Cancelled"; Project.status holds
+    // 'Opportunity', 'Estimate', 'Open' or 'Archived', so every branch was dead and
+    // the function returned undefined for every Project that exists. frappe skips a
+    // falsy return (indicator.js:90) and renders the status itself with guess_colour
+    // (:98), so the list looked right and this code had no part in it. Removing it
+    // changes nothing. To colour Project's statuses deliberately, give project.json a
+    // `states` block the way activity.json does: frappe checks that first and it
+    // applies in every view, not just the list.
     
     onload: function(listview) {
         // Add filter for the projects this user approves timesheets for
