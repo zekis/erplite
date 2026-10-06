@@ -4704,6 +4704,98 @@ CLIENT_DOCTYPES = Target("tests/offline/test_client_doctypes.py", [
 ])
 
 
+# --- a server method named in a URL -----------------------------------------
+# tests/offline/test_api_url_methods.py. `/api/method/<path>` is resolved by
+# `execute_cmd` with `get_attr`, which throws for a path it cannot reach and
+# raises PermissionError for one that is not whitelisted (frappe/handler.py:
+# 74-83). Loud at the HTTP layer; silent in the page wherever the caller reads
+# the body rather than the status, which is what this app's Vue pages do. Five
+# of the twelve method names are composed from a base URL and a literal, so
+# several of the faults below break the composition rather than a name.
+
+TD_JS = "erplite/public/js/todo/data/TodoDataManager.js"
+TODO_IDX_PY = "erplite/www/todo/index.py"
+MAIN_JS = "frontend/src/main.js"
+USER_MENU_VUE = "frontend/src/components/scheduler/UserMenu.vue"
+HOME_VUE = "frontend/src/pages/Home.vue"
+WWW_ERPLITE_PY = "erplite/www/erplite.py"
+
+TD_BASE = "        this.baseUrl = '/api/method/erplite.www.todo.index';\n"
+TD_COMPOSE = "        const url = `${this.baseUrl}.${method}`;\n"
+TD_CALL = "            const response = await this.makeRequest('get_todos');\n"
+TODO_GET_TODOS = "@frappe.whitelist()\ndef get_todos():\n"
+TODO_METRICS = "@frappe.whitelist()\ndef get_daily_metrics():\n"
+MAIN_URL = "        url: '/api/method/erplite.www.erplite.get_context_for_dev',\n"
+LOGOUT_URL = "    window.location.href = '/api/method/logout'\n"
+HOME_URL = ("    const response = await fetch("
+            "'/api/method/erplite.vue_test.api.test_connection')\n")
+
+API_URL_METHODS = Target("tests/offline/test_api_url_methods.py", [
+    # -- the name at one end or the other is wrong --
+    Fault("a composed call asks the todo module for a method it does not "
+          "define, so the board silently loads nothing", True,
+          [(TD_JS, TD_CALL,
+            "            const response = await this.makeRequest('get_todoz');\n")]),
+
+    Fault("the method behind a composed call is renamed server-side, so every "
+          "caller of it 417s", True,
+          [(TODO_IDX_PY, TODO_GET_TODOS,
+            "@frappe.whitelist()\ndef fetch_todos():\n")]),
+
+    Fault("the base URL names a module that is not in the tree, so all five "
+          "methods composed onto it are unreachable", True,
+          [(TD_JS, TD_BASE,
+            "        this.baseUrl = '/api/method/erplite.www.todo.api';\n")]),
+
+    Fault("a URL is pointed at a real function that has no "
+          "@frappe.whitelist(), so frappe answers Method Not Allowed", True,
+          [(MAIN_JS, MAIN_URL,
+            "        url: '/api/method/erplite.www.erplite.get_context',\n")]),
+
+    Fault("the whitelist comes off the one method nothing but a URL calls, "
+          "which is why this target has to be the one that notices", True,
+          [(TODO_IDX_PY, TODO_METRICS, "def get_daily_metrics():\n")]),
+
+    # -- the rule is fine; the sweep stopped reaching -----------------------
+    Fault("the URL is composed with + instead of interpolated, so the sweep "
+          "can no longer follow the base URL and says so", True,
+          [(TD_JS, TD_COMPOSE,
+            "        const url = this.baseUrl + '.' + method;\n")]),
+
+    # -- the recorded defect goes stale, in both directions -----------------
+    Fault("the dead Home.vue call is pointed at a method that exists, so the "
+          "entry recorded for it in UNRESOLVED is stale", True,
+          [(HOME_VUE, HOME_URL,
+            "    const response = await fetch("
+            "'/api/method/erplite.www.erplite.get_context_for_dev')\n")]),
+
+    Fault("a sixth call to the deleted module appears, under a name that is "
+          "not one of the four recorded", True,
+          [(HOME_VUE, HOME_URL,
+            "    const response = await fetch("
+            "'/api/method/erplite.vue_test.api.delete_task')\n")]),
+
+    # -- negative controls --------------------------------------------------
+    Fault("CONTROL frappe's logout is written in the versioned form v1 also "
+          "serves", False,
+          [(USER_MENU_VUE, LOGOUT_URL,
+            "    window.location.href = '/api/v1/method/logout'\n")]),
+
+    Fault("CONTROL the base URL is written with double quotes", False,
+          [(TD_JS, TD_BASE,
+            '        this.baseUrl = "/api/method/erplite.www.todo.index";\n')]),
+
+    Fault("CONTROL a whitelist spells out the default it already has", False,
+          [(TODO_IDX_PY, TODO_METRICS,
+            "@frappe.whitelist(allow_guest=False)\ndef get_daily_metrics():\n")]),
+
+    Fault("CONTROL a composed call's method name is written in double quotes",
+          False,
+          [(TD_JS, TD_CALL,
+            '            const response = await this.makeRequest("get_todos");\n')]),
+])
+
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -4727,4 +4819,5 @@ TARGETS = {
     "endpoint_wiring": ENDPOINT_WIRING,
     "read_shapes": READ_SHAPES,
     "client_doctypes": CLIENT_DOCTYPES,
+    "api_url_methods": API_URL_METHODS,
 }

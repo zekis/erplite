@@ -233,7 +233,7 @@ breaking the code.
 
 ## Targets
 
-Twenty-two so far, 587 injections: edits applied to the app's real source, with
+Twenty-three so far, 599 injections: edits applied to the app's real source, with
 `run.py` watching one test file go red.
 
 Those two numbers are counted from `faults.py`, not kept by hand. They said
@@ -2173,3 +2173,81 @@ fault here measures only that Afterz's own paths still survive it. And the
 approval gate's `or not frappe.has_permission(...)` hatch is pinned as it
 stands, in both copies now, so changing it is a decision rather than an
 accident.
+
+
+### `api_url_methods` — `tests/offline/test_api_url_methods.py`
+
+The twenty-third target, and the first whose rule found a live defect rather
+than a gap. A dotted method path is judged everywhere it is the *whole* quoted
+string — `test_string_references.py`'s `DOTTED` anchors on the opening quote,
+`test_endpoint_wiring.py`'s `CALL_METHOD` reads `method:` — which is the
+`frappe.call` shape. A method named inside a URL is neither, because the string
+starts with `/api/method/`. Three of the twelve sites are under `frontend/`,
+which `test_endpoint_wiring.py` does not walk at all.
+
+**Twelve injections, 12 as expected, exit 0** against a baseline of 19 passing
+tests. Eight red, four controls.
+
+**What is in the tree: four sites name a module deleted a year ago.**
+`erplite/vue_test/api.py` went in the repository's first commit (`8126278`, 214
+lines removed; last present in `42cd436`, "example vue"). Still calling it are
+`Home.vue`'s `testAPI`, `Scheduler.vue`'s `loadTasks` and `addTask` — the `/`
+and `/scheduler` routes of the app served at `/erplite` — and `frontend/`'s own
+README. `execute_cmd` throws *Failed to get method for command* for a path it
+cannot resolve (`frappe/handler.py:74-77`), so the HTTP layer is loud; the page
+is not. `Scheduler.vue:308-320` does `fetch`, then `if (data.message &&
+data.message.success)`. A 417 body parses as JSON perfectly well and has no
+`message`, the `catch` never fires because there was no network error, and the
+user gets a scheduler with no tasks and nothing in the console.
+
+Those four are recorded in `UNRESOLVED` with their sites, so the rule is green
+on a tree that still has the defect. Two injections aim at exactly that list:
+pointing the dead `Home.vue` call at a method that exists goes red because the
+entry is now stale, and a sixth call to the deleted module goes red because it
+is not one of the four. **An exception list that cannot go stale in either
+direction is the only kind worth having.**
+
+**Five of the twelve method names are not written down anywhere.**
+`TodoDataManager.js` assigns `'/api/method/erplite.www.todo.index'` to a field
+and builds each call as ``` `${this.baseUrl}.${method}` ```. A sweep that reads
+whole method paths finds a *module* there and stops, leaving the five methods
+the todo board calls unjudged. So the test follows the composition, and derives
+every part of it from the source rather than naming `makeRequest` in a constant:
+the template literal gives the base variable and the interpolated parameter, the
+enclosing definition gives the method's name and must *declare that parameter*,
+and the literals passed to `this.<that method>(` are the call sites.
+`test_the_composed_sweep_follows_a_base_url_renamed_end_to_end` renames all four
+parts at once and requires the answer not to move.
+
+Restricting the last step to `this.<name>(` rather than any call to `<name>(` is
+what makes it exact here. A sweep for bare identifier literals after `(` or `,`
+in that file returns the five method names **and** `getAttribute('content')` at
+:322, a DOM attribute. One false positive in six is the direction that costs
+somebody a day, and no fault would ever have found it — the app has no such call
+for a fault to break. **It took asking the opposite question: what correct code
+would this rule reject?**
+
+**One injection breaks nothing but the sweep's reach**, and it is the one worth
+copying. Rewriting ``` `${this.baseUrl}.${method}` ``` as `this.baseUrl + '.' +
+method` is a refactor that changes no behaviour at all — and it goes red in two
+tests, because the composed sweep now follows nothing and the base URL is left
+named in a URL with no composed call in its file to judge it. A rule that only
+judges what it can see needs something that says whether it can still see. "No
+findings" and "didn't look" read identically.
+
+**The versioned URLs are judged although the app writes none.** v1's rule table
+is mounted at both `/api` and `/api/v1` (`frappe/api/__init__.py:78-84`), and v2
+adds `/api/v2/method`, renames `resource` to `document` and adds
+`/api/v2/doctype/<x>/meta` (`frappe/api/v2.py:192-217`). Those are shapes that
+would arrive unjudged rather than counts that can regress, so they are asserted
+on synthetic source instead — including `/api/v2/method/<doctype>/<method>`,
+whose DocType half is judged and whose method half is a method on the document
+that `frappe.get_attr` never resolves. A floor at zero would have been worse
+than nothing: it passes by construction, and it rejects the first correct use.
+
+**What this target does not reach.** A method path built from pieces that are
+not literals, or composed in a shape other than the one followed above. That it
+is `get_attr` and `is_whitelisted` that actually run needs a bench; the claims
+here are read off frappe version-15 with the file and line beside each one. And
+whether the arguments sent match the signature is `test_string_references.py`'s
+(`test_called_arguments_are_accepted`), deliberately not duplicated here.
