@@ -233,15 +233,14 @@ breaking the code.
 
 ## Targets
 
-Thirteen so far, 407 injections: edits applied to the app's real source, with
+Fourteen so far, 436 injections: edits applied to the app's real source, with
 `run.py` watching one test file go red.
 
-Three other test files do fault injection of their own, inside the file —
-`test_query_fields.py`, `test_mandatory_fields_on_insert.py` and
-`test_projects_api.py`. Those plant shapes in their own fixtures rather than
-editing the app, so `run.py` does not drive them, and what they prove is
-narrower: that the sweep reads what its author planted. `string_refs` below is
-what that distinction costs.
+Two other test files do fault injection of their own, inside the file —
+`test_mandatory_fields_on_insert.py` and `test_projects_api.py`. Those plant
+shapes in their own fixtures rather than editing the app, so `run.py` does not
+drive them, and what they prove is narrower: that the sweep reads what its
+author planted. `string_refs` below is what that distinction costs.
 
 `test_afterz_timesheet_workflow.py` was in that list until the thirteenth
 target. It had a test named "the fault-injection half, so a green run above
@@ -250,6 +249,69 @@ from here found **twelve regressions it did not notice**, which is the
 difference between a file that injects a fault and a file that has been
 injected into. If a file below says it tests itself, that is a reason to point
 `run.py` at it, not a reason to skip it.
+
+`test_query_fields.py` was in that list until the fourteenth target, and it
+makes the point twice over, because it is a *sweep*: its self-tests run the
+detector over synthetic snippets, which proves the detector understands a
+shape, never that the sweep reaches that shape where it really occurs. Three
+of those two claims came apart — see `query_fields` below.
+
+### `query_fields` — `tests/offline/test_query_fields.py`
+
+A whole-app sweep: every `.py` under `erplite/`, every query, reported if it
+names a field its DocType does not declare. The app has made that mistake twice
+(`Activity.subject`/`assigned_to`, then `Timesheet Entry.date`) and `bench
+migrate` never drops a column, so the orphan is still there to be read.
+
+The 29 faults put a real undeclared field into a real query in a real file —
+one per call shape the sweep claims, and one per area of the app (DocType
+controller, `api` module, `www/` page, patch, dashboard widget), because
+"whole-app" is the claim being measured. Most use `subject` or `date`: a fault
+that puts back the app's own historical mistake is the regression the sweep
+exists to stop, not an invented string.
+
+**Three of the 29 were green, and all three were holes in the sweep, not in the
+faults.**
+
+* **The fieldname given by keyword.** `get_value`/`set_value`/`get_single_value`
+  were read only in their positional forms, so
+  `frappe.db.get_value(dt, filters=..., fieldname="x")` was unswept — and that
+  is the form `erplite/xero/api.py:50` already uses. The uncovered shape was not
+  hypothetical; it was in the tree, and it happened to name a standard column.
+* **The DocType given by keyword.** `scan_tree` began `if not node.args:
+  continue`, so a call written entirely in keywords had no positional arguments
+  and every field in it was invisible.
+* **A file the sweep cannot parse.** `except (SyntaxError, OSError): continue`
+  meant an unreadable file contributed no findings and said nothing, so the
+  sweep's coverage could shrink without a single test going red. It is now a
+  finding in its own right.
+
+All three are fixed and pinned by self-tests. The sweep found nothing new in
+the app once fixed, which is the result to want and not the result to assume:
+the point of the run is that the next bad query will be reported, whichever of
+these shapes it is written in.
+
+**Two faults I had to rewrite, and the reason is the more useful half.** Both
+went green, and neither was the sweep's fault:
+
+* `get_all("DT", ["name", "date"], ..., fields=[...])` added a positional
+  *beside* the keyword. That is a `TypeError` at runtime and `fields=` wins; the
+  sweep was right to ignore it. The shape that occurs is positional-only.
+* `filters=[[...]] + extra` is a `BinOp`, not a list literal, so it falls under
+  the same rule that makes a non-literal DocType unjudged. Recorded as a
+  documented limit with a test, rather than quietly fixed into scope.
+* And a third, which is the same mistake as the bad control in `afterz_workflow`:
+  the keyword-DocType fault at first only changed `get_all("Schedule Row", ...)`
+  to `get_all(doctype="Schedule Row", ...)` and left every field declared. **A
+  fault that changes the shape but not the violation proves only that the shape
+  parses.** Read what the edit actually does before believing the verdict.
+
+Found while writing this and left alone deliberately, because it is an app
+decision and not a test's to make: `Scheduler Role.on_trash()` queries
+`"Resource Role"`, a DocType that exists nowhere in this repo — no JSON, no
+Table field pointing at it, referenced in that one file. The sweep is silent on
+it by design (it judges only DocTypes the app defines), which is exactly the
+blind spot an unknown DocType leaves.
 
 ### `xero_gate` — `tests/offline/test_xero_permission_gate.py`
 

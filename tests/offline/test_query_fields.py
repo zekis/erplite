@@ -107,13 +107,16 @@ def scan_tree(tree, doctypes):
     out = []
 
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not node.args:
+        if not isinstance(node, ast.Call):
             continue
         func = node.func
         fname = func.attr if isinstance(func, ast.Attribute) else None
         if fname not in QUERIES:
             continue
-        doctype = _str(node.args[0])
+        # The DocType is the first positional, or the `doctype` keyword -- a
+        # call written entirely in keywords has no positional arguments at all,
+        # and skipping those made every field in it invisible.
+        doctype = _str(node.args[0]) if node.args else _str(_kwarg(node, "doctype"))
         if doctype not in doctypes:
             continue
         declared = set(doctypes[doctype]) | STANDARD
@@ -153,6 +156,11 @@ def scan_tree(tree, doctypes):
             report_fields(node.args[2], "fieldname argument")
         if fname in FIELD_SECOND and len(node.args) > 1:
             report_fields(node.args[1], "fieldname argument")
+        # ... or by keyword. `frappe.db.get_value(dt, filters=..., fieldname=...)`
+        # is the form erplite/xero/api.py:50 already uses, so reading only the
+        # positional forms left a shape that is live in this app unswept.
+        if fname in FIELD_THIRD or fname in FIELD_SECOND:
+            report_fields(_kwarg(node, "fieldname"), "fieldname argument")
 
         # filters
         for key in ("filters", "or_filters"):
@@ -201,13 +209,19 @@ def scan_app(doctypes):
             if not n.endswith(".py"):
                 continue
             path = os.path.join(dirpath, n)
+            rel = os.path.relpath(path, APP_ROOT).replace(os.sep, "/")
             try:
                 with open(path, encoding="utf-8") as fh:
                     tree = ast.parse(fh.read(), filename=path)
-            except (SyntaxError, OSError):
+            except (SyntaxError, OSError) as exc:
+                # Swallowing this made the sweep's coverage shrink in silence:
+                # a file it cannot read contributes no findings and says
+                # nothing, so a bad query inside one reads as a clean sweep.
+                findings.append(
+                    "%s:0  [-]  the sweep cannot read this file, so no query in "
+                    "it is checked: %s" % (rel, exc.__class__.__name__))
                 continue
             parsed += 1
-            rel = os.path.relpath(path, APP_ROOT).replace(os.sep, "/")
             for lineno, doctype, where, field in scan_tree(tree, doctypes):
                 findings.append(
                     "%s:%d  [%s]  %s names %r, which the DocType does not declare"
@@ -262,6 +276,28 @@ class TestNoQueryNamesAnUndeclaredField(unittest.TestCase):
             "fixed them, delete them from KNOWN in this file and from the report:\n  "
             + "\n  ".join(fixed),
         )
+
+
+class TestAFileTheSweepCannotReadIsReported(unittest.TestCase):
+    """A sweep that cannot read a file used to say nothing about it, so its
+    coverage could shrink to nothing without a single test going red."""
+
+    def test_an_unparseable_file_in_the_app_is_a_finding(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory(dir=MODULE_ROOT) as tmp:
+            path = os.path.join(tmp, "broken.py")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("def f(:\n")
+            findings, _parsed = scan_app(_doctypes())
+
+        said = [f for f in findings if "broken.py" in f]
+        self.assertEqual(1, len(said), "an unreadable file was swept in silence")
+        self.assertIn("cannot read this file", said[0])
+
+    def test_a_readable_file_is_counted_as_parsed(self):
+        _findings, parsed = scan_app(_doctypes())
+        self.assertGreater(parsed, 50)
 
 
 class TestTheSchemaBehindEachPinnedFinding(unittest.TestCase):
@@ -406,6 +442,28 @@ class TestTheSweepBites(unittest.TestCase):
             [("pluck", "subject")],
             self.bite('frappe.get_all("Activity", pluck="subject")'),
         )
+
+    def test_the_doctype_may_be_named_by_keyword(self):
+        """A call written entirely in keywords has no positional arguments, and
+        skipping those made every field in it invisible."""
+        self.assertEqual(
+            [("fields", "subject")],
+            self.bite('frappe.get_all(doctype="Activity", fields=["subject"])'))
+
+    def test_the_fieldname_may_be_given_by_keyword(self):
+        """erplite/xero/api.py:50 already writes get_value this way."""
+        self.assertEqual(
+            [("fieldname argument", "subject")],
+            self.bite('frappe.db.get_value("Activity", filters={}, fieldname="subject")'))
+        self.assertEqual(
+            [("fieldname argument", "subject")],
+            self.bite('frappe.db.get_single_value("Activity", fieldname="subject")'))
+
+    def test_filters_built_by_concatenation_are_not_judged(self):
+        """A documented limit, and the same rule as a non-literal DocType: this
+        sweep reads literals. Recorded so it is a decision, not a surprise."""
+        self.assertEqual(
+            [], self.bite('frappe.get_all("Activity", filters=[["subject", "=", 1]] + extra)'))
 
     def test_a_declared_field_is_never_reported(self):
         self.assertEqual(
