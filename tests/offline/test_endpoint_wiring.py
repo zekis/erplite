@@ -110,11 +110,22 @@ DOCTYPE_FIRST_ARG = {
 #
 # The last two kinds are recorded because they decide whether a read is correct,
 # not just whether the name resolves. A Single keeps no rows of its own, so
-# `frappe.get_all("System Settings")` would return nothing rather than raise --
-# a wrong read that this sweep, which judges the name only, would pass. The app
-# reads it with `frappe.get_single` (erplite/www/erplite.py) and `Has Role` with
-# `frappe.db.exists` and a filter, both the right shape. Nothing here judges the
-# shape; that is the next rule this file is missing, not a claim it makes.
+# `frappe.get_all("System Settings")` raises `frappe.db.TableMissingError` --
+# a wrong read that this sweep, which judges the name only, would pass.
+#
+# An earlier version of this comment said that call "would return nothing rather
+# than raise". That was written from memory and it is backwards: `get_all` goes
+# to `DatabaseQuery`, which asks for the table's columns (db_query.py:422) and
+# re-raises `TableMissingError` unless `ignore_ddl` is set (db_query.py:924-931,
+# database.py:1344). It is `frappe.db.get_value` that does not mind, falling back
+# to the singles table (database.py:648-656). The correction is the point of the
+# comment rather than an aside: a claim about what the framework does belongs
+# next to the line of framework source it came from, and this one did not have
+# one. `test_read_shapes.py` now judges the shape of every Single and child-table
+# read, with the source line for each verified shape beside it. The app's two
+# System Settings reads use `frappe.get_single` (erplite/www/erplite.py) and its
+# `Has Role` reads use `frappe.db.exists` with a `parent` filter, both right.
+# Nothing *here* judges shape; that is not a claim this file makes.
 FRAPPE_DOCTYPES = {"User", "ToDo", "File", "Has Role", "System Settings",
                    "Workspace"}
 
