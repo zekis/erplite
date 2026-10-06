@@ -56,18 +56,22 @@ WHY A LITERAL-ONLY RULE RATHER THAN "DON'T INTERPOLATE CALLER INPUT"
 
 Deciding whether a spliced value is caller-reachable needs dataflow, and a guard that tries it
 will be wrong in both directions. Literal-or-not is exact, it is checkable from the AST alone,
-and **the exception list is currently empty**: the other 13 `db.sql` sites in this app are all
-plain literals already. If a future query genuinely needs a dynamic identifier (a table or column
+and **the exception list is currently empty**: every other `db.sql` site in this app is a plain
+literal already (13 of them when this was written, 12 now). If a future query genuinely needs a dynamic identifier (a table or column
 name, which cannot be parameterised), the right move is an explicit documented exception here,
 not a looser rule -- because at that point someone has to think about escaping, which is the
 whole point.
 
 KNOWN BLIND SPOTS, stated so they are places to look rather than places to stop:
 
-  * Only calls whose receiver looks like a database handle are swept -- `<something>.db.sql(...)`
-    or a bare `db.sql(...)`. A `.sql()` method reached through an alias this cannot see
-    (`handle = frappe.db` then `handle.sql(...)`) is not swept. Those are listed by the pass as
-    skipped rather than silently dropped, so the count is visible.
+  * Only calls whose receiver looks like a database handle are *read* -- `<something>.db.sql(...)`
+    or a bare `db.sql(...)`. A `.sql()` reached through an alias this cannot see
+    (`handle = frappe.db` then `handle.sql(...)`) cannot have its query judged. That is no
+    longer a blind spot but a hard stop: `NoSqlCallIsLeftUnjudged` fails on any such call,
+    because a query the sweep cannot read is exactly where a spliced one would sit. Until
+    6 Oct 2026 this said the skipped calls were "listed by the pass ... so the count is
+    visible"; they were collected into a local and never read, and two injected f-string
+    splices on aliased handles passed unnoticed.
   * This says nothing about `order_by`, `group_by` or `having` passed to `get_all`, which Frappe
     sanitises but which have their own history. Checked by hand on 6 Oct 2026: no whitelisted
     endpoint in this app passes caller input to any of them.
@@ -87,6 +91,17 @@ MODULE_ROOT = os.path.join(APP_ROOT, "erplite")
 SKIP_DIRS = {"node_modules", "__pycache__", ".git", "dist", "build"}
 
 SQL_METHODS = {"sql", "sql_list", "sql_value", "multisql"}
+
+# The name of the first argument, for the calls that pass it by keyword.
+QUERY_KEYWORDS = {"query", "sql_dict"}
+
+# `.sql()` calls on a receiver `_looks_like_db_handle` declines to judge.
+# Empty, deliberately, and asserted empty below: a `.sql()` the sweep cannot
+# read is a place a spliced query can sit unseen, so it is a stop rather than
+# a note. Measured 6 Oct 2026: 12 db.sql calls swept, none skipped. If a
+# genuine one ever appears, add it here with a reason and the sweep goes on
+# guarding the other eleven.
+ALLOWED_UNJUDGED = frozenset()     # (file, line-free function name) pairs
 
 
 def _python_files(root):
@@ -109,6 +124,30 @@ def _looks_like_db_handle(node):
     if isinstance(node, ast.Name):
         return node.id == "db"
     return False
+
+
+def classify_multisql_arg(arg):
+    """Classify a `multisql` first argument, which is a dialect map and not a query.
+
+    `frappe/database/database.py:1382`: `multisql(sql_dict, values=(), **kwargs)` does
+    `query = sql_dict.get(current_dialect)` and hands *that* to `self.sql`. So the dict
+    is never SQL and every value in it is.
+
+    Classifying the dict node as if it were the query -- which this file did until the
+    fault run of 6 Oct 2026 -- called every *correct* multisql a finding ("Dict") and
+    every incorrect one a finding for the same wrong reason. Both reds, indistinguishable:
+    the guard could not tell a parameterised dialect map from one with an f-string in it.
+    """
+    if not isinstance(arg, ast.Dict):
+        # A map built elsewhere and passed by name is still something this cannot read.
+        return classify_query_arg(arg)
+    if not arg.values:
+        return "empty dialect map"
+    for value in arg.values:
+        kind = classify_query_arg(value)
+        if kind != "literal":
+            return kind
+    return "literal"
 
 
 def classify_query_arg(arg):
@@ -164,10 +203,11 @@ class _SqlCallVisitor(ast.NodeVisitor):
                 arg = node.args[0] if node.args else None
                 if arg is None:
                     for kw in node.keywords:
-                        if kw.arg == "query":
+                        if kw.arg in QUERY_KEYWORDS:
                             arg = kw.value
                             break
-                where["kind"] = classify_query_arg(arg)
+                where["kind"] = (classify_multisql_arg(arg)
+                                 if f.attr == "multisql" else classify_query_arg(arg))
                 self.calls.append(where)
             else:
                 self.skipped.append(where)
@@ -180,21 +220,33 @@ def _scan_source(src, relpath="<test>"):
     return v
 
 
+def _sweep_app(fail):
+    """Walk every app module once. `fail` is the caller's assertion failure hook.
+
+    One walk for both of the sweeps below, so they cannot disagree about what the app
+    contains -- and so the skipped calls are read by someone, which is the whole point
+    of collecting them.
+    """
+    calls, skipped = [], []
+    for path, rel in _python_files(MODULE_ROOT):
+        with open(path, "rb") as fh:
+            src = fh.read().decode("utf-8", "replace")
+        try:
+            v = _scan_source(src, rel)
+        except SyntaxError as exc:  # pragma: no cover - would be a broken checkout
+            fail("%s does not parse: %s" % (rel, exc))
+        calls += v.calls
+        skipped += v.skipped
+    return calls, skipped
+
+
 class RawSqlQueriesAreLiterals(unittest.TestCase):
     """Pass A: the whole app, every db.sql query argument."""
 
     def test_every_db_sql_query_is_a_string_literal(self):
-        findings, total, skipped = [], 0, []
-        for path, rel in _python_files(MODULE_ROOT):
-            with open(path, "rb") as fh:
-                src = fh.read().decode("utf-8", "replace")
-            try:
-                v = _scan_source(src, rel)
-            except SyntaxError as exc:  # pragma: no cover - would be a broken checkout
-                self.fail("%s does not parse: %s" % (rel, exc))
-            total += len(v.calls)
-            skipped += v.skipped
-            findings += [c for c in v.calls if c["kind"] != "literal"]
+        calls, _ = _sweep_app(self.fail)
+        total = len(calls)
+        findings = [c for c in calls if c["kind"] != "literal"]
 
         self.assertGreater(total, 0, "swept no db.sql calls at all - has the layout moved?")
 
@@ -218,6 +270,50 @@ class RawSqlQueriesAreLiterals(unittest.TestCase):
                 "or, preferably, use frappe.get_all / frappe.db.get_all, which parameterises for",
                 "you. A dynamic *identifier* (table or column name) cannot be parameterised at",
                 "all - if that is genuinely needed, add a documented exception in this file.",
+            ]
+            self.fail("\n".join(lines))
+
+
+class NoSqlCallIsLeftUnjudged(unittest.TestCase):
+    """Pass B: every `.sql()` in the app is one the sweep above actually read.
+
+    `_looks_like_db_handle` recognises `<anything>.db` and the bare name `db`. Anything
+    else -- `handle = frappe.db` then `handle.sql(...)`, or a handle cached on `self` --
+    is put aside, and pass A then reports no findings, truthfully and uselessly: a
+    spliced query on such a receiver is invisible.
+
+    This was measured on 6 Oct 2026 by injecting exactly that into two real call sites
+    (`get_resource_utilization` and `Resource.get_available_capacity`) with the value
+    spliced into the query text. Pass A stayed green both times. The file claimed those
+    calls were "listed by the pass as skipped rather than silently dropped, so the count
+    is visible" -- they were collected into a local and never read.
+
+    Widening the handle test is the wrong fix: deciding whether some object is a database
+    handle needs the same dataflow that the literal-only rule exists to avoid. Refusing to
+    be silent needs none, so that is what this does.
+    """
+
+    def test_no_sql_call_sits_on_a_receiver_the_sweep_cannot_judge(self):
+        _, skipped = _sweep_app(self.fail)
+        unexpected = [s for s in skipped
+                      if (s["file"], s["function"]) not in ALLOWED_UNJUDGED]
+        if unexpected:
+            lines = [
+                "",
+                "%d .sql() call(s) sit on a receiver this file declines to judge, so the"
+                % len(unexpected),
+                "literal-only sweep never reads their query at all:",
+                "",
+            ]
+            for s in sorted(unexpected, key=lambda s: (s["file"], s["line"])):
+                lines.append("  %s:%d  in %s()  -- .%s() on a receiver that is not"
+                             " `<x>.db` or `db`" % (s["file"], s["line"], s["function"],
+                                                    s["method"]))
+            lines += [
+                "",
+                "Remedy: call it as `frappe.db.sql(...)` so the sweep can read the query.",
+                "If the alias is genuinely wanted, add the call to ALLOWED_UNJUDGED with a",
+                "reason -- and check its query by hand first, because nothing else will.",
             ]
             self.fail("\n".join(lines))
 
@@ -286,6 +382,35 @@ class TheWalkerItself(unittest.TestCase):
     def test_sql_list_and_sql_value_are_swept_too(self):
         self.assertEqual(self._kinds('frappe.db.sql_list(f"x {y}")'), ["f-string"])
         self.assertEqual(self._kinds('frappe.db.sql_value(f"x {y}")'), ["f-string"])
+
+    # --- multisql: the argument is a dialect map, so judge what is in it ------
+    def test_a_correct_multisql_dialect_map_is_accepted(self):
+        self.assertEqual(
+            self._kinds('frappe.db.multisql({"mariadb": "select 1",'
+                        ' "postgres": "select 1"}, (a,))'),
+            ["literal"],
+        )
+
+    def test_an_f_string_inside_a_dialect_map_is_a_finding(self):
+        self.assertEqual(
+            self._kinds('frappe.db.multisql({"mariadb": "select 1",'
+                        ' "postgres": f"select {x}"})'),
+            ["f-string"],
+        )
+
+    def test_a_dialect_map_passed_by_name_cannot_be_read(self):
+        self.assertEqual(self._kinds("frappe.db.multisql(dialects)"),
+                         ["variable 'dialects'"])
+
+    def test_an_empty_dialect_map_is_a_finding(self):
+        # multisql would hand `None` to db.sql. Not a splice, but not a query either.
+        self.assertEqual(self._kinds("frappe.db.multisql({})"), ["empty dialect map"])
+
+    def test_the_dialect_map_may_be_passed_by_its_own_keyword(self):
+        self.assertEqual(
+            self._kinds('frappe.db.multisql(sql_dict={"mariadb": f"x {y}"})'),
+            ["f-string"],
+        )
 
     # --- scope: the enclosing function must be attributed correctly -----------
     def test_the_enclosing_function_is_named_not_the_outer_one(self):
