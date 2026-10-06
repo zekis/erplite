@@ -178,12 +178,20 @@ class TestGetProjectsAndActivities(SchedulerQueryTestCase):
         target still behaved exactly as expected. This test had never been
         able to fail, in the file whose subject it is.
 
-        With the check off, the six named columns are the one thing standing
-        between a query for an orphan and a pass -- and a `fields` orphan is
-        invisible to every other test here, because the alias loop overwrites
-        `subject` and nothing reads the rest. The stand-in stays the backstop
-        for every field name in every other test; this is the named guard for
-        these six, and it now does its own work.
+        What that buys, and what it does not. It does NOT add cover: the
+        stand-in's check is still on in every other test in this class, so an
+        orphan goes red there whatever this test does. Measured after the fix
+        as well as before -- neutering this test again still gave 28 of 28.
+        No fault in the target is caught uniquely here, and nothing in this
+        file should claim otherwise.
+
+        What it buys is that the assertion stating the claim is the thing that
+        judges it. The failure now reads "subject is an orphaned column on
+        Activity, not a field" rather than "Activity has no field 'subject'",
+        which is the difference between being told a regression came back and
+        being told a field name is wrong. And the claim stays testable if the
+        stand-in's validation is ever relaxed, which is the only way the
+        backstop could quietly stop covering it.
         """
         self.frappe._check_fields = lambda *args, **kwargs: None
         self.api.get_projects_and_activities()
