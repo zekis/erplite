@@ -248,7 +248,7 @@ breaking the code.
 
 ## Targets
 
-Thirty so far, 751 injections: edits applied to the app's real source,
+Thirty-one so far, 773 injections: edits applied to the app's real source,
 with `run.py` watching one test file go red.
 
 Those two numbers are counted from `faults.py`, not kept by hand. They said
@@ -2832,3 +2832,82 @@ One of my own faults was wrong before the code was: I predicted the string rate
 would be *concatenated and totalled*, and it raises instead, one line further
 on. The row still gets the bad value, so the test pins both halves — the value
 that lands and the raise that stops it reaching the database.
+
+### `client_scripts` — `tests/offline/test_client_scripts.py`
+
+The thirty-first target, and the first to find a guard failing in **both**
+directions at once: three regressions it could not see, and one piece of correct
+code it refused. 22 faults; on the file as it stood, **18 behaved and four did
+not.**
+
+The three it could not see are call forms. The sweep was
+`\bfrm\.set_value\(\s*['"](\w+)['"]` applied to one line at a time, and that
+misses `cur_frm.set_value('x', ...)` — an ordinary frappe idiom, not an exotic
+one — a backtick fieldname, and a call wrapped after the opening paren, which is
+how any formatter breaks a long one. None of the three appears anywhere in the
+app, which is the whole difficulty: **the file was green, and a file blind to all
+three would have been green too.** Nothing in the repo could tell those two
+states apart, and no amount of reading the sweep tells you which one you are
+looking at — only an edit it should have caught does.
+
+> A sweep is only as wide as the forms it matches, and the forms it misses leave
+> no trace in a passing run. The app not containing them today is what makes the
+> hole invisible, not what makes it harmless.
+
+The pattern is wider now (any receiver ending in `frm`, any of the three quote
+styles) and each file is read whole rather than line by line, so a wrapped call
+is seen and the reported line number is still the line the call starts on. On
+today's source the wider pattern matches exactly what the narrow one did — 53
+calls across 33 scripts, no new offenders — so the widening cost nothing in
+false alarms, which was the thing to check before shipping it. Two guards keep
+it wide: `test_the_detector_sees_the_call_forms_it_claims_to` pins eight forms
+that must match and three that must not, in isolation; the three faults here pin
+the same forms end to end, through the walk and the declared-field lookup.
+
+**The fourth was the more interesting one, because it was a false positive on
+the house style.** Pass B is a plain substring sweep for `project_manager`, the
+field removed from Project by 8126278. A whole-line `//` comment naming it made
+the test red — and writing exactly that comment is how this repo records a
+removal: `activity.js` has a paragraph explaining that it no longer sets
+`estimated_hours` and why. So the test refused the sentence a careful person
+writes while doing the very cleanup the test is about. Comment-only lines are
+skipped now; a trailing comment after code is still reported, because there is
+no JS parser here and a line with code on it is not worth guessing about.
+
+> A guard that fails on correct work is not a strict guard. It is a guard
+> somebody switches off, and then there is none. This is the third of these
+> found in `tests/offline` in two days, and all three were sweeps reading source
+> a line at a time.
+
+Two other things the faults settled, neither of which was in doubt enough to
+look at without them:
+
+* **The realistic direction is the JSON, not the script.** Nobody adds a call to
+  a field that was never there; what happens is the field goes and the call
+  stays, which is how all three live instances arose. Three faults delete a field
+  from `project.json`, `trip.json` and `timesheet_entry.json` and touch no
+  JavaScript at all. All three bite.
+* **The folder keying works in every module, not just the one it was written
+  for.** The sweep decides a script's DocType from the folder it sits in, so a
+  mis-keyed folder would check a script against some other DocType's fields and
+  report nothing. Four faults plant an undeclared field in `projects`,
+  `accounts`, `scheduler` and `setup` in turn.
+
+`test_client_scripts_exist_to_be_checked` — the vacuity guard, which fails if the
+walk finds 20 scripts or fewer — **is not drivable by a source edit**, and the
+comment on the target in `faults.py` says so rather than leaving it to be
+rediscovered. Starving that walk means deleting or moving 13 of the app's 33
+client scripts, which is a file operation and not a text fault. The guard still
+earns its place: the two methods below it both pass on an empty list.
+
+Five of the eight controls are the blind spots this file writes down in its own
+docstring — the object form, an aliased receiver, `frappe.model.set_value` in a
+child-table handler, a `frm.doc` read of a removed field, and JS outside any
+doctype folder. A docstring that says "deliberately not covered" is making a
+claim like any other, and those five are what stop *deliberate* turning quietly
+into *nobody noticed*. One of them is only accidentally right, and the docstring
+now says which: `d.set_value('x', ...)` is skipped for being aliased, not for
+being a dialog. Both live instances happen to be a `frappe.ui.Dialog`, whose
+fields are declared in the dialog's own `fields` array and so correctly out of
+scope — but assign a real `frm` to a short name and this sweep still says
+nothing.

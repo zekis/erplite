@@ -6169,6 +6169,217 @@ CHILD_DOCTYPE_HOOKS = Target(
 ])
 
 
+# --- client scripts: no form sets a field its DocType does not declare ------
+# tests/offline/test_client_scripts.py. The browser half of the undeclared-field
+# class, and unlike the server half it is not silent: frappe's `frm.set_value`
+# throws "Field <x> not found." and aborts the handler, so every instance is a
+# modal error dialog on an ordinary user action. Three live ones were found and
+# removed on 5 Oct 2026.
+#
+# The file has three test methods and this target drives two of them.
+# `test_client_scripts_exist_to_be_checked` is the vacuity guard -- it fails if
+# the walk finds 20 scripts or fewer -- and no source text edit can reach it: the
+# walk keys a folder by the DocType JSON sitting in it, so starving it means
+# deleting or moving 13 of the app's 33 client scripts, which is a file operation
+# and not a fault. That is written down here rather than left to be rediscovered.
+# The guard still earns its place: methods two and three both pass on an empty
+# list, which is the failure it exists to catch.
+
+ACT_JS = "erplite/projects/doctype/activity/activity.js"
+PROJ_JS = "erplite/projects/doctype/project/project.js"
+PROJ_JSON = "erplite/projects/doctype/project/project.json"
+PROJ_LIST_JS = "erplite/projects/doctype/project/project_list.js"
+TRIP_JS = "erplite/projects/doctype/trip/trip.js"
+TRIP_JSON = "erplite/projects/doctype/trip/trip.json"
+TE_JS = "erplite/projects/doctype/timesheet_entry/timesheet_entry.js"
+TE_JSON = "erplite/projects/doctype/timesheet_entry/timesheet_entry.json"
+TE_LIST_JS = "erplite/projects/doctype/timesheet_entry/timesheet_entry_list.js"
+SQ_JS = "erplite/accounts/doctype/supplier_quote/supplier_quote.js"
+RES_JS = "erplite/scheduler/doctype/resource/resource.js"
+XS_JS = "erplite/setup/doctype/xero_settings/xero_settings.js"
+NAV_JS = "erplite/public/js/app_navigation.js"
+
+# activity.js and supplier_quote.js are indented with TABS; every other client
+# script below uses four spaces. Copying a pattern between them matches nothing.
+ACT_PROJECT_HANDLER = (
+    "\tproject: function(frm) {\n"
+    "\t\t// Filter assigned_to based on project team members if needed\n")
+PROJ_APPROVER_SET = (
+    "            frm.set_value('timesheet_approver', frappe.session.user);\n")
+TRIP_DURATION = (
+    "            let duration = (arrival - departure) / (1000 * 60 * 60 * 24);"
+    " // Convert to days\n"
+    "            frm.set_value('duration_days', duration);\n")
+
+
+CLIENT_SCRIPTS = Target(
+    test="tests/offline/test_client_scripts.py",
+    faults=[
+        # --- the script half: a call appears for a field nobody declares -----
+        # One per module, not one per app. The sweep looks a folder up in a map
+        # built by walking the whole module root, so a script is only checked
+        # against the right DocType if its own folder was keyed; a fault in
+        # projects alone would prove that for projects.
+        Fault("progress_percent set on Activity again (the 5 Oct bug, in the "
+              "module the guard was written for)", True,
+              [(ACT_JS, ACT_PROJECT_HANDLER,
+                "\tproject: function(frm) {\n"
+                "\t\tfrm.set_value('progress_percent', 0);\n"
+                "\t\t// Filter assigned_to based on project team members if needed\n")]),
+        Fault("an undeclared field set in accounts (Supplier Quote)", True,
+              [(SQ_JS, "\t\t\t\tfrm.set_value('status', 'Accepted');\n",
+                "\t\t\t\tfrm.set_value('status', 'Accepted');\n"
+                "\t\t\t\tfrm.set_value('accepted_by', frappe.session.user);\n")]),
+        Fault("an undeclared field set in scheduler (Resource)", True,
+              [(RES_JS, "                frm.set_value('resource_type', 'Person');\n",
+                "                frm.set_value('resource_type', 'Person');\n"
+                "                frm.set_value('resource_group', 'Default');\n")]),
+        Fault("an undeclared field set in setup (Xero Settings)", True,
+              [(XS_JS, "            frm.set_value('authorization_status', 'Authorized');\n",
+                "            frm.set_value('authorization_status', 'Authorized');\n"
+                "            frm.set_value('last_authorized_on', frappe.datetime.now_datetime());\n")]),
+
+        # --- the JSON half, and the realistic direction ----------------------
+        # Nobody adds a call to a field that was never there. What happens is the
+        # field goes and the call stays, which is how all three live instances
+        # arose. These faults edit no JavaScript at all: the script is untouched
+        # and correct on the day it was written, and the regression is one field
+        # deleted from a DocType. If only the faults above bite, this guard is
+        # watching the half of the change that does not usually move.
+        Fault("Project.timesheet_approver removed from the JSON while project.js "
+              "still sets it", True,
+              [(PROJ_JSON,
+                '  {\n'
+                '   "fieldname": "timesheet_approver",\n'
+                '   "fieldtype": "Link",\n'
+                '   "label": "Timesheet Approver",\n'
+                '   "options": "User"\n'
+                '  },\n', "")]),
+        Fault("Trip.duration_days removed from the JSON while trip.js still "
+              "sets it", True,
+              [(TRIP_JSON,
+                '  {\n'
+                '   "fieldname": "duration_days",\n'
+                '   "fieldtype": "Float",\n'
+                '   "label": "Duration (Days)",\n'
+                '   "read_only": 1\n'
+                '  },\n', "")]),
+        Fault("Timesheet Entry.location removed from the JSON while "
+              "timesheet_entry.js still sets it", True,
+              [(TE_JSON,
+                '  {\n'
+                '   "fieldname": "location",\n'
+                '   "fieldtype": "Data",\n'
+                '   "label": "Location/Area"\n'
+                '  },\n', "")]),
+
+        # --- the call forms ---------------------------------------------------
+        # Each of these three was invisible to this sweep until 7 Oct 2026, and
+        # none of them appears in the app, so the file was green and a file blind
+        # to all three would have been green too. They are faults rather than a
+        # note in the docstring because the next person to narrow the pattern --
+        # for speed, for tidiness -- gets a red run instead of a quiet hole.
+        # `test_the_detector_sees_the_call_forms_it_claims_to` pins the pattern
+        # in isolation; these pin it end to end, through the walk and the
+        # declared-field lookup.
+        Fault("cur_frm.set_value on an undeclared field (an ordinary frappe "
+              "idiom, and unseen until 7 Oct)", True,
+              [(PROJ_JS, PROJ_APPROVER_SET,
+                "            cur_frm.set_value('timesheet_approvor', frappe.session.user);\n")]),
+        Fault("a backtick fieldname (unseen until 7 Oct)", True,
+              [(PROJ_JS, PROJ_APPROVER_SET,
+                "            frm.set_value(`timesheet_approvor`, frappe.session.user);\n")]),
+        Fault("the call wrapped after the opening paren, as a formatter breaks a "
+              "long one (unseen until 7 Oct)", True,
+              [(PROJ_JS, PROJ_APPROVER_SET,
+                "            frm.set_value(\n"
+                "                'timesheet_approvor', frappe.session.user);\n")]),
+
+        # --- pass B: the project_manager regression net -----------------------
+        # The four sites the structural sweep cannot reach, because each queries a
+        # DocType other than the one whose folder it sits in. All four named the
+        # field removed from Project by 8126278 and all four moved to
+        # timesheet_approver; one fault each, because a net that catches the
+        # fetch and not the filter is a net over one of them.
+        Fault("project_manager fetched again (timesheet_entry.js, cross-DocType "
+              "get_value)", True,
+              [(TE_JS,
+                "                frappe.db.get_value('Project', frm.doc.project, 'timesheet_approver')\n",
+                "                frappe.db.get_value('Project', frm.doc.project, 'project_manager')\n")]),
+        Fault("project_manager filtered again (timesheet_entry_list.js, "
+              "get_list)", True,
+              [(TE_LIST_JS,
+                "            filters: {'timesheet_approver': frappe.session.user},\n",
+                "            filters: {'project_manager': frappe.session.user},\n")]),
+        Fault("project_manager fetched again (project_list.js, add_fields)", True,
+              [(PROJ_LIST_JS,
+                '    add_fields: ["status", "timesheet_approver", "customer"],\n',
+                '    add_fields: ["status", "project_manager", "customer"],\n')]),
+        Fault("project_manager filtered again (project_list.js, route_options)", True,
+              [(PROJ_LIST_JS,
+                '            frappe.route_options = {"timesheet_approver": frappe.session.user};\n',
+                '            frappe.route_options = {"project_manager": frappe.session.user};\n')]),
+
+        # --- controls ---------------------------------------------------------
+        # The first four are the blind spots this file writes down. A guard whose
+        # docstring says "deliberately not covered" is making a claim like any
+        # other, and these are what keep "deliberate" from quietly becoming
+        # "nobody noticed". If one of them goes red, the docstring is out of date
+        # -- which is a finding, not a failure.
+        Fault("CONTROL: the object form, which frappe guards and which cannot "
+              "throw (must stay green)", False,
+              [(ACT_JS, ACT_PROJECT_HANDLER,
+                "\tproject: function(frm) {\n"
+                "\t\tfrm.set_value({progress_percent: 0});\n"
+                "\t\t// Filter assigned_to based on project team members if needed\n")]),
+        Fault("CONTROL: an aliased receiver -- the two live ones are a "
+              "frappe.ui.Dialog (must stay green)", False,
+              [(TE_JS, "                    d.set_value('activity', '');\n",
+                "                    d.set_value('activity_gone', '');\n")]),
+        Fault("CONTROL: frappe.model.set_value in a child-table handler, where "
+              "the DocType is a runtime variable (must stay green)", False,
+              [(SQ_JS, "\t\t\tfrappe.model.set_value(cdt, cdn, 'qty', 1);\n",
+                "\t\t\tfrappe.model.set_value(cdt, cdn, 'qty_gone', 1);\n")]),
+        Fault("CONTROL: a frm.doc READ of a field the DocType does not declare, "
+              "which is inert (must stay green)", False,
+              [(ACT_JS, ACT_PROJECT_HANDLER,
+                "\tproject: function(frm) {\n"
+                "\t\tif (frm.doc.progress_percent) { frm.refresh_field('status'); }\n"
+                "\t\t// Filter assigned_to based on project team members if needed\n")]),
+        Fault("CONTROL: a .js file outside any doctype folder, which this sweep "
+              "does not walk (must stay green)", False,
+              [(NAV_JS,
+                "    constructor() {\n        this.sidebar = null;\n",
+                "    constructor() {\n"
+                "        frm.set_value('not_a_field_anywhere', 1);\n"
+                "        this.sidebar = null;\n")]),
+
+        # And three that are about the sweep not over-reaching.
+        Fault("CONTROL: a set_value on a field the DocType does declare (must "
+              "stay green)", False,
+              [(ACT_JS, ACT_PROJECT_HANDLER,
+                "\tproject: function(frm) {\n"
+                "\t\tfrm.set_value('status', 'Open');\n"
+                "\t\t// Filter assigned_to based on project team members if needed\n")]),
+        Fault("CONTROL: the local `duration` renamed (must stay green)", False,
+              [(TRIP_JS, TRIP_DURATION,
+                "            let days = (arrival - departure) / (1000 * 60 * 60 * 24);"
+                " // Convert to days\n"
+                "            frm.set_value('duration_days', days);\n")]),
+        # This one was red until 7 Oct 2026, and it was red on the house style:
+        # activity.js explains in prose that it no longer sets `estimated_hours`,
+        # and the same sentence written about `project_manager` made pass B fail
+        # on a correct file. A guard that refuses the way this repo records a
+        # removal is a guard somebody switches off.
+        Fault("CONTROL: a whole-line comment recording the removal, the way "
+              "activity.js records its own (must stay green)", False,
+              [(PROJ_JS, PROJ_APPROVER_SET,
+                "            // Project has no project_manager field any more; the approver\n"
+                "            // moved to timesheet_approver (review tray rev_e73092bfb5).\n"
+                "            frm.set_value('timesheet_approver', frappe.session.user);\n")]),
+    ])
+
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -6200,4 +6411,5 @@ TARGETS = {
     "schedule_entry": SCHEDULE_ENTRY,
     "doctype_metadata": DOCTYPE_METADATA,
     "child_doctype_hooks": CHILD_DOCTYPE_HOOKS,
+    "client_scripts": CLIENT_SCRIPTS,
 }

@@ -40,29 +40,30 @@ def _load(name, path):
 harness = _load("fi_harness", os.path.join(FI, "harness.py"))
 
 # Offline test files that no target in faults.py drives, with why. Measured, not
-# assembled from memory: 5 of 33 on 7 Oct 2026 (6 earlier the same day, before
-# test_schedule_entry.py was given the `schedule_entry` target; 7 before
-# test_scheduler_api.py was given `scheduler_api`; 8 on 6 Oct, before
-# test_shadowed_imports.py was given `shadowed_imports`). A file here has never
-# been shown capable of going red, so it reports a safety nothing has checked.
+# assembled from memory: 2 of 33 on 7 Oct 2026 (3 earlier the same day, before
+# test_client_scripts.py was given the `client_scripts` target; 5 before
+# test_child_doctype_hooks.py and test_doctype_metadata.py were given theirs;
+# 8 on 6 Oct, before test_shadowed_imports.py was given `shadowed_imports`). A
+# file here has never been shown capable of going red, so it reports a safety
+# nothing has checked.
 UNDRIVEN_OFFLINE_FILES = {
     # Cannot be: it is the harness's own guard file. A target for it would be a
     # target for the thing that decides whether targets mean anything.
     "tests/offline/test_faultinject_harness.py": "drives the harness; nothing drives it",
     # Not yet -- and not because of the file kind, which is what this comment used to
-    # say. Each predates the harness and sweeps metadata or wiring rather than a
-    # behaviour, so a fault for one is an edit to a JSON, a hook or a text file rather
+    # say. It predates the harness and sweeps metadata or wiring rather than a
+    # behaviour, so a fault for it is an edit to a JSON, a hook or a text file rather
     # than to a function body. The harness drives exactly those already: on 7 Oct 2026,
-    # 15 of the 30 targets inject into .json, hooks.py or patches.txt, and two of them --
-    # doctype_json_validation and doctype_metadata -- inject into nothing else: 31 JSON
-    # edits between them and both bite. test_a_target_can_be_driven_entirely_by_non_python
-    # _edits below keeps that from going quietly stale. So these three are undriven
-    # because nobody has written them, which is the work; the file kind is not the
-    # obstacle.
+    # 20 of the 31 targets inject into something that is not a .py file, and five of
+    # them -- client_doctypes, client_scripts, doctype_json_validation,
+    # doctype_metadata and status_literals -- inject into nothing else, and all five
+    # bite. test_a_target_can_be_driven_entirely_by_non_python_edits below keeps that
+    # from going quietly stale. So the one below is undriven because nobody has
+    # written it, which is the work; the file kind is not the obstacle.
     #
-    # Three files have left this list, and all three paid for the trip on the way
-    # out -- which is the argument for the four below, because each left under a green
-    # suite and none of the defects was visible from reading:
+    # Six files have left this list, and all six paid for the trip on the way out --
+    # which is the argument for the one below, because each left under a green suite
+    # and none of the defects was visible from reading:
     #   test_shadowed_imports.py (6 Oct): a sweep failing on correct Python, plus two
     #     bindings it could not see, one of them named in its own docstring.
     #   test_scheduler_api.py (7 Oct): a list of removed columns applied to every
@@ -90,7 +91,16 @@ UNDRIVEN_OFFLINE_FILES = {
     #     the offline suite green. Five more faults and one more class now pin
     #     it. The first target whose faults all passed and which still found
     #     something, because a file's premises are not what its tests exercise.
-    "tests/offline/test_client_scripts.py": "no target yet",
+    #   test_client_scripts.py (7 Oct): four, out of 22 faults, and they ran in
+    #     both directions at once. Three were call forms its frm.set_value sweep
+    #     could not see -- cur_frm, a backtick fieldname, and a call wrapped after
+    #     the opening paren -- none of which appears in the app, so the file was
+    #     green and a file blind to all three would have been green too. The
+    #     fourth was the opposite: a whole-line // comment naming the removed
+    #     project_manager turned it red, which is the house style for recording a
+    #     removal (activity.js explains its own in prose). A guard that refuses
+    #     correct work and a guard that cannot see the regression are the same
+    #     defect seen from two sides, and one file had both.
     "tests/offline/test_dashboard_widgets.py": "no target yet",
 }
 faults_mod = _load("fi_faults", os.path.join(FI, "faults.py"))
