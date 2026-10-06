@@ -66,7 +66,7 @@ CREATOR = "ellis@company.test"
 ASSIGNEE = "maya@company.test"
 THIRD = "alex@company.test"
 STRANGER = "robin@company.test"
-BOSS = "zeke@company.test"
+BOSS = "pat@company.test"
 
 PAGE = os.path.join(APP_ROOT, "erplite", "www", "todo", "index.py")
 DATA_MANAGER = os.path.join(
@@ -115,7 +115,7 @@ def world(session_user, manager=None):
         for email, name in [
             (CREATOR, "Ellis Vance"), (ASSIGNEE, "Maya Chen"),
             (THIRD, "Alex Morgan"), (STRANGER, "Robin Ward"),
-            (BOSS, "Zeke Tierney"),
+            (BOSS, "Pat Quinn"),
         ]
     ]
     # Only the people named here are managers. `Has Role` is a child table, so

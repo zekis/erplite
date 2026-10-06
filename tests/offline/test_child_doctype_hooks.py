@@ -329,7 +329,7 @@ class SupplierQuoteTotals(unittest.TestCase):
     """
 
     def setUp(self):
-        self.frappe = FakeFrappe(session_user="zeke@company.test",
+        self.frappe = FakeFrappe(session_user="pat@company.test",
                                  roles=["System Manager"])
         self.frappe.tables["Supplier"] = [
             _dict(name="SUP-0001", supplier_name="Novalith Technologies"),

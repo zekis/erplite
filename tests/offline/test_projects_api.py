@@ -29,7 +29,7 @@ sys.path.insert(0, HERE)
 import fake_frappe  # noqa: E402
 from fake_frappe import FakeFrappe, FakeAssignTo, UnknownField, _dict  # noqa: E402
 
-USER = "zeke@company.test"
+USER = "pat@company.test"
 OTHER = "someone.else@company.test"
 
 

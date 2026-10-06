@@ -123,8 +123,8 @@ class TickingClock(object):
 DAY_IN = datetime.datetime(2026, 10, 6, 9, 0, 0)
 DAY_OUT = datetime.datetime(2026, 10, 6, 10, 0, 0)
 
-EMPLOYEE = "zeke@company.test"
-APPROVER = "zeke@company.test"
+EMPLOYEE = "pat@company.test"
+APPROVER = "pat@company.test"
 
 
 def load_controller(frappe, clock):
