@@ -40,8 +40,9 @@ def _load(name, path):
 harness = _load("fi_harness", os.path.join(FI, "harness.py"))
 
 # Offline test files that no target in faults.py drives, with why. Measured, not
-# assembled from memory: 6 of 33 on 7 Oct 2026 (7 earlier the same day, before
-# test_scheduler_api.py was given the `scheduler_api` target; 8 on 6 Oct, before
+# assembled from memory: 5 of 33 on 7 Oct 2026 (6 earlier the same day, before
+# test_schedule_entry.py was given the `schedule_entry` target; 7 before
+# test_scheduler_api.py was given `scheduler_api`; 8 on 6 Oct, before
 # test_shadowed_imports.py was given `shadowed_imports`). A file here has never
 # been shown capable of going red, so it reports a safety nothing has checked.
 UNDRIVEN_OFFLINE_FILES = {
@@ -58,20 +59,25 @@ UNDRIVEN_OFFLINE_FILES = {
     # that from going quietly stale. So these five are undriven because nobody has
     # written them, which is the work; the file kind is not the obstacle.
     #
-    # Two files have left this list, and both paid for the trip on the way out --
-    # which is the argument for the five below, because each left under a green suite
-    # and neither defect was visible from reading:
+    # Three files have left this list, and all three paid for the trip on the way
+    # out -- which is the argument for the four below, because each left under a green
+    # suite and none of the defects was visible from reading:
     #   test_shadowed_imports.py (6 Oct): a sweep failing on correct Python, plus two
     #     bindings it could not see, one of them named in its own docstring.
     #   test_scheduler_api.py (7 Oct): a list of removed columns applied to every
     #     DocType, so a query for a live Activity field was reported as a regression;
     #     and an ordering assertion whose fixture could not tell the field it claimed
     #     to pin from any other.
+    #   test_schedule_entry.py (7 Oct): six of them. Its headline claim -- that
+    #     validate() runs the link check on every save -- was unpinned, because
+    #     every test called the check directly; two guards whose removal the
+    #     fixtures could not detect; and a sweep for calls on the removed Task
+    #     DocType that could not see a call split across two lines and counted a
+    #     trailing comment and a docstring as calls.
     "tests/offline/test_child_doctype_hooks.py": "no target yet",
     "tests/offline/test_client_scripts.py": "no target yet",
     "tests/offline/test_dashboard_widgets.py": "no target yet",
     "tests/offline/test_doctype_metadata.py": "no target yet",
-    "tests/offline/test_schedule_entry.py": "no target yet",
 }
 faults_mod = _load("fi_faults", os.path.join(FI, "faults.py"))
 TARGETS = faults_mod.TARGETS

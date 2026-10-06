@@ -248,7 +248,7 @@ breaking the code.
 
 ## Targets
 
-Twenty-seven so far, 661 injections: edits applied to the app's real source,
+Twenty-eight so far, 700 injections: edits applied to the app's real source,
 with `run.py` watching one test file go red.
 
 Those two numbers are counted from `faults.py`, not kept by hand. They said
@@ -2613,3 +2613,95 @@ order within a tie; and `db.get_value` is not recorded in `frappe.queries`, so
 the Division lookup's field names are covered by the stand-in's check and by
 the two assignment faults, not by `test_no_orphaned_column_is_queried`. Both
 are stated in the test file.
+
+### `schedule_entry` — `tests/offline/test_schedule_entry.py`
+
+Twenty-eighth target. `98e9b04` renamed Schedule Entry's `task` field to
+`activity` and repointed it at the Activity DocType; `8126278` then removed the
+Task DocType from the app and `progress_percent` from Activity. The controller
+was not brought along. `validate()` read `self.task` on every save — an
+attribute a document has no field for — so creating an entry through
+`scheduler.api.create_schedule_entry` came back as `{"success": false,
+"message": "'ScheduleEntry' object has no attribute 'task'"}` and went to the
+error log; fixing only `validate()` would have moved the failure to
+`on_update`, which wrote `progress_percent` back to `tabTask`.
+
+**39 faults: 32 red, 7 controls.** The first run had 38 of them and **32 were
+as expected, 6 were not** — the six below. The 39th was added afterwards, to
+drive a claim the fixes themselves introduced; 39 of 39 as expected now.
+Baseline 24 passed; 35 after the six fixes. Whole offline suite 689 green, from
+678 on `main`.
+
+**Six of this file's claims did not hold, and the file had been green through
+all of them.** None was visible from reading it. They fall into three kinds,
+and the third is the one worth carrying elsewhere.
+
+**1. The headline claim was the unpinned one.** The file's own docstring says
+`validate()` calls the link check on every save — that is the sentence
+explaining why the bug took creation down. But every test called
+`validate_activity_project_link()` **directly**, and the one test that went
+through `validate()` asserted only that a *correct* document survives it. So
+deleting `self.validate_activity_project_link()` from `validate()` left all 24
+tests green. The check existed and nothing called it.
+
+> A file's background section is not a test. The claim a reader most believes
+> is the one most likely to have no assertion behind it, because it reads as
+> settled.
+
+**2. Two guards whose absence the fixtures could not detect.** Both are the
+same shape as the ordering assertion in `scheduler_api`: the test's answer was
+right for a reason other than the one under test.
+
+- `if not self.activity: return None` in `get_activity_progress`. Remove it and
+  the query runs with `activity=None`, which matches no row, so
+  `if not entries: return None` returns the same `None` one line later. The
+  test now asserts that **nothing was queried**, which is what the equivalent
+  test for `validate()` had always done in the same file.
+- `min(100, ...)`. The fixture had completed hours equal to total hours, so the
+  ratio was exactly 100 with the clamp and without it. Completed hours are a
+  subset of the hours counted, so **no row the controller would accept can
+  reach that clamp** — `validate_duration` throws on a duration of nought or
+  less. A negative duration arriving from a direct write, an import or a patch
+  is the one case it answers, and that is now the fixture. The old test is kept
+  under the name of what it does measure (100% when every hour is done), and
+  the claim about `validate_duration` is driven by its own fault rather than
+  asserted in a docstring.
+
+**3. A line-based sweep gave three wrong answers, two of them on correct
+code.** `test_no_python_module_calls_the_task_doctype` swept all 134 app `.py`
+files with a regex per line, skipping a line that *started* with `#`. So:
+
+| edit | old answer | correct |
+| --- | --- | --- |
+| `frappe.db.get_value(` with `"Task"` on the next line | not found | offender |
+| `pass  # frappe.db.get_value("Task", ...)` | offender | not a call |
+| a docstring naming the call it replaced | offender | not a call |
+
+The first is how `black` formats a long call. The other two are the sweep
+**failing on correct code**, which is the third target running where a control
+has been worth more than a miss — and the risk is specific: this file's own
+`on_update` carries a comment naming the old `set_value("Task", ...)`, so the
+next person to move that comment onto the end of a line gets a red test and a
+reason to delete the sweep.
+
+It reads Python's tokens now: a `COMMENT` token is dropped, a docstring is a
+`STRING` with no call name and bracket in front of it, and the tokens of a call
+run on past the newlines inside its brackets. `TaskCallDetectorTest` pins each
+case directly, including the two the tokens still cannot reach —
+`frappe.get_doc({"doctype": "Task"})` and a DocType held in a variable — because
+a sweep that implies more cover than it has is the thing this directory exists
+to catch. A file that fails to tokenize is reported as an offender rather than
+skipped, for the same reason; all 134 tokenize today.
+
+**The controls.** Seven, and the three that mattered are the comment ones above
+— an own-line comment (green before and after, pinning that the load-bearing
+`on_update` comment is still allowed), a trailing comment and a docstring. The
+other four are a local rename, the link check restructured to an early return,
+its two guard conditions swapped, and both sums in `get_activity_progress`
+rewritten as a single loop over rows. All four were green first time, so the
+file is pinning what the controller decides rather than how it is written.
+
+**One thing deliberately not driven:** the "could not be read" branch of the
+sweep. Making an app `.py` untokenizable turns the whole file red for the
+obvious reason, so the fault would prove nothing about that branch. It is
+covered by `TaskCallDetectorTest` reading the detector directly instead.

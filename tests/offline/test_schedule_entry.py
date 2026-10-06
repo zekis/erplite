@@ -30,11 +30,35 @@ creation to work at all.
 removed it, so there is nowhere to write progress back to. The calculation is
 kept as get_activity_progress() and the write is gone rather than pointed at
 an orphaned column.
+
+What driving this file found (7 Oct 2026, tests/faultinject target
+`schedule_entry`). Everything above was already true and already green, and
+six edits to the controller went unnoticed under that green:
+
+  * the link check unwired from validate() -- the file's headline claim is
+    that validate() calls it on every save, and nothing asserted the call was
+    still there. test_validate_itself_performs_the_link_check does now.
+  * the `if not self.activity` guard removed from get_activity_progress. A
+    query filtered on activity=None matches no row, so the answer was None
+    either way; the test could not tell the guard from its absence. It now
+    asserts that nothing is queried, as the validate() equivalent already did.
+  * the clamp in `min(100, ...)` removed. Completed hours are a subset of the
+    hours counted, so the fixture's completed == total made the ratio exactly
+    100 with or without the clamp. See
+    test_progress_is_clamped_when_the_rows_do_not_add_up for the one input
+    that reaches it.
+  * and three in the sweep for Task calls, which read one line at a time: it
+    could not see a call whose DocType sat on the next line, and it counted a
+    trailing comment and a docstring as calls -- so correct code was an
+    offender. It reads Python's tokens now; TaskCallDetectorTest pins each
+    case.
 """
 
+import ast
+import io
 import os
-import re
 import sys
+import tokenize
 import types
 import unittest
 
@@ -156,6 +180,25 @@ class ValidateTest(ScheduleEntryTestCase):
                            duration=4.0, schedule_date="2026-10-05")
         entry.validate()
 
+    def test_validate_itself_performs_the_link_check(self):
+        """The call has to be wired into validate(), not just exist.
+
+        Every test above calls validate_activity_project_link() directly, so
+        deleting its line from validate() left them all green -- and that line
+        is the whole reason the check runs on a save.
+        """
+        entry = self.entry(activity="act_other_proj", project="5gofgdoomv",
+                           duration=4.0, schedule_date="2026-10-05")
+        with self.assertRaises(ValidationError):
+            entry.validate()
+
+    def test_validate_refuses_a_duration_of_nought_or_less(self):
+        """The other half of the clamp's reasoning, in ProgressTest below."""
+        entry = self.entry(activity="g68cfomvvu", project="5gofgdoomv",
+                           duration=-4.0, schedule_date="2026-10-05")
+        with self.assertRaises(ValidationError):
+            entry.validate()
+
     def test_the_old_method_name_is_gone(self):
         self.assertFalse(hasattr(self.module.ScheduleEntry,
                                  "validate_task_project_link"))
@@ -203,7 +246,15 @@ class ProgressTest(ScheduleEntryTestCase):
         self.assertNotIn("task", query.filters)
 
     def test_progress_is_none_without_an_activity(self):
-        self.assertIsNone(self.entry(project="5gofgdoomv").get_activity_progress())
+        """And nothing is asked for: the guard answers, not an empty table.
+
+        Without the assertion on queries this could not tell the guard from
+        its absence. A query filtered on activity=None matches no row, so
+        `if not entries: return None` gives the same None one line later.
+        """
+        entry = self.entry(project="5gofgdoomv")
+        self.assertIsNone(entry.get_activity_progress())
+        self.assertEqual(self.frappe.queries, [])
 
     def test_progress_is_none_with_no_entries(self):
         self.frappe.tables["Schedule Entry"] = []
@@ -219,10 +270,30 @@ class ProgressTest(ScheduleEntryTestCase):
         entry = self.entry(activity="g68cfomvvu", project="5gofgdoomv")
         self.assertIsNone(entry.get_activity_progress())
 
-    def test_progress_never_exceeds_one_hundred(self):
+    def test_progress_is_one_hundred_when_every_hour_is_done(self):
+        """The boundary. Named for what it measures: this is not the clamp."""
         self.frappe.tables["Schedule Entry"] = [
             _dict(name="SCH-0001", activity="g68cfomvvu", status="Completed",
                   duration=8.0, docstatus=1),
+        ]
+        entry = self.entry(activity="g68cfomvvu", project="5gofgdoomv")
+        self.assertEqual(entry.get_activity_progress(), 100)
+
+    def test_progress_is_clamped_when_the_rows_do_not_add_up(self):
+        """What `min(100, ...)` is for, and the only input that reaches it.
+
+        Completed hours are a subset of the hours counted, so for any row the
+        controller would accept the ratio cannot exceed 100 -- which is why
+        the test above, whose fixture has completed == total, reads the same
+        with the clamp and without it. A negative duration is the case that
+        gets past: validate_duration refuses one (pinned below), but a direct
+        write, an import or a patch does not go through the controller.
+        """
+        self.frappe.tables["Schedule Entry"] = [
+            _dict(name="SCH-0001", activity="g68cfomvvu", status="Completed",
+                  duration=8.0, docstatus=1),
+            _dict(name="SCH-0002", activity="g68cfomvvu", status="Planned",
+                  duration=-4.0, docstatus=1),
         ]
         entry = self.entry(activity="g68cfomvvu", project="5gofgdoomv")
         self.assertEqual(entry.get_activity_progress(), 100)
@@ -235,11 +306,98 @@ class ProgressTest(ScheduleEntryTestCase):
             self.frappe.db.set_value("Task", "g68cfomvvu", "progress_percent", 50)
 
 
-TASK_DOCTYPE_CALL = re.compile(
-    r"""(get_doc|get_all|get_list|get_value|get_single_value|new_doc|get_meta
-         |set_value|delete_doc|exists|count)\s*\(\s*["']Task["']""",
-    re.VERBOSE,
-)
+TASK_DOCTYPE_CALLS = frozenset("""
+    get_doc get_all get_list get_value get_single_value new_doc get_meta
+    set_value delete_doc exists count
+""".split())
+
+
+def task_doctype_calls(text):
+    """Line numbers of calls naming the Task DocType, read from Python's tokens.
+
+    Tokens rather than a regex over single lines, because each of the three
+    things a line cannot tell you was measured as a wrong answer from the
+    version this replaced:
+
+      * `frappe.db.get_value(` with `"Task"` on the following line was not
+        found at all -- the formatting black produces for a long call.
+      * `pass  # frappe.db.get_value("Task", ...)` was an offender. The old
+        sweep skipped a line only when it *started* with `#`.
+      * so was a docstring naming the call it replaced.
+
+    A COMMENT token is dropped here, a docstring is a STRING with no call name
+    and bracket in front of it, and the tokens of a call run on past the
+    newlines inside its brackets.
+
+    Not caught, by this version or the old one: a DocType named anywhere but
+    the first argument, as in `frappe.get_doc({"doctype": "Task"})`, or held in
+    a variable. The sweeps over Link fields and over `tabTask` cover the JSON
+    and SQL routes; this one answers for a literal first argument.
+    """
+    tokens = [token for token in
+              tokenize.generate_tokens(io.StringIO(text).readline)
+              if token.type not in (tokenize.COMMENT, tokenize.NL,
+                                    tokenize.NEWLINE, tokenize.INDENT,
+                                    tokenize.DEDENT)]
+    found = []
+    for name, bracket, argument in zip(tokens, tokens[1:], tokens[2:]):
+        if (name.type != tokenize.NAME
+                or name.string not in TASK_DOCTYPE_CALLS
+                or bracket.type != tokenize.OP or bracket.string != "("
+                or argument.type != tokenize.STRING):
+            continue
+        try:
+            doctype = ast.literal_eval(argument.string)
+        except (ValueError, SyntaxError):
+            continue        # an f-string or similar: not a plain DocType name
+        if doctype == "Task":
+            found.append(name.start[0])
+    return found
+
+
+class TaskCallDetectorTest(unittest.TestCase):
+    """What the sweep below counts as a call.
+
+    Pinned here as well as in tests/faultinject, because every case is one the
+    line-based version got wrong and a detector that cannot find anything
+    looks exactly like one that found nothing.
+    """
+
+    def calls(self, source):
+        return task_doctype_calls(source)
+
+    def test_a_call_is_found(self):
+        self.assertEqual(
+            self.calls('frappe.db.get_value("Task", x, "project")\n'), [1])
+
+    def test_a_call_split_across_lines_is_found(self):
+        self.assertEqual(
+            self.calls('frappe.db.get_value(\n    "Task", x, "project")\n'), [1])
+
+    def test_a_whole_line_comment_is_not_a_call(self):
+        self.assertEqual(
+            self.calls('# frappe.db.get_value("Task", x, "project")\n'), [])
+
+    def test_a_comment_at_the_end_of_a_line_is_not_a_call(self):
+        self.assertEqual(
+            self.calls('pass  # frappe.db.get_value("Task", x)\n'), [])
+
+    def test_a_docstring_is_not_a_call(self):
+        self.assertEqual(
+            self.calls('"""Was frappe.db.get_value("Task", x)."""\n'), [])
+
+    def test_another_doctype_is_not_a_call(self):
+        self.assertEqual(
+            self.calls('frappe.db.get_value("Activity", x, "project")\n'), [])
+
+    def test_a_doctype_held_in_a_variable_is_not_claimed(self):
+        """Out of reach, and saying so beats a sweep that implies otherwise."""
+        self.assertEqual(
+            self.calls('frappe.db.get_value(doctype, x, "project")\n'), [])
+
+    def test_every_line_of_a_call_is_reported_once(self):
+        self.assertEqual(
+            self.calls('get_doc("Task", a)\nget_all("Task", b)\n'), [1, 2])
 
 
 class NoTaskDocTypeLeftTest(unittest.TestCase):
@@ -263,11 +421,16 @@ class NoTaskDocTypeLeftTest(unittest.TestCase):
         for path in self.app_sources(".py"):
             with open(path, "rb") as handle:
                 text = handle.read().decode("utf-8", "replace")
-            for number, line in enumerate(text.splitlines(), 1):
-                if line.lstrip().startswith("#"):
-                    continue   # a comment explaining the old call is not a call
-                if TASK_DOCTYPE_CALL.search(line):
-                    offenders.append("%s:%d" % (os.path.relpath(path, APP_ROOT), number))
+            relative = os.path.relpath(path, APP_ROOT)
+            try:
+                numbers = task_doctype_calls(text)
+            except (tokenize.TokenError, SyntaxError, IndentationError) as exc:
+                # A file this cannot read is not a file with nothing in it.
+                # Reporting it is what stops a sweep that swept nothing from
+                # passing as a sweep that found nothing.
+                offenders.append("%s: could not be read (%s)" % (relative, exc))
+                continue
+            offenders.extend("%s:%d" % (relative, number) for number in numbers)
         self.assertEqual(offenders, [], "Task DocType referenced at: %s" % offenders)
 
     def test_no_raw_sql_names_the_task_table(self):
