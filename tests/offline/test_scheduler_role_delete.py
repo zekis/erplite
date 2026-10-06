@@ -377,7 +377,7 @@ class TestTheGuardDoesNotDependOnWhoIsDeleting(SchedulerRoleDeleteTestCase):
     both rights.
     """
 
-    USER = "scheduler.manager@tierneymorris.com.au"
+    USER = "scheduler.manager@company.test"
 
     def a_scheduler_manager(self):
         """A stand-in whose session user may delete roles and read no rows."""
