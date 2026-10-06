@@ -4542,6 +4542,144 @@ READ_SHAPES = Target("tests/offline/test_read_shapes.py", [
 ])
 
 
+# --- DocType names in the browser -------------------------------------------
+# tests/offline/test_client_doctypes.py. Two of these shapes fail in silence:
+# `frappe.ui.form.on` registers handlers into a bucket keyed on the name it is
+# given, which `get_event_handler_list` creates on demand and `get_handlers`
+# only reads under the open form's own doctype (script_manager.js:14-26, :154);
+# `frappe.listview_settings[x]` is read as `|| {}` (base_list.js:43). So the
+# faults below are not hypothetical typos -- each one leaves a form or a list
+# view quietly not doing what its script says, with nothing in a build, a
+# migrate or a test run to say so.
+
+ACT_JS = "erplite/projects/doctype/activity/activity.js"
+PROJ_LIST_JS = "erplite/projects/doctype/project/project_list.js"
+TRIP_JS2 = "erplite/projects/doctype/trip/trip.js"
+TS_JS = "erplite/projects/doctype/timesheet_entry/timesheet_entry.js"
+SCHED_API_JS2 = "frontend/src/components/scheduler/composables/useSchedulerAPI.js"
+
+ACT_FORM_ON = "frappe.ui.form.on('Activity', {\n"
+ACT_LISTVIEW = "frappe.listview_settings['Activity'] = {\n"
+PROJ_LISTVIEW = "frappe.listview_settings['Project'] = {\n"
+TRIP_ROUTE = '            frappe.set_route("List", "Purchase Invoice");\n'
+TS_READ = ("                frappe.db.get_value('Project', frm.doc.project, "
+           "'timesheet_approver')\n")
+TS_LINK_FIELD = ("                        {\n"
+                 "                            label: __('Project'),\n"
+                 "                            fieldname: 'project',\n"
+                 "                            fieldtype: 'Link',\n"
+                 "                            options: 'Project',\n"
+                 "                            reqd: 1\n"
+                 "                        },\n"
+                 "                        {\n"
+                 "                            label: __('Activity'),\n")
+SCHED_PROJECT_RESOURCE = ("  const projectsResource = createListResource({\n"
+                          "    doctype: 'Project',\n")
+
+CLIENT_DOCTYPES = Target("tests/offline/test_client_doctypes.py", [
+    # -- a name that exists nowhere, in each shape the app uses --
+    Fault("a form script is registered under a misspelt DocType, so every "
+          "handler in the file is dead and nothing says so", True,
+          [(ACT_JS, ACT_FORM_ON, "frappe.ui.form.on('Acitivity', {\n")]),
+
+    Fault("a list view's settings are registered under a misspelt DocType, so "
+          "the indicators and buttons are silently absent", True,
+          [(PROJ_LIST_JS, PROJ_LISTVIEW,
+            "frappe.listview_settings['Porject'] = {\n")]),
+
+    Fault("a button routes to a list of a DocType that does not exist", True,
+          [(TRIP_JS2, TRIP_ROUTE,
+            '            frappe.set_route("List", "Purchase Invoices");\n')]),
+
+    Fault("a client read names a DocType that does not exist", True,
+          [(TS_JS, TS_READ,
+            "                frappe.db.get_value('Projects', frm.doc.project, "
+            "'timesheet_approver')\n")]),
+
+    Fault("the Vue app asks for a document type that does not exist", True,
+          [(SCHED_API_JS2, SCHED_PROJECT_RESOURCE,
+            "  const projectsResource = createListResource({\n"
+            "    doctype: 'Project Plan',\n")]),
+
+    Fault("a dialog's Link field offers a DocType that does not exist", True,
+          [(TS_JS, TS_LINK_FIELD,
+            "                        {\n"
+            "                            label: __('Project'),\n"
+            "                            fieldname: 'project',\n"
+            "                            fieldtype: 'Link',\n"
+            "                            options: 'Projekt',\n"
+            "                            reqd: 1\n"
+            "                        },\n"
+            "                        {\n"
+            "                            label: __('Activity'),\n")]),
+
+    # -- a name that exists, on the wrong form: only location can judge these --
+    Fault("a form script is registered under a DocType that exists but is not "
+          "the one whose folder it sits in", True,
+          [(ACT_JS, ACT_FORM_ON, "frappe.ui.form.on('Project', {\n")]),
+
+    Fault("a list view's settings are registered under another real DocType", True,
+          [(PROJ_LIST_JS, PROJ_LISTVIEW,
+            "frappe.listview_settings['Activity'] = {\n")]),
+
+    # -- the measured floors: a site leaving the sweep's reach --
+    Fault("a read's DocType moves into a variable, so the literal leaves the "
+          "sweep and the rule quietly covers one less site", True,
+          [(TS_JS, TS_READ,
+            "                const projectDoctype = 'Project';\n"
+            "                frappe.db.get_value(projectDoctype, frm.doc.project, "
+            "'timesheet_approver')\n")]),
+
+    Fault("a doctype: key is built from a constant, so the Vue app's read "
+          "leaves the sweep", True,
+          [(SCHED_API_JS2, SCHED_PROJECT_RESOURCE,
+            "  const PROJECT_DOCTYPE = 'Project'\n"
+            "  const projectsResource = createListResource({\n"
+            "    doctype: PROJECT_DOCTYPE,\n")]),
+
+    Fault("a list view's settings are registered under a runtime value, so the "
+          "name leaves the sweep and nothing judges what it points at", True,
+          [(ACT_JS, ACT_LISTVIEW,
+            "frappe.listview_settings[cur_list.doctype] = {\n")]),
+
+    # -- controls: real edits that change no behaviour --
+    Fault("CONTROL a form script's DocType is quoted with double quotes", False,
+          [(ACT_JS, ACT_FORM_ON, 'frappe.ui.form.on("Activity", {\n')]),
+
+    Fault("CONTROL a form script's registration is wrapped onto two lines",
+          False,
+          [(ACT_JS, ACT_FORM_ON, "frappe.ui.form.on(\n\t'Activity', {\n")]),
+
+    Fault("CONTROL scaffold naming a DocType that exists nowhere is left "
+          "commented out, as nine DocType folders already do", False,
+          [(ACT_JS, ACT_FORM_ON,
+            "// frappe.ui.form.on('Nowhere At All', {\n"
+            "// \trefresh(frm) {}\n"
+            "// });\n"
+            "frappe.ui.form.on('Activity', {\n")]),
+
+    Fault("CONTROL a Select field is added whose options are values, not a "
+          "DocType", False,
+          [(TS_JS, TS_LINK_FIELD,
+            "                        {\n"
+            "                            label: __('Project'),\n"
+            "                            fieldname: 'project',\n"
+            "                            fieldtype: 'Link',\n"
+            "                            options: 'Project',\n"
+            "                            reqd: 1\n"
+            "                        },\n"
+            "                        {\n"
+            "                            label: __('Mode'),\n"
+            "                            fieldname: 'mode',\n"
+            "                            fieldtype: 'Select',\n"
+            "                            options: 'Start',\n"
+            "                            reqd: 1\n"
+            "                        },\n"
+            "                        {\n"
+            "                            label: __('Activity'),\n")]),
+])
+
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -4564,4 +4702,5 @@ TARGETS = {
     "scheduler_role_delete": SCHEDULER_ROLE_DELETE,
     "endpoint_wiring": ENDPOINT_WIRING,
     "read_shapes": READ_SHAPES,
+    "client_doctypes": CLIENT_DOCTYPES,
 }
