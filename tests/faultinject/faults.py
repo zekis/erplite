@@ -4301,6 +4301,132 @@ SCHEDULER_ROLE_DELETE = Target("tests/offline/test_scheduler_role_delete.py", [
             '\t\t\tfields=["name"],\n\t\t\tfilters={"role": self.name}\n')]),
 ])
 
+# --- endpoint wiring: a button's method and a DocType literal ----------------
+# rev_0ee5b675ce. Two whole-app rules over the app's own text -- every
+# `frappe.call` method resolves, and every DocType literal names a DocType that
+# exists -- plus the narrow guard on the field the owner decided against.
+#
+# A sweep over the whole app is easy to injure without noticing: it can stop
+# reaching a site and pass by finding nothing. So half of these faults break a
+# DocType name, and half move a call somewhere the sweep cannot read it, which
+# is the failure that looks like success.
+#
+# `scheduler_role.py` (ROLE_CTL above) is tab-indented; `scheduler/api.py` and
+# `xero/accounts.py` are space-indented; all three are CRLF, and `harness.nl`
+# translates the endings.
+
+SCHED_API = "erplite/scheduler/api.py"
+XERO_ACC = "erplite/xero/accounts.py"
+LOG_CTL = "erplite/scheduler/doctype/scheduler_log/scheduler_log.py"
+LOG_JS = "erplite/scheduler/doctype/scheduler_log/scheduler_log.js"
+ACTIVITY_JS = "erplite/projects/doctype/activity/activity.js"
+
+SRD_READ_HEAD = '\t\tschedule_rows_using_role = frappe.get_all("Schedule Row", \n'
+
+NEW_SCHEDULE_ENTRY = '        doc = frappe.new_doc("Schedule Entry")\n'
+
+# The app's only read of frappe's own `File` DocType, verbatim.
+FILE_READ = (
+    '        attachments = frappe.get_all("File", \n'
+    '                                   filters={\n'
+    '                                       "attached_to_doctype": "Purchase Invoice",\n'
+    '                                       "attached_to_name": purchase_invoice_name\n'
+    '                                   },\n'
+    '                                   fields=["name", "file_name", "file_url", "is_private"])\n'
+)
+
+ENDPOINT_WIRING = Target("tests/offline/test_endpoint_wiring.py", [
+    # -- a DocType literal naming something that exists nowhere --
+    Fault("a read's DocType is a plural that exists nowhere", True,
+          [(ROLE_CTL, 'frappe.get_all("Schedule Row", \n',
+            'frappe.get_all("Schedule Rows", \n')]),
+
+    Fault("new_doc names a DocType nothing declares -- the Purchase Order "
+          "shape, in another file", True,
+          [(SCHED_API, NEW_SCHEDULE_ENTRY,
+            '        doc = frappe.new_doc("Schedule Entries")\n')]),
+
+    Fault("the wrong DocType arrives as a keyword argument, with no "
+          "positional argument to read", True,
+          [(ROLE_CTL, SRD_READ_HEAD,
+            '\t\tschedule_rows_using_role = frappe.get_all(\n'
+            '\t\t\tdoctype="Schedule Rows",\n')]),
+
+    # -- the recorded reads of a DocType that really is missing --
+    Fault("a third function starts reading the missing Resource Role", True,
+          [(ROLE_CTL, SRD_ACTIVE_ROLES,
+            '\tfrappe.get_all("Resource Role", filters={}, fields=["parent"])\n'
+            + SRD_ACTIVE_ROLES)]),
+
+    Fault("one of the two known-broken reads is quietly dropped", True,
+          [(ROLE_CTL, SRD_RESOURCES_READ, '\tresource_roles = []\n')]),
+
+    # -- the sweep losing sight of a call, which passes by finding nothing --
+    Fault("the read moves behind a frappe.db alias, out of the sweep's sight",
+          True,
+          [(ROLE_CTL, SRD_READ_HEAD,
+            '\t\tdb = frappe.db\n'
+            '\t\tschedule_rows_using_role = db.get_all("Schedule Rows", \n')]),
+
+    Fault("new_doc is called through `from frappe import new_doc`, where the "
+          "walker cannot read the receiver", True,
+          [(SCHED_API, 'from frappe import _\n',
+            'from frappe import _, new_doc\n'),
+           (SCHED_API, NEW_SCHEDULE_ENTRY,
+            '        doc = new_doc("Schedule Entry")\n')]),
+
+    Fault("the app's only read of frappe's File DocType goes, leaving the "
+          "excuse for it behind", True,
+          [(XERO_ACC, FILE_READ,
+            '        attachments = frappe.get_doc(\n'
+            '            "Purchase Invoice", purchase_invoice_name'
+            ').get("attachments") or []\n')]),
+
+    # -- a button pointing at a method that is not there --
+    Fault("a whitelisted endpoint is renamed and the button is left pointing "
+          "at the old name", True,
+          [(LOG_CTL, 'def clear_old_logs(days=30):\n',
+            'def clear_logs(days=30):\n')]),
+
+    Fault("a button is pointed at a module the function was never moved to",
+          True,
+          [(LOG_JS,
+            "erplite.scheduler.doctype.scheduler_log.scheduler_log.clear_old_logs",
+            "erplite.scheduler.api.clear_old_logs")]),
+
+    # -- the field the owner decided against --
+    Fault("the progress_percent handler comes back", True,
+          [(ACTIVITY_JS,
+            "frappe.ui.form.on('Activity', {\n\trefresh: function(frm) {\n",
+            "frappe.ui.form.on('Activity', {\n"
+            "\tprogress_percent: function(frm) {\n"
+            "\t\tif (frm.doc.progress_percent === 100) {\n"
+            "\t\t\tfrm.set_value('status', 'Completed');\n"
+            "\t\t}\n"
+            "\t},\n"
+            "\n"
+            "\trefresh: function(frm) {\n")]),
+
+    # -- controls: real edits to the source that change no behaviour --
+    Fault("CONTROL a swept read asks for one more column", False,
+          [(ROLE_CTL, '\t\t\tfields=["name"]\n',
+            '\t\t\tfields=["name", "role"]\n')]),
+
+    Fault("CONTROL a swept read's keyword arguments swap places", False,
+          [(ROLE_CTL,
+            '\t\t\tfilters={"role": self.name},\n\t\t\tfields=["name"]\n',
+            '\t\t\tfields=["name"],\n\t\t\tfilters={"role": self.name}\n')]),
+
+    Fault("CONTROL the variable holding a swept read's result is renamed",
+          False,
+          [(ROLE_CTL, '\t\tschedule_rows_using_role = frappe.get_all',
+            '\t\trows_using_role = frappe.get_all'),
+           (ROLE_CTL, SRD_GUARD,
+            '\t\tif rows_using_role:\n'
+            '\t\t\tfrappe.throw(f"Cannot delete role. It is used in '
+            '{len(rows_using_role)} schedule entries")\n')]),
+])
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -4321,4 +4447,5 @@ TARGETS = {
     "projects_api": PROJECTS_API,
     "raw_sql": RAW_SQL,
     "scheduler_role_delete": SCHEDULER_ROLE_DELETE,
+    "endpoint_wiring": ENDPOINT_WIRING,
 }
