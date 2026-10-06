@@ -5738,6 +5738,158 @@ SCHEDULE_ENTRY = Target(
 )
 
 
+
+# --- DocType JSON metadata: the references inside the JSONs themselves ------
+# tests/offline/test_doctype_metadata.py. Every fault here is an edit to a
+# DocType JSON and nothing else -- there is no function to break, which is the
+# whole point of the file: `bench migrate` runs none of frappe's own DocType
+# checks (see test_doctype_json_validation.py), so these JSONs are judged by
+# this suite or by nothing.
+#
+# A note on the boundary, so nobody adds a duplicate: whether a Link's
+# `options` names a DocType that exists AT ALL is pinned next door, by
+# LINK_TARGETS_OUTSIDE_THIS_APP in test_doctype_json_validation.py. This file
+# asks the next question -- whether the FIELD a reference reaches for exists --
+# so a typo in a Link target is deliberately green here.
+
+SR_JSON = "erplite/scheduler/doctype/schedule_row/schedule_row.json"
+PCOMM_JSON = "erplite/erplite/doctype/project_communications/project_communications.json"
+PCON_JSON = "erplite/erplite/doctype/project_contacts/project_contacts.json"
+ACT_META_JSON = "erplite/projects/doctype/activity/activity.json"
+TSE_JSON = "erplite/projects/doctype/timesheet_entry/timesheet_entry.json"
+XSL_JSON = "erplite/setup/doctype/xero_sync_log/xero_sync_log.json"
+
+ACT_STATUS_FIELD = '   "default": "Open",\n   "fieldname": "status",\n'
+
+DOCTYPE_METADATA = Target(
+    "tests/offline/test_doctype_metadata.py", [
+
+    # -- fetch_from: the four ways one stops resolving --------------------
+    # The one that actually happened. Schedule Row's activity_name fetched
+    # activity.subject; `subject` left Activity in the Task -> Activity rename,
+    # and set_fetch_from_value throws on a Data target, so every save of a
+    # schedule row with an activity attached failed. This is that bug, replanted.
+    Fault("fetch_from points at a field removed from the target DocType "
+          "(the live scheduler bug, replanted)", True,
+          [(SR_JSON, '   "fetch_from": "activity.activity_name",\n',
+            '   "fetch_from": "activity.subject",\n')]),
+    Fault("fetch_from names a link field this DocType does not have", True,
+          [(SR_JSON, '   "fetch_from": "project.project_name",\n',
+            '   "fetch_from": "proj.project_name",\n')]),
+    Fault("fetch_from carries no dot, so it names no source field at all", True,
+          [(SR_JSON, '   "fetch_from": "role.role_name",\n',
+            '   "fetch_from": "role_name",\n')]),
+    Fault("fetch_from's first part is a Data field rather than a Link, so there "
+          "is no target DocType to fetch from", True,
+          [(SR_JSON, '   "fetch_from": "resource.resource_name",\n',
+            '   "fetch_from": "resource_name.resource_name",\n')]),
+    # The documented blind spot, driven rather than described: the target is a
+    # frappe core DocType, so its field list is not in this repository. The
+    # module docstring says four such references were hand-checked. A fault here
+    # asks whether anything would notice a fifth, or a change to one of the four.
+    Fault("fetch_from on a frappe core DocType is broken (email.sender -> "
+          "email.sendr), the blind spot the docstring names", True,
+          [(PCOMM_JSON, '   "fetch_from": "email.sender",\n',
+            '   "fetch_from": "email.sendr",\n')]),
+    # Control. frappe's standard columns are on every table and in no DocType
+    # JSON, so fetching one is correct metadata. If this goes red the sweep is
+    # failing on valid references, which is how a guard gets deleted.
+    Fault("CONTROL: fetch_from reaches a frappe standard column "
+          "(project.owner), which is valid and in no JSON", False,
+          [(SR_JSON, '   "fetch_from": "project.project_name",\n',
+            '   "fetch_from": "project.owner",\n')]),
+
+    # -- a Table field pointing at something that is not a child table -----
+    Fault("a child DocType stops being istable, so the parent's Table field "
+          "points at a DocType frappe will not store rows in", True,
+          [(PCON_JSON, ' "istable": 1,\n', ' "istable": 0,\n')]),
+
+    # -- sort_field / search_fields / title_field --------------------------
+    Fault("sort_field names a column that does not exist, so the list view's "
+          "ORDER BY orders by nothing", True,
+          [(ACT_META_JSON, ' "sort_field": "creation",\n',
+            ' "sort_field": "created_on",\n')]),
+    Fault("search_fields names a field that does not exist, so the link search "
+          "queries a missing column", True,
+          [(ACT_META_JSON, ' "search_fields": "estimate",\n',
+            ' "search_fields": "estimated",\n')]),
+    Fault("title_field names a field that does not exist", True,
+          [(ACT_META_JSON, ' "title_field": "activity_name",\n',
+            ' "title_field": "activity_title",\n')]),
+    # sort_field may carry a direction ("fieldname desc"). No DocType in the app
+    # uses that form today, so the split that handles it is unexercised: these
+    # two faults are the only thing standing between it and a silent rewrite.
+    Fault("sort_field carries a direction and a stale fieldname "
+          "(\"modofied desc\")", True,
+          [(ACT_META_JSON, ' "sort_field": "creation",\n',
+            ' "sort_field": "modofied desc",\n')]),
+    Fault("CONTROL: sort_field carries a direction on a real field "
+          "(\"creation desc\"), which frappe accepts", False,
+          [(ACT_META_JSON, ' "sort_field": "creation",\n',
+            ' "sort_field": "creation desc",\n')]),
+    # Same again for the comma split: one DocType has search_fields and it names
+    # a single field, so nothing in the app exercises a list.
+    Fault("search_fields lists two fields and the second is stale", True,
+          [(ACT_META_JSON, ' "search_fields": "estimate",\n',
+            ' "search_fields": "estimate,statuss",\n')]),
+    Fault("CONTROL: search_fields lists two real fields with a space after the "
+          "comma, as frappe writes them", False,
+          [(ACT_META_JSON, ' "search_fields": "estimate",\n',
+            ' "search_fields": "estimate, status",\n')]),
+
+    # -- field_order against fields[] --------------------------------------
+    Fault("field_order keeps the name of a field that has been removed", True,
+          [(ACT_META_JSON, ' "field_order": [\n  "naming_series",\n',
+            ' "field_order": [\n  "naming_series",\n  "subject",\n')]),
+    Fault("a declared field is missing from field_order, so it never renders", True,
+          [(ACT_META_JSON, '  "activity_name",\n  "status",\n  "column_break_kyxt",\n',
+            '  "activity_name",\n  "column_break_kyxt",\n')]),
+
+    # -- depends_on and its two siblings -----------------------------------
+    Fault("depends_on names a stale field, so the section it guards is always "
+          "falsy and never shows (Timesheet Entry's approval section)", True,
+          [(TSE_JSON,
+            """   "depends_on": "eval:doc.status=='Submitted' || doc.status=='Approved' || doc.status=='Rejected'",\n""",
+            """   "depends_on": "eval:doc.statuss=='Submitted' || doc.status=='Approved' || doc.status=='Rejected'",\n""")]),
+    # The other live instance. One fault per instance on purpose: Timesheet
+    # Entry passing says nothing about Xero Sync Log.
+    Fault("depends_on names a stale field on the app's other instance "
+          "(Xero Sync Log's error section)", True,
+          [(XSL_JSON, """   "depends_on": "eval:doc.status === 'Failed'",\n""",
+            """   "depends_on": "eval:doc.statuss === 'Failed'",\n""")]),
+    # mandatory_depends_on and read_only_depends_on have no instance anywhere in
+    # the app, so the test's claim to sweep all three keys rests on nothing an
+    # edit to existing metadata could test. These two add one.
+    Fault("mandatory_depends_on names a field that does not exist (no DocType "
+          "in the app uses this key, so nothing else drives it)", True,
+          [(ACT_META_JSON, ACT_STATUS_FIELD,
+            ACT_STATUS_FIELD + '   "mandatory_depends_on": "eval:doc.ghost_field",\n')]),
+    Fault("read_only_depends_on names a field that does not exist (same: no "
+          "instance in the app)", True,
+          [(ACT_META_JSON, ACT_STATUS_FIELD,
+            ACT_STATUS_FIELD + '   "read_only_depends_on": "eval:doc.ghost_field",\n')]),
+    # depends_on also takes a bare fieldname, with no "eval:" and no "doc.".
+    # Nothing in the app is written that way either.
+    Fault("depends_on is a bare fieldname (frappe's other accepted form) and the "
+          "field does not exist", True,
+          [(ACT_META_JSON, ACT_STATUS_FIELD,
+            ACT_STATUS_FIELD + '   "depends_on": "ghost_field",\n')]),
+    # Control. doc.owner is a standard column: real, in no JSON, and a plausible
+    # thing to depend on. Flagging it would be a false positive on correct
+    # metadata.
+    Fault("CONTROL: depends_on reaches a frappe standard column (doc.owner)", False,
+          [(ACT_META_JSON, ACT_STATUS_FIELD,
+            ACT_STATUS_FIELD + '   "depends_on": "eval:doc.owner",\n')]),
+
+    # Control. A label is user-visible wording that no rule in this file reads:
+    # every check here judges fieldnames, fieldtypes and options. If this goes
+    # red the sweep has started pinning the form's wording.
+    Fault("CONTROL: a field's label is reworded", False,
+          [(SR_JSON, '   "label": "Resource Name",\n',
+            '   "label": "Resource (name)",\n')]),
+])
+
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -5767,4 +5919,5 @@ TARGETS = {
     "shadowed_imports": SHADOWED_IMPORTS,
     "scheduler_api": SCHEDULER_API,
     "schedule_entry": SCHEDULE_ENTRY,
+    "doctype_metadata": DOCTYPE_METADATA,
 }
