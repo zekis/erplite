@@ -590,7 +590,7 @@ def world(roles, user="pat@company.test"):
         frappe.permissions[doctype] = doctype_permissions(module, directory)
         frappe.tables[doctype] = [{
             "name": ROW_NAMES[doctype],
-            "owner": "zeke@company.test",
+            "owner": "creator@company.test",
             # Every real row has a `modified`, and the stale-document check
             # compares against it. Without one here the comparison would be
             # against None, which reaches the right verdict for the wrong
@@ -721,7 +721,7 @@ class TestAPermittedUserIsUnaffected(unittest.TestCase):
 
     def test_a_system_manager_can_too(self):
         ledger = FakeLedger()
-        frappe = world(["System Manager"], user="zeke@company.test")
+        frappe = world(["System Manager"], user="creator@company.test")
         modules = load_endpoints(frappe, ledger)
         for doctype in GATED_DOCTYPES:
             with self.subTest(doctype=doctype):

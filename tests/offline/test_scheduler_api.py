@@ -42,7 +42,7 @@ sys.path.insert(0, HERE)
 
 from fake_frappe import FakeFrappe, _dict, doctype_fields  # noqa: E402
 
-USER = "zeke@company.test"
+USER = "pat@company.test"
 
 # The columns removed from each DocType, which must not be queried again.
 #

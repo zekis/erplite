@@ -50,7 +50,7 @@ sys.path.insert(0, HERE)
 
 from fake_frappe import FakeFrappe, UnknownField, _dict  # noqa: E402
 
-USER = "zeke@company.test"
+USER = "pat@company.test"
 OTHER = "someone.else@company.test"
 
 # Removed from Timesheet Entry by the Task -> Activity rename and by 8126278.

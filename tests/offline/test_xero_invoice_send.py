@@ -275,7 +275,7 @@ def load_under_test(frappe, xero):
 
 def world(doctype, module, doctype_dir, row):
     """A FakeFrappe holding one invoice, its settings and no attachments."""
-    frappe = FakeFrappe(session_user="zeke@company.test", roles=["System Manager"])
+    frappe = FakeFrappe(session_user="pat@company.test", roles=["System Manager"])
     frappe.fields[doctype] = doctype_fields(module, doctype_dir)
     # send_to_xero checks write permission before it posts (owner's decision
     # rev_c3343b2cf3), so the rows have to be here or the gate cannot answer.

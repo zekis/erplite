@@ -69,7 +69,7 @@ from test_afterz_timesheet_workflow import (  # noqa: E402
 )
 from test_projects_api import load_api  # noqa: E402
 
-YOU = "zeke@company.test"
+YOU = "pat@company.test"
 COLLEAGUE = "someone.else@company.test"
 
 def attach_new_doc(frappe):

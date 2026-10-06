@@ -93,7 +93,7 @@ from fake_frappe import (  # noqa: E402
     FakeFrappe, PermissionError as FakePermissionError, _dict,
 )
 
-USER = "zeke@company.test"
+USER = "pat@company.test"
 SCHEDULER_API = os.path.join(APP_ROOT, "erplite", "scheduler", "api.py")
 
 
@@ -146,7 +146,7 @@ def populate(frappe):
               activity_name="PO-0392 - CCTP Systems Engineering support"),
     ]
     frappe.tables["Resource"] = [
-        _dict(name="res_zeke", resource_name="Zeke", resource_type="Person",
+        _dict(name="res_pat", resource_name="Pat", resource_type="Person",
               status="Active", capacity=8.0),
     ]
     frappe.tables["Scheduler Role"] = [
@@ -156,7 +156,7 @@ def populate(frappe):
     ]
     frappe.tables["Schedule Entry"] = [
         _dict(name="se_1", project="5gofgdoomv", activity="g68cfomvvu",
-              resource="res_zeke", schedule_date="2026-10-06", duration=8.0,
+              resource="res_pat", schedule_date="2026-10-06", duration=8.0,
               status="Planned", priority="Medium", start_time=None,
               end_time=None, description="", docstatus=0),
     ]
