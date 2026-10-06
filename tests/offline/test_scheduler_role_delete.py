@@ -137,7 +137,7 @@ def load_scheduler_role(frappe):
 
 class SchedulerRoleDeleteTestCase(unittest.TestCase):
     def setUp(self):
-        self.frappe = FakeFrappe(session_user="zeke@tierneymorris.com.au")
+        self.frappe = FakeFrappe(session_user="zeke@company.test")
         self.module = load_scheduler_role(self.frappe)
         self.frappe.tables["Scheduler Role"] = [
             {"name": ROLE, "role_name": ROLE, "role_code": "SSE",

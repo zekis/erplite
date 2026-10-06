@@ -123,8 +123,8 @@ class TickingClock(object):
 DAY_IN = datetime.datetime(2026, 10, 6, 9, 0, 0)
 DAY_OUT = datetime.datetime(2026, 10, 6, 10, 0, 0)
 
-EMPLOYEE = "zeke@tierneymorris.com.au"
-APPROVER = "zeke@tierneymorris.com.au"
+EMPLOYEE = "zeke@company.test"
+APPROVER = "zeke@company.test"
 
 
 def load_controller(frappe, clock):
@@ -621,8 +621,8 @@ class TestTheApprovalGate(WorkflowTestCase):
     test pins that hatch on purpose.
     """
 
-    STRANGER = "approver@tierneymorris.com.au"
-    NOBODY = "nobody@tierneymorris.com.au"
+    STRANGER = "approver@company.test"
+    NOBODY = "nobody@company.test"
 
     def setUp(self):
         super(TestTheApprovalGate, self).setUp()
@@ -791,7 +791,7 @@ class TestCheckOutGuards(WorkflowTestCase):
     are the only ones its rows meet.
     """
 
-    OTHER = "someone.else@tierneymorris.com.au"
+    OTHER = "someone.else@company.test"
 
     def _open_entry(self, when):
         """An entry with a check-in and no check-out: `is_active` 1."""
@@ -877,7 +877,7 @@ class TestWhoseHoursTheseAre(WorkflowTestCase):
     themselves, with the entry still reading Approved.
     """
 
-    OTHER = "someone.else@tierneymorris.com.au"
+    OTHER = "someone.else@company.test"
 
     def test_a_blank_employee_becomes_the_session_user(self):
         doc = self.afterz_create(employee="")

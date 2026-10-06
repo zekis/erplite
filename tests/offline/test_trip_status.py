@@ -209,7 +209,7 @@ class TripTestCase(unittest.TestCase):
     """
 
     def setUp(self):
-        self.frappe = FakeFrappe(session_user="zeke@tierneymorris.com.au")
+        self.frappe = FakeFrappe(session_user="zeke@company.test")
         self.module = load_trip(self.frappe)
         self.rows = {}        # name -> stored dict, stands in for tabTrip
         self.hooks_run = []
