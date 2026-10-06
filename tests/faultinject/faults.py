@@ -4904,6 +4904,121 @@ DOCTYPE_JSON_VALIDATION = Target(
 ])
 
 
+# --- status literals in client scripts ------------------------------------
+# tests/offline/test_status_literals.py. The browser-side half of
+# `test_select_values.py`: nothing in frappe compares a string in a `.js` file
+# to a DocType's `options`, so a stale status name is valid JavaScript that
+# decides the wrong thing forever. Three shapes, three different outcomes, and
+# none of them raises: a map miss read through `set_indicator_formatter` prints
+# `class="indicator undefined"`; the same miss inside `get_indicator` is
+# skipped by frappe's truthiness guard unless it sits inside a returned array,
+# in which case it reaches the pill's class attribute; and a `!=` against a
+# value the field cannot hold is simply always true. The test file's docstring
+# carries the frappe line numbers for each.
+#
+# The faults below are in two groups, because the test file makes two kinds of
+# claim and either can fail on its own:
+#   * the rule -- no client script names a value its Select field cannot hold;
+#   * the floors -- the sweep still reaches 20 sites, both shapes are still
+#     matched, and 19 of them are still judged against a declared `Select`.
+# A rule that has stopped looking at anything passes, which is the failure this
+# suite keeps meeting, so the floors are injected against as deliberately as
+# the rule is.
+
+TE_JS = "erplite/projects/doctype/timesheet_entry/timesheet_entry.js"
+TEL_JS = "erplite/projects/doctype/timesheet_entry/timesheet_entry_list.js"
+TRIP_JS = "erplite/projects/doctype/trip/trip.js"
+ACT_JS = "erplite/projects/doctype/activity/activity.js"
+ST_JS = "erplite/scheduler/doctype/schedule_template/schedule_template.js"
+RES_JS = "erplite/scheduler/doctype/resource/resource.js"
+XS_JS = "erplite/setup/doctype/xero_settings/xero_settings.js"
+TRIP_JSON = "erplite/projects/doctype/trip/trip.json"
+ACT_JSON = "erplite/projects/doctype/activity/activity.json"
+
+TRIP_OPTIONS = '"options": "Planned\\nIn Progress\\nCompleted\\nCancelled"'
+ACT_STATUS_FIELD = ('"fieldname": "status",\n'
+                    '   "fieldtype": "Select",\n'
+                    '   "hidden": 1,')
+
+STATUS_LITERALS = Target(
+    test="tests/offline/test_status_literals.py",
+    faults=[
+        # -- the rule, once per file that has a judged site, because a typo in
+        # -- one client script tells you nothing about the next one --
+        Fault("a status compared to a value the field cannot hold: the approval "
+              "button never appears (Timesheet Entry)", True,
+              [(TE_JS, "frm.doc.status === 'Submitted'",
+                "frm.doc.status === 'Submitting'")]),
+        Fault("one arm of an || is impossible: a rejected entry stays editable "
+              "(Timesheet Entry)", True,
+              [(TE_JS, "frm.doc.status === 'Rejected'",
+                "frm.doc.status === 'Declined'")]),
+        Fault("a status compared to a value the field cannot hold: Start Trip "
+              "is never offered (Trip)", True,
+              [(TRIP_JS, 'frm.doc.status === "Planned"',
+                'frm.doc.status === "Plan"')]),
+        Fault("a non-status Select compared to an impossible value: equipment "
+              "capacity is never set (Resource)", True,
+              [(RES_JS, "frm.doc.resource_type === 'Person'",
+                "frm.doc.resource_type === 'Persons'")]),
+        Fault("the Australian spelling of an American option: Disconnect from "
+              "Xero never shows (Xero Settings)", True,
+              [(XS_JS, "frm.doc.authorization_status === 'Authorized'",
+                "frm.doc.authorization_status === 'Authorised'")]),
+        # -- the map shapes: a hole in a colour map, which renders the word
+        # -- `undefined` into a class attribute rather than throwing --
+        Fault("a key in an indicator colour map no longer matches an option: "
+              "the indicator loses its colour (Activity)", True,
+              [(ACT_JS, "'Complete': 'blue',", "'Completed': 'blue',")]),
+        Fault("a key in a named colour map no longer matches an option: the "
+              "fallback colour is used for sick leave (Schedule Template)", True,
+              [(ST_JS, "'sick': '#ec4899',", "'Sick': '#ec4899',")]),
+        # -- the other direction: the literal stays, the options move under it.
+        # -- Editing a Select's options is the commonest way a correct client
+        # -- script becomes a wrong one, and nothing on deploy compares them.
+        Fault("an option is dropped from the DocType JSON, leaving a correct "
+              "client script naming a value that no longer exists (Trip)", True,
+              [(TRIP_JSON, TRIP_OPTIONS,
+                '"options": "Planned\\nCompleted\\nCancelled"')]),
+        # -- the floors. Each of these leaves the rule above true and takes a
+        # -- site out of its reach, which is the only way this file can go
+        # -- quiet without anyone noticing.
+        Fault("CONTROL-SHAPED REGRESSION: a behaviour-preserving refactor to "
+              "`includes()` takes a comparison out of the sweep's reach "
+              "(Timesheet Entry list)", True,
+              [(TEL_JS, '} else if (doc.status === "Approved") {',
+                '} else if (["Approved"].includes(doc.status)) {')]),
+        Fault("a map is keyed through a call, so the `[doc.field]` shape stops "
+              "matching and the map shape goes quiet (Schedule Template)", True,
+              [(ST_JS, "status_colors[frm.doc.status]",
+                "status_colors[String(frm.doc.status)]")]),
+        Fault("a judged Select becomes a Data field, so every literal compared "
+              "to it stops being judged (Activity)", True,
+              [(ACT_JSON, ACT_STATUS_FIELD,
+                '"fieldname": "status",\n'
+                '   "fieldtype": "Data",\n'
+                '   "hidden": 1,')]),
+
+        # -- negative controls: real edits that change no behaviour. If one of
+        # -- these goes red, the test is pinning the source's spelling rather
+        # -- than what the code does.
+        Fault("control: the quotes around a correct literal change from double "
+              "to single", False,
+              [(TRIP_JS, 'frm.doc.status === "Planned"',
+                "frm.doc.status === 'Planned'")]),
+        Fault("control: a correct comparison goes from === to ==", False,
+              [(TE_JS, "frm.doc.status === 'Approved'",
+                "frm.doc.status == 'Approved'")]),
+        Fault("control: the colour map's variable is renamed", False,
+              [(ST_JS, "const status_colors = {", "const status_palette = {"),
+               (ST_JS, "status_colors[frm.doc.status]",
+                "status_palette[frm.doc.status]")]),
+        Fault("control: a Select's options are reordered, same set", False,
+              [(TRIP_JSON, TRIP_OPTIONS,
+                '"options": "Cancelled\\nCompleted\\nIn Progress\\nPlanned"')]),
+    ])
+
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -4929,4 +5044,5 @@ TARGETS = {
     "client_doctypes": CLIENT_DOCTYPES,
     "api_url_methods": API_URL_METHODS,
     "doctype_json_validation": DOCTYPE_JSON_VALIDATION,
+    "status_literals": STATUS_LITERALS,
 }
