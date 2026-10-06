@@ -3635,6 +3635,204 @@ MANDATORY_FIELDS = Target(
     ],
 )
 
+
+# --- erplite/projects Activity queries -------------------------------------
+# The timesheet calendar, the admin assignment dialog and the assignment
+# endpoint itself: three whitelisted endpoints that read Activity through
+# Frappe's standard assignment mechanism (a ToDo row per assignee).
+
+PA = "erplite/projects/api.py"
+
+# The two "Get all projects" blocks are byte-identical. Each pattern therefore
+# carries the line that follows the block, which is what tells them apart:
+# get_projects_and_activities continues into the ToDo query, while
+# get_all_projects_and_activities continues into `result = {}`.
+PROJ_BLOCK = (
+    '            filters={"status": ["!=", "Archived"]},\n'
+    '            order_by="project_name"\n'
+    '        )\n'
+    '        \n'
+)
+GPA_TAIL = "        # Activities assigned to this user"
+GAPA_TAIL = "        result = {}\n"
+
+NO_FILTER = (
+    '            filters={},\n'
+    '            order_by="project_name"\n'
+    '        )\n'
+    '        \n'
+)
+
+PROJECTS_API = Target("tests/offline/test_projects_api.py", [
+
+    # --- get_projects_and_activities: the timesheet calendar ---------------
+    Fault("gpa: archived projects are listed again", True, [
+        (PA, PROJ_BLOCK + GPA_TAIL, NO_FILTER + GPA_TAIL)]),
+
+    Fault("gpa: cancelled and closed assignments count again", True, [
+        (PA, '                "allocated_to": user_to_filter,\n'
+             '                "status": ["not in", ["Cancelled", "Closed"]]\n',
+             '                "allocated_to": user_to_filter\n')]),
+
+    Fault("gpa: every user's activities are listed, not just this user's", True, [
+        (PA, '                "allocated_to": user_to_filter,\n',
+             '                "allocated_to": ["is", "set"],\n')]),
+
+    Fault("gpa: any user may view another user's activities", True, [
+        (PA, "        if target_user and is_timesheet_admin():\n"
+             "            # Admin viewing another user's activities\n"
+             "            user_to_filter = target_user\n"
+             "        else:\n"
+             "            # Regular user or admin viewing their own activities\n"
+             "            user_to_filter = frappe.session.user\n"
+             "        \n"
+             "        # Get all projects\n",
+             "        user_to_filter = frappe.session.user\n"
+             "        \n"
+             "        # Get all projects\n")]),
+
+    Fault("gpa: the title field is not selected (blank labels return)", True, [
+        (PA, '                fields=["name", "activity_name", "activity_name as subject", "description", "project"],\n',
+             '                fields=["name", "activity_name as subject", "description", "project"],\n')]),
+
+    Fault("gpa: the subject alias older front-end code reads is dropped", True, [
+        (PA, '                fields=["name", "activity_name", "activity_name as subject", "description", "project"],\n',
+             '                fields=["name", "activity_name", "description", "project"],\n')]),
+
+    Fault("gpa: activities are not confined to the listed projects", True, [
+        (PA, '                    "name": ["in", assigned_activity_names],\n'
+             '                    "project": ["in", list(result)]\n',
+             '                    "name": ["in", assigned_activity_names]\n')]),
+
+    # --- get_all_projects_and_activities: the admin assignment dialog ------
+    Fault("gapa: archived projects are listed again", True, [
+        (PA, PROJ_BLOCK + GAPA_TAIL, NO_FILTER + GAPA_TAIL)]),
+
+    Fault("gapa: cancelled and closed assignments are reported as current", True, [
+        (PA, '                    "status": ["not in", ["Cancelled", "Closed"]],\n'
+             '                    "allocated_to": ["is", "set"]\n',
+             '                    "allocated_to": ["is", "set"]\n')]),
+
+    Fault("gapa: unallocated todos are counted as assignees", True, [
+        (PA, '                    "status": ["not in", ["Cancelled", "Closed"]],\n'
+             '                    "allocated_to": ["is", "set"]\n',
+             '                    "status": ["not in", ["Cancelled", "Closed"]]\n')]),
+
+    Fault("gapa: the subject alias the dialog's older code reads is dropped", True, [
+        (PA, '                fields=["name", "activity_name", "activity_name as subject", "description"],\n',
+             '                fields=["name", "activity_name", "description"],\n')]),
+
+    Fault("gapa: only the first assignee is reported", True, [
+        (PA, '                activity["assigned_users"] = allocated\n',
+             '                activity["assigned_users"] = allocated[:1]\n')]),
+
+    Fault("gapa: assigned_to is never reported", True, [
+        (PA, '                activity["assigned_to"] = allocated[0] if allocated else None\n',
+             '                activity["assigned_to"] = None\n')]),
+
+    Fault("gapa: any user may open the admin assignment dialog", True, [
+        (PA, '        if not is_timesheet_admin():\n'
+             '            return {"success": False, "message": "Access denied"}\n'
+             '        \n'
+             '        # Get all projects\n',
+             '        # Get all projects\n')]),
+
+    # --- assign_activities_to_user ----------------------------------------
+    Fault("assign: any user may assign activities to anyone", True, [
+        (PA, '        if not is_timesheet_admin():\n'
+             '            return {"success": False, "message": "Access denied"}\n'
+             '        \n'
+             '        # Parse assignments if it\'s a JSON string\n',
+             '        # Parse assignments if it\'s a JSON string\n')]),
+
+    Fault("assign: assigning does nothing (reports success, persists nothing)", True, [
+        (PA, '                add_assignment({\n'
+             '                    "doctype": "Activity",\n'
+             '                    "name": activity_id,\n'
+             '                    "assign_to": [user]\n'
+             '                })\n',
+             '                pass\n')]),
+
+    Fault("assign: unassigning does nothing", True, [
+        (PA, '                remove_assignment("Activity", activity_id, user)\n',
+             '                pass\n')]),
+
+    Fault("assign: an unknown activity is no longer skipped", True, [
+        (PA, '            if not frappe.db.exists("Activity", activity_id):\n'
+             '                continue\n\n',
+             '')]),
+
+    Fault("assign: a JSON string from the front end is no longer parsed", True, [
+        (PA, '        if isinstance(activity_assignments, str):\n'
+             '            activity_assignments = json.loads(activity_assignments)\n',
+             '        pass\n')]),
+
+    Fault("assign: omitting 'assign' now assigns instead of leaving alone", True, [
+        (PA, "            should_assign = assignment.get('assign', False)\n",
+             "            should_assign = assignment.get('assign', True)\n")]),
+
+    Fault("assign: unassignments are not counted in the reported total", True, [
+        (PA, '            updated_count += 1\n',
+             '            updated_count += 1 if should_assign else 0\n')]),
+
+    # --- controls: real edits that change no behaviour ---------------------
+    # This one was written as a fault and came back green, and the green was
+    # right: `if not activity_id: continue` is genuinely redundant, so a test
+    # going red on its removal would be pinning an internal.
+    #
+    # It was nearly reported as a gap on the reasoning that the stand-in was
+    # kinder than frappe -- that `exists(dt, "")` has no WHERE clause and
+    # returns the first row. That is wrong, and the code path says so
+    # (frappe 15.52.0, read on the bench):
+    #
+    #   exists(dt, dn)          -> get_value(dt, dn, ignore=True)      :1259
+    #   get_values: `if (filters is not None) and ...`                 :612
+    #     dn is None -> else branch -> get_values_from_single, which reads
+    #                   tabSingles. Activity is not a Single, so: empty.
+    #     dn is ""   -> apply_filters: `{"name": str(filters)}`  query.py:122
+    #                   -> a real WHERE name = '' -> no row.
+    #
+    # Verified read-only against the live site, which holds 23 Activity rows:
+    #   exists("Activity", None) -> None      exists("Activity", "") -> None
+    #   exists("Activity", "g68cfomvvu") -> 'g68cfomvvu'
+    #
+    # So the stand-in's False was faithful, not kind. Kept as a control so the
+    # claim cannot be quietly reintroduced.
+    Fault("CONTROL assign: the redundant blank-id guard removed", False, [
+        (PA, '            if not activity_id:\n'
+             '                continue\n\n',
+             '')]),
+
+    Fault("CONTROL gapa: columns selected in a different order", False, [
+        (PA, '                fields=["name", "activity_name", "activity_name as subject", "description"],\n',
+             '                fields=["description", "name", "activity_name as subject", "activity_name"],\n')]),
+
+    Fault("CONTROL gapa: which of several assignees is 'the' one is unspecified", False, [
+        (PA, '                activity["assigned_to"] = allocated[0] if allocated else None\n',
+             '                activity["assigned_to"] = allocated[-1] if allocated else None\n')]),
+
+    Fault("CONTROL gapa: setdefault written out as an explicit branch", False, [
+        (PA, '                assignees.setdefault(todo.reference_name, []).append(todo.allocated_to)\n',
+             '                if todo.reference_name not in assignees:\n'
+             '                    assignees[todo.reference_name] = []\n'
+             '                assignees[todo.reference_name].append(todo.allocated_to)\n')]),
+
+    Fault("CONTROL gpa: the result dict built by a loop rather than a comprehension", False, [
+        (PA, '        result = {\n'
+             '            project.name: {\n'
+             '                "project_name": project.project_name,\n'
+             '                "activities": []\n'
+             '            }\n'
+             '            for project in projects\n'
+             '        }\n',
+             '        result = {}\n'
+             '        for project in projects:\n'
+             '            result[project.name] = {\n'
+             '                "project_name": project.project_name,\n'
+             '                "activities": []\n'
+             '            }\n')]),
+])
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -3652,4 +3850,5 @@ TARGETS = {
     "query_fields": QUERY_FIELDS,
     "undeclared_attrs": UNDECLARED_ATTRS,
     "mandatory_fields": MANDATORY_FIELDS,
+    "projects_api": PROJECTS_API,
 }
