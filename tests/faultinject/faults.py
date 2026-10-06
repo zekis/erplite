@@ -2983,6 +2983,203 @@ AFTERZ_WORKFLOW = Target(
 )
 
 
+
+# --- the whole-app query-field sweep ---------------------------------------
+# tests/offline/test_query_fields.py sweeps every .py under erplite/ and reports
+# any query naming a field its DocType does not declare. Its own self-tests
+# (TestTheSweepBites) run the detector over synthetic snippets, which proves the
+# detector understands a shape -- not that the sweep reaches the shape where it
+# really occurs. These faults are the second claim: a real field name in a real
+# query in a real file, one per shape and per area of the app, and the sweep has
+# to report it.
+#
+# The two names used most here are the app's own two historical mistakes:
+# `Activity.subject` and `Timesheet Entry.date`, both removed from the DocType
+# with the column still in the table. A fault that puts one back is the
+# regression the sweep exists to stop, not an invented string.
+
+QF_TSE = "erplite/projects/doctype/timesheet_entry/timesheet_entry.py"
+QF_PAPI = "erplite/projects/api.py"
+QF_SAPI = "erplite/scheduler/api.py"
+QF_ACC = "erplite/accounts/doctype/account/account.py"
+QF_PINV = "erplite/accounts/doctype/purchase_invoice/purchase_invoice.py"
+QF_CUR = "erplite/setup/doctype/currency/currency.py"
+QF_XAPI = "erplite/xero/api.py"
+QF_SROLE = "erplite/scheduler/doctype/scheduler_role/scheduler_role.py"
+QF_SENT = "erplite/scheduler/doctype/schedule_entry/schedule_entry.py"
+
+QUERY_FIELDS = Target(
+    test="tests/offline/test_query_fields.py",
+    faults=[
+        # --- `fields`, the shape the sweep was written for -----------------
+        Fault("Timesheet Entry.date is back in a fields list (the removed "
+              "column the sweep was written after)", True, [
+                  (QF_TSE,
+                   '            fields=["name", "check_in_time", "project", "activity"]',
+                   '            fields=["name", "date", "project", "activity"]')]),
+        Fault("Activity.subject is back in a fields list, as a bare name "
+              "beside the alias that is legitimately there", True, [
+                  (QF_PAPI,
+                   '                fields=["name", "activity_name", "activity_name as subject", "description", "project"],',
+                   '                fields=["name", "subject", "activity_name as subject", "description", "project"],')]),
+        Fault("a fields list in the scheduler names a Project field that "
+              "does not exist", True, [
+                  (QF_SAPI,
+                   '        fields=["name", "project_name", "status", "project_lead", "division"],',
+                   '        fields=["name", "project_name", "status", "project_manager", "division"],')]),
+        Fault("a fields list in a DocType controller names a Schedule Entry "
+              "field that does not exist", True, [
+                  (QF_SENT,
+                   'frappe.get_all("Schedule Entry",',
+                   'frappe.get_all("Schedule Entry", fields=["booked_by"],')]),
+        # Written first as a positional ADDED beside the keyword, which is a
+        # TypeError at runtime and which the sweep rightly ignores -- `fields=`
+        # wins. A positional-only call is the shape that actually occurs.
+        Fault("fields given as get_all's second positional rather than by "
+              "keyword", True, [
+                  (QF_TSE,
+                   'active_entry = frappe.get_all("Timesheet Entry", \n            filters={\n                "employee": frappe.session.user,\n                "is_active": 1\n            },\n            fields=["name", "project", "activity"]',
+                   'active_entry = frappe.get_all("Timesheet Entry", ["name", "date"],\n            filters={\n                "employee": frappe.session.user,\n                "is_active": 1\n            }')]),
+
+        # --- `filters`, every form the sweep claims ------------------------
+        Fault("a filters dict key names an Activity field that does not "
+              "exist", True, [
+                  (QF_SAPI,
+                   '            filters={"project": project.name, "status": ["!=", "Cancelled"]},',
+                   '            filters={"project": project.name, "activity_status": ["!=", "Cancelled"]},')]),
+        Fault("a filters dict passed as the second positional, with no "
+              "keyword", True, [
+                  (QF_CUR,
+                   '        if not frappe.db.get_value("Currency", {"is_base_currency": 1}):',
+                   '        if not frappe.db.get_value("Currency", {"is_default_currency": 1}):')]),
+        Fault("a list-form filter naming the field first", True, [
+                  (QF_PAPI,
+                   '            filters={"status": ["!=", "Archived"]},\n            order_by="project_name"\n        )\n        \n        result = {}',
+                   '            filters=[["project_manager", "=", frappe.session.user]],\n            order_by="project_name"\n        )\n        \n        result = {}')]),
+        # Written first as `[[...]] + [...]`, which is a BinOp and not a list
+        # literal, so the sweep skipped it -- correctly, by the same rule that
+        # makes it skip a non-literal DocType. A literal is the judged shape.
+        Fault("a list-form filter naming the DocType then the field", True, [
+                  (QF_PAPI,
+                   '                filters={\n                    "name": ["in", assigned_activity_names],\n                    "project": ["in", list(result)]\n                },',
+                   '                filters=[["Activity", "subject", "like", "%x%"]],')]),
+        Fault("an or_filters key names a Project field that does not exist",
+              True, [
+                  (QF_SAPI,
+                   '        filters={"status": ["!=", "Archived"]},\n        order_by="project_name"',
+                   '        filters={"status": ["!=", "Archived"]},\n        or_filters={"project_manager": frappe.session.user},\n        order_by="project_name"')]),
+
+        # --- ordering ------------------------------------------------------
+        Fault("order_by names a Timesheet Entry field that does not exist",
+              True, [
+                  (QF_PAPI,
+                   '                "employee": user_to_filter\n            },\n            order_by="check_in_time"',
+                   '                "employee": user_to_filter\n            },\n            order_by="date desc"')]),
+        Fault("group_by names an Activity field that does not exist", True, [
+                  (QF_SAPI,
+                   '            order_by="activity_name"',
+                   '            group_by="assigned_to",\n            order_by="activity_name"')]),
+
+        # --- the fieldname positions ---------------------------------------
+        Fault("db.get_value's third positional names an Account field that "
+              "does not exist", True, [
+                  (QF_ACC,
+                   '            is_group = frappe.db.get_value("Account", self.parent_account, "is_group")',
+                   '            is_group = frappe.db.get_value("Account", self.parent_account, "is_group_account")')]),
+        Fault("db.get_value's third positional is a list, and one entry of "
+              "it does not exist", True, [
+                  (QF_ACC,
+                   '            parent_company = frappe.db.get_value("Account", self.parent_account, "company")',
+                   '            parent_company = frappe.db.get_value("Account", self.parent_account, ["company", "cost_centre"])')]),
+        Fault("db.set_value's scalar form writes a Purchase Invoice field "
+              "that does not exist", True, [
+                  (QF_PINV,
+                   '            frappe.db.set_value("Purchase Invoice", docname, "status", "Submitted")',
+                   '            frappe.db.set_value("Purchase Invoice", docname, "state", "Submitted")')]),
+        Fault("db.set_value's dict form writes a Sales Invoice field that "
+              "does not exist", True, [
+                  ("erplite/xero/accounts.py",
+                   '                frappe.db.set_value("Sales Invoice", sales_invoice.name, {',
+                   '                frappe.db.set_value("Sales Invoice", sales_invoice.name, {\n                    "xero_pushed_on": None,')]),
+        Fault("the fieldname given by keyword rather than by position -- the "
+              "form this app already uses in xero/api.py", True, [
+                  (QF_XAPI,
+                   '                                    fieldname="creation",',
+                   '                                    fieldname="synced_at",')]),
+
+        # --- exists / count / pluck ----------------------------------------
+        Fault("db.exists filters on a Timesheet Entry field that does not "
+              "exist, so the guard is permanently off", True, [
+                  (QF_TSE,
+                   '        if not self.check_in_time:\n            return',
+                   '        if frappe.db.exists("Timesheet Entry", {"date": self.name}):\n            return')]),
+        Fault("db.count filters on a Schedule Entry field that does not "
+              "exist", True, [
+                  (QF_SENT,
+                   'frappe.get_all("Schedule Entry",',
+                   'frappe.db.count("Schedule Entry", filters={"booked_by": 1}) and frappe.get_all("Schedule Entry",')]),
+        Fault("pluck names an Activity field that does not exist", True, [
+                  (QF_SAPI,
+                   '            fields=["name", "activity_name", "status"],',
+                   '            pluck="subject",')]),
+
+        # --- the sweep has to reach every corner of the app ----------------
+        Fault("the bad query is in a www/ page controller, not a DocType or "
+              "an api module", True, [
+                  ("erplite/www/todo/index.py",
+                   '    users = frappe.get_all("User",',
+                   '    frappe.get_all("Project", fields=["project_manager"])\n    users = frappe.get_all("User",')]),
+        Fault("the bad query is in a patch, which runs once against real "
+              "data and is the worst place for a silent orphan read", True, [
+                  ("erplite/patches/declare_todo_status_options.py",
+                   '    setter.db_set("is_system_generated", 1, update_modified=False)',
+                   '    frappe.get_all("Project", filters={"project_manager": 1})\n    setter.db_set("is_system_generated", 1, update_modified=False)')]),
+        Fault("the bad query is in a dashboard widget module", True, [
+                  ("erplite/projects/dashboard_widgets.py",
+                   'from frappe import _',
+                   'from frappe import _\n\n\ndef _widget_totals():\n    return frappe.get_all("Activity", fields=["subject"])')]),
+
+        # --- the doctype has to be recognised however it is passed ---------
+        # Written first as the keyword form alone, which names no undeclared
+        # field and so gives the sweep nothing to find -- a fault that changes
+        # the shape but not the violation proves only that the shape parses.
+        Fault("the DocType is passed as a keyword, so the call has no "
+              "positional arguments at all", True, [
+                  (QF_SROLE,
+                   '\t\tschedule_rows_using_role = frappe.get_all("Schedule Row", \n\t\t\tfilters={"role": self.name},\n\t\t\tfields=["name"]',
+                   '\t\tschedule_rows_using_role = frappe.get_all(doctype="Schedule Row",\n\t\t\tfilters={"role": self.name},\n\t\t\tfields=["booked_by"]')]),
+
+        # --- a file the sweep cannot read is a hole in it ------------------
+        Fault("a file carrying a bad query is left unparseable, so the sweep "
+              "skips it instead of reporting that it cannot see it", True, [
+                  (QF_SAPI,
+                   '            fields=["name", "activity_name", "status"],',
+                   '            fields=["name", "subject", "status"],\n            (')]),
+
+        # --- negative controls ---------------------------------------------
+        Fault("CONTROL: a local renamed in a swept file, same query, same "
+              "fields", False, [
+                  (QF_SROLE,
+                   '\t\t\tresource_names = list(set([r.parent for r in resources_using_role]))\n\t\t\tfrappe.throw(f"Cannot delete role. It is used by resources: {\', \'.join(resource_names)}")',
+                   '\t\t\tused_by = list(set([r.parent for r in resources_using_role]))\n\t\t\tfrappe.throw(f"Cannot delete role. It is used by resources: {\', \'.join(used_by)}")')]),
+        Fault("CONTROL: a declared field added to a fields list", False, [
+                  (QF_SAPI,
+                   '        fields=["name", "project_name", "status", "project_lead", "division"],',
+                   '        fields=["name", "project_name", "status", "project_lead", "division", "project_code"],')]),
+        Fault("CONTROL: a standard column every table has, named explicitly",
+              False, [
+                  (QF_TSE,
+                   '            fields=["name", "check_in_time", "project", "activity"]',
+                   '            fields=["name", "check_in_time", "project", "activity", "modified_by"]')]),
+        Fault("CONTROL: an alias and a SQL expression, which the sweep must "
+              "not judge", False, [
+                  (QF_SAPI,
+                   '            fields=["name", "activity_name", "status"],',
+                   '            fields=["name", "activity_name as subject", "count(name) as n", "status"],')]),
+    ],
+)
+
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -2997,4 +3194,5 @@ TARGETS = {
     "select_values": SELECT_VALUES,
     "todo_status_patch": TODO_STATUS_PATCH,
     "afterz_workflow": AFTERZ_WORKFLOW,
+    "query_fields": QUERY_FIELDS,
 }
