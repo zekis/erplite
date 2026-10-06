@@ -203,16 +203,31 @@ Three habits earn their keep:
   it.
 
 * **When the thing under test is a *detector*, the faults are the bug it was
-  written to find — and the question changes shape.** Eight of the nine targets
-  here ask of a behavioural rule: would this test notice if the rule broke? The
-  ninth (`post_save_writes`) asks it of a whole-app sweep, and there the useful
-  question is not "is the rule pinned" but **"what can real code do that this
-  detector cannot see?"** You cannot answer it from the detector's own unit
-  tests, because those are synthetic fixtures the author wrote: they pin the
-  shapes the author thought of, and are silent by construction about the ones
-  they did not. The answer only comes from planting real ones in real source.
-  Eight of eleven exceptions in that target's first run were shapes nobody had
-  thought of — including `self.set("status", x)`, frappe's own setter.
+  written to find — and the question changes shape.** Most targets here ask of a
+  behavioural rule: would this test notice if the rule broke? A few ask it of a
+  whole-app sweep instead, and there the useful question is not "is the rule
+  pinned" but **"what can real code do that this detector cannot see?"** You
+  cannot answer it from the detector's own unit tests, because those are
+  synthetic fixtures the author wrote: they pin the shapes the author thought of,
+  and are silent by construction about the ones they did not. The answer only
+  comes from planting real ones in real source. Eight of eleven exceptions in
+  `post_save_writes`'s first run were shapes nobody had thought of — including
+  `self.set("status", x)`, frappe's own setter.
+
+* **Which targets are detectors is worth counting, and the two markers for it
+  disagree.** Three carry live `KNOWN BLIND SPOT` faults: `post_save_writes`
+  (four), `string_refs` (three) and `select_values` (four). Five test files carry
+  a "What this cannot see" section: those of `post_save_writes`, `select_values`,
+  `raw_sql`, `read_shapes` and `todo_status_patch`. **The two sets are not the
+  same**, and each difference says something. `string_refs` has three deliberate
+  blind spots and no section telling its reader so. `todo_status_patch` has the
+  section and no live blind spots left, because it **closed all five** it once
+  had — they survive as comments naming the test that closed each. So a blind
+  spot is not a fixed property of a detector: it is a position, and it can be
+  given up later. Count from the fault list
+  (`grep 'KNOWN BLIND SPOT' faults.py`), which is current by construction,
+  rather than from the prose here — the sentence this paragraph replaced read
+  "eight of the nine targets here" long after there were twenty-five.
 * **A detector needs a third verdict, and conflating it with a control is a
   reporting bug.** `run.py` has two: red-expected and green-expected, and
   green-expected reads as "equivalent edit, no bug here". For a detector some
@@ -233,7 +248,7 @@ breaking the code.
 
 ## Targets
 
-Twenty-four so far, 606 injections: edits applied to the app's real source, with
+Twenty-five so far, 621 injections: edits applied to the app's real source, with
 `run.py` watching one test file go red.
 
 Those two numbers are counted from `faults.py`, not kept by hand. They said
@@ -2341,3 +2356,78 @@ test file instead of implemented. And frappe's full DocType list is not in this
 repository, so a `Link` whose options names something outside the app is judged
 by the set of such names being exactly the six measured ones — a seventh is
 either a real new dependency or the typo the check is for.
+
+### `status_literals` — `tests/offline/test_status_literals.py`
+
+Twenty-fifth target, and it closes an omission of mine. This test file shipped
+in `3000436` with four tests, reporting a safety nothing had checked, and **no
+target to drive it** — one of the nine files `ea35eb6` counted as undriven, and
+the only one of those whose missing target was the fault of whoever wrote the
+test.
+
+**The rule: a client script must never name a value its Select field cannot
+hold.** Nothing in frappe compares a string in a `.js` file against a DocType's
+`options`, so a stale status name is valid JavaScript that quietly decides the
+wrong thing for as long as nobody looks. Of the 24 sites swept when the test was
+written, **seven named an impossible value** and not one had ever been reported,
+because none of them raise.
+
+**Why one fault cannot drive this rule: the same mistake has three different
+consequences, and the source cannot tell you which.** Only the frappe line can.
+
+* `frm.set_indicator_formatter` has **no fallback** — `form.js:1889`
+  interpolates the returned value straight into a class attribute, so a missed
+  key renders `class="indicator undefined"`.
+* The **same map** under `listview_settings.get_indicator` is harmless, because
+  `frappe.get_indicator` guards it: `indicator.js:90` is
+  `if (indicator) return indicator`, so falling off the end is skipped and
+  frappe renders the status itself.
+* But returning **an array with an `undefined` in it** passes that guard, because
+  a non-empty array is truthy. **Returning nothing is safe; returning a tuple
+  with a hole in it is not** — the opposite of what the two names suggest.
+
+So eight of the eleven red faults state the rule once per file that has a judged
+site, across both map shapes. The eighth is the only one where the JavaScript is
+innocent: an option is dropped from `trip.json`, leaving a **correct** client
+script naming a value that no longer exists. The metadata moved under the code.
+
+**The three faults that decide whether this target was worth having.** This test
+is a sweep, so the question from the detector note above applies to it: what can
+real code do that it cannot see? Two of these three are **behaviour-preserving
+edits that would be controls in any other target**, and are real regressions
+here:
+
+* a comparison chain refactored to `includes()` — identical behaviour, and it
+  takes the comparison **out of the sweep's reach**;
+* a colour map keyed through a call, so the `[doc.field]` shape stops matching
+  and the map shape **goes quiet**;
+* and a judged `Select` turned into a `Data` field, so every literal compared to
+  it stops being judged at all.
+
+All three are red, and **they are red because the test pins which sites it
+judged, not only what it found there.** That is the general answer to a
+detector's blind-spot problem: a finding count that can only fall silently is
+worth very little, so assert the reach alongside the findings. The `includes()`
+and keyed-map faults turn **three** tests red rather than one, because the
+coverage assertions go red with them.
+
+This is also why this target carries neither marker the detector note counts: it
+has no `KNOWN BLIND SPOT` faults and its test file has no "What this cannot see"
+section, because its reach is pinned by assertion instead of described in prose.
+**A third approach, and the cheapest to keep honest** — prose goes stale in
+place, and a coverage assertion cannot.
+
+**The four controls** are the edits that look exactly like the three above and
+change nothing: a correct literal's quotes going from double to single, a correct
+`===` becoming `==`, the colour map's variable being renamed, and a Select's
+options reordered without changing the set.
+
+**What this target does not reach**, as its own faults demonstrate rather than as
+a guess: the sweep matches syntactic shapes — `===`/`!==` against a literal, and
+`[doc.field]` map indexing — so a comparison written any other way is outside it,
+and the two faults above are caught by the coverage count dropping rather than by
+the sweep seeing the bad value. A status assembled at runtime, or compared inside
+a helper the sweep does not follow, is not judged at all.
+
+**What the run said:** 15 of 15 as expected, first run, against a baseline of
+4 passed.
