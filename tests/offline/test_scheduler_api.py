@@ -166,11 +166,26 @@ class TestGetProjectsAndActivities(SchedulerQueryTestCase):
     def test_no_orphaned_column_is_queried(self):
         """No query asks a DocType for a column that DocType no longer has.
 
-        Per DocType, not across all of them: see ORPHANED above. This loop is
-        not vacuous if no query is recorded -- it just passes over nothing --
-        but it cannot become so quietly: every other test in this class
-        asserts on data that only a recorded query can produce.
+        Per DocType, not across all of them: see ORPHANED above.
+
+        The stand-in's own field check is switched off for this one call, and
+        that is the only reason this test can fail. FakeFrappe.get_all records
+        the query and then validates its field names, raising UnknownField
+        before the call returns -- so with the check in place, execution never
+        reached the loop below and the red came entirely from the stand-in.
+        Measured rather than reasoned, 7 Oct 2026: with everything below the
+        loop deleted, all 28 faults in the `scheduler_api` fault-injection
+        target still behaved exactly as expected. This test had never been
+        able to fail, in the file whose subject it is.
+
+        With the check off, the six named columns are the one thing standing
+        between a query for an orphan and a pass -- and a `fields` orphan is
+        invisible to every other test here, because the alias loop overwrites
+        `subject` and nothing reads the rest. The stand-in stays the backstop
+        for every field name in every other test; this is the named guard for
+        these six, and it now does its own work.
         """
+        self.frappe._check_fields = lambda *args, **kwargs: None
         self.api.get_projects_and_activities()
 
         for query in self.frappe.queries:
