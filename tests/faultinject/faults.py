@@ -5266,7 +5266,7 @@ SCHEDULER_API = Target(
         # adding a key nobody reads.
         Fault("orphan in a filter, not in fields (Project.project_manager)", True, [
             (SAPI, SA_PROJ_FILTERS,
-             '        filters={"status": ["!=", "Archived"], "project_manager": "zeke@company.test"},\n')]),
+             '        filters={"status": ["!=", "Archived"], "project_manager": "pat@company.test"},\n')]),
         Fault("orphan in order_by: Activity ordered by subject again, which is "
               "the regression this file was written for", True, [
                   (SAPI, SA_ACT_ORDER, '            order_by="subject"\n')]),

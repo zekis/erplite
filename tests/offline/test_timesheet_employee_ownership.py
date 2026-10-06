@@ -64,7 +64,7 @@ CONTROLLER = os.path.join(
     APP_ROOT, "erplite", "projects", "doctype", "timesheet_entry", "timesheet_entry.py")
 API = os.path.join(APP_ROOT, "erplite", "projects", "api.py")
 
-YOU = "zeke@company.test"
+YOU = "pat@company.test"
 COLLEAGUE = "approver@company.test"
 
 

@@ -209,7 +209,7 @@ class TripTestCase(unittest.TestCase):
     """
 
     def setUp(self):
-        self.frappe = FakeFrappe(session_user="zeke@company.test")
+        self.frappe = FakeFrappe(session_user="pat@company.test")
         self.module = load_trip(self.frappe)
         self.rows = {}        # name -> stored dict, stands in for tabTrip
         self.hooks_run = []
@@ -217,7 +217,7 @@ class TripTestCase(unittest.TestCase):
     # -- the driver ----------------------------------------------------------
     def new_trip(self, **data):
         base = dict(name="TRIP-2026-00001", trip_name="Novalith site visit",
-                    destination="Perth", primary_traveler="Zeke Tierney",
+                    destination="Perth", primary_traveler="Pat Quinn",
                     status="Planned", naming_series="TRIP-.YYYY.-")
         base.update(data)
         return make_doc(self.module.Trip, "Trip", "projects", "trip", base)
