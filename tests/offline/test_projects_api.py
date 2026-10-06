@@ -98,7 +98,20 @@ class ActivityQueryTestCase(unittest.TestCase):
                   description="", project="other01", status="Open", _assign='["%s"]' % USER),
             _dict(name="act_other_user", activity_name="Someone else's activity",
                   description="", project="other01", status="Open", _assign='["%s"]' % OTHER),
+            # Assigned to USER, on the archived project. Without this row no
+            # fixture activity sat on an excluded project, so the calendar's
+            # `"project": ["in", list(result)]` filter could be deleted with
+            # all 28 tests green -- and live that is a KeyError into the
+            # endpoint's own `except Exception`, i.e. a silently empty
+            # calendar. A fixture that cannot reach a guard cannot test it.
+            _dict(name="act_on_archived", activity_name="Activity on a shelved project",
+                  description="", project="dead01", status="Open",
+                  _assign='["%s"]' % USER),
         ]
+        # Three of these exist to reach the admin dialog's filters, which had
+        # no fixture able to fail them: the dialog reads every activity on
+        # every live project, so a ToDo that must be ignored has to be ignored
+        # *there* as well as on the calendar.
         self.frappe.tables["ToDo"] = [
             _dict(name="todo1", reference_type="Activity", reference_name="g68cfomvvu",
                   allocated_to=USER, status="Open"),
@@ -106,6 +119,15 @@ class ActivityQueryTestCase(unittest.TestCase):
                   allocated_to=USER, status="Open"),
             _dict(name="todo3", reference_type="Activity", reference_name="act_other_user",
                   allocated_to=OTHER, status="Open"),
+            _dict(name="todo_archived", reference_type="Activity", reference_name="act_on_archived",
+                  allocated_to=USER, status="Open"),
+            # Cancelled: _assign does not list it, so neither endpoint may.
+            _dict(name="todo_cancelled", reference_type="Activity",
+                  reference_name="act_unassigned", allocated_to=OTHER, status="Cancelled"),
+            # A ToDo with no assignee at all. Counting it makes `None` an
+            # assignee, which the dialog then renders as a user.
+            _dict(name="todo_unallocated", reference_type="Activity",
+                  reference_name="act_unassigned", allocated_to=None, status="Open"),
         ]
         self.api = load_api(self.frappe)
 
@@ -177,6 +199,31 @@ class TestGetProjectsAndActivities(ActivityQueryTestCase):
         self.assertIn("5gofgdoomv", result)
         self.assertIn("other01", result)
         self.assertNotIn("dead01", result)
+
+    def test_an_activity_on_an_archived_project_is_not_returned(self):
+        """The calendar confines activities to the projects it listed.
+
+        `act_on_archived` is assigned to USER and sits on the archived project,
+        so the ToDo query finds it and only the
+        `"project": ["in", list(result)]` filter keeps it out. Delete that
+        filter and `result[activity.project]` is a KeyError on a project that
+        was never put in the dict -- which the endpoint's own
+        `except Exception` turns into an empty `{}`, i.e. a calendar with
+        nothing in it and no error anywhere a user can see.
+
+        The positive assertions are what make this bite: with the filter gone
+        the endpoint returns `{}`, in which "dead01" is also absent.
+        """
+        result = self.api.get_projects_and_activities()
+
+        self.assertIn("5gofgdoomv", result, "the endpoint did not complete")
+        self.assertIn("other01", result)
+        self.assertNotIn("dead01", result)
+        self.assertEqual([], self.frappe.errors, "an exception was caught and logged")
+
+        listed = {a["name"] for entry in result.values() for a in entry["activities"]}
+        self.assertNotIn("act_on_archived", listed)
+        self.assertIn("g68cfomvvu", listed, "the assigned activities are still listed")
 
     def test_admin_can_view_another_users_activities(self):
         result = self.api.get_projects_and_activities(target_user=OTHER)
@@ -252,6 +299,64 @@ class TestGetAllProjectsAndActivities(ActivityQueryTestCase):
         self.assertEqual({USER, OTHER}, set(activity["assigned_users"]))
         self.assertIn(activity["assigned_to"], (USER, OTHER))
 
+    def test_archived_projects_are_excluded(self):
+        """The same rule as the calendar's, on the endpoint that never asserted it.
+
+        Both endpoints filter Project by `["!=", "Archived"]`. Only the
+        calendar was ever asked about it, so the dialog's copy could be
+        deleted with every test green. As above, the positive assertions
+        matter: this endpoint returns {"success": False, ...} on an
+        exception, and "dead01" is absent from that too.
+        """
+        response = self.api.get_all_projects_and_activities()
+
+        self.assertTrue(response["success"], response.get("message"))
+        self.assertIn("5gofgdoomv", response["data"])
+        self.assertIn("other01", response["data"])
+        self.assertNotIn("dead01", response["data"])
+
+    def test_cancelled_and_closed_assignments_are_not_reported_as_current(self):
+        # _assign is maintained from ToDos that are neither Cancelled nor
+        # Closed. The dialog shows who is assigned, so it has to agree with
+        # _assign or the admin is shown an assignee the document does not have.
+        for status in ("Cancelled", "Closed"):
+            self.frappe.tables["ToDo"][4]["status"] = status
+            activities = self._activities_by_name()
+
+            self.assertEqual(
+                [], activities["act_unassigned"]["assigned_users"],
+                "a %s ToDo was reported as a current assignee" % status,
+            )
+            self.assertIsNone(activities["act_unassigned"]["assigned_to"])
+
+    def test_an_unallocated_todo_is_not_reported_as_an_assignee(self):
+        # todo_unallocated is Open but has allocated_to unset. Counting it puts
+        # None in assigned_users and makes assigned_to None-but-assigned, which
+        # the dialog renders as a user who does not exist.
+        activities = self._activities_by_name()
+
+        self.assertEqual([], activities["act_unassigned"]["assigned_users"])
+        self.assertNotIn(None, activities["act_unassigned"]["assigned_users"])
+
+    def test_keeps_a_subject_alias_for_older_front_end_code(self):
+        # Same reason as the calendar's alias test: the assignment dialog's
+        # older code reads activity.subject. Asserted on the calendar only,
+        # so the dialog's copy of the alias was free to be dropped.
+        activities = self._activities_by_name()
+        activity = activities["g68cfomvvu"]
+
+        self.assertEqual(activity["activity_name"], activity["subject"])
+        self.assertIsNotNone(activity["subject"])
+
+    def _activities_by_name(self):
+        response = self.api.get_all_projects_and_activities()
+        self.assertTrue(response["success"], response.get("message"))
+        return {
+            a["name"]: a
+            for project in response["data"].values()
+            for a in project["activities"]
+        }
+
     def test_access_is_denied_to_a_non_admin(self):
         self.frappe._roles = []
         self.api = load_api(self.frappe)
@@ -292,13 +397,18 @@ class TestAssignActivitiesToUser(ActivityQueryTestCase):
         self.api.assign_activities_to_user(
             OTHER, [{"activity_id": "act_unassigned", "assign": True}]
         )
+        # Named by assignee, not just by activity. Counting every open ToDo on
+        # the activity counted the unallocated fixture row too, which is not
+        # what this test is about: the claim is that OTHER ends up with exactly
+        # one open ToDo for it.
         todos = [
             t for t in self.frappe.tables["ToDo"]
-            if t["reference_name"] == "act_unassigned" and t["status"] == "Open"
+            if t["reference_name"] == "act_unassigned"
+            and t["status"] == "Open"
+            and t["allocated_to"] == OTHER
         ]
 
         self.assertEqual(1, len(todos))
-        self.assertEqual(OTHER, todos[0]["allocated_to"])
 
     def test_unassigning_cancels_the_todo(self):
         response = self.api.assign_activities_to_user(
@@ -339,12 +449,63 @@ class TestAssignActivitiesToUser(ActivityQueryTestCase):
         self.assertIn("1", response["message"])
 
     def test_a_blank_activity_id_is_skipped(self):
+        """A blank id assigns nothing and does not raise, however it is blank.
+
+        `assign_activities_to_user` rejects a blank id twice over: explicitly
+        with `if not activity_id: continue`, and again because
+        `frappe.db.exists` does not match one. Deleting the explicit guard
+        leaves this test green, and that is correct rather than a gap -- see
+        the CONTROL in tests/faultinject/faults.py. So this asserts the
+        behaviour (nothing is assigned, nothing raises) and deliberately not
+        which of the two rejections did it.
+
+        Both blank forms are covered because they take different paths through
+        frappe: `None` is read as a Single DocType and never reaches the
+        Activity table at all, while `""` becomes a real `WHERE name = ''`.
+        """
+        for blank in (None, ""):
+            with self.subTest(blank=blank):
+                self.frappe.assignments_added = []
+                response = self.api.assign_activities_to_user(
+                    OTHER, [{"activity_id": blank, "assign": True}]
+                )
+
+                self.assertTrue(response["success"], response.get("message"))
+                self.assertEqual([], self.frappe.assignments_added)
+                self.assertEqual([], self.frappe.assignments_removed)
+
+    def test_omitting_assign_leaves_the_activity_alone_rather_than_assigning(self):
+        # `assignment.get('assign', False)` -- the default is the only thing
+        # making an omitted key safe, and every other test supplies the key, so
+        # the default could be flipped to True unnoticed. A default is only
+        # tested by a caller that omits it.
         response = self.api.assign_activities_to_user(
-            OTHER, [{"activity_id": None, "assign": True}]
+            OTHER, [{"activity_id": "act_unassigned"}]
         )
 
-        self.assertTrue(response["success"])
-        self.assertEqual([], self.frappe.assignments_added)
+        self.assertTrue(response["success"], response.get("message"))
+        self.assertEqual(
+            [], self.frappe.assignments_added,
+            "an omitted 'assign' key assigned the activity",
+        )
+        self.assertEqual(
+            [("Activity", "act_unassigned", OTHER)], self.frappe.assignments_removed
+        )
+
+    def test_unassignments_are_counted_in_the_reported_total(self):
+        # The count is what the dialog shows the admin. Counting only
+        # assignments reports "updated 0" for a save that really did unassign
+        # two activities, which reads as a save that silently did nothing.
+        response = self.api.assign_activities_to_user(
+            USER, [
+                {"activity_id": "g68cfomvvu", "assign": False},
+                {"activity_id": "act_other_proj", "assign": False},
+            ]
+        )
+
+        self.assertTrue(response["success"], response.get("message"))
+        self.assertEqual(2, len(self.frappe.assignments_removed))
+        self.assertIn("2", response["message"])
 
     def test_access_is_denied_to_a_non_admin(self):
         self.frappe._roles = []

@@ -233,14 +233,15 @@ breaking the code.
 
 ## Targets
 
-Sixteen so far, 478 injections: edits applied to the app's real source, with
+Seventeen so far, 504 injections: edits applied to the app's real source, with
 `run.py` watching one test file go red.
 
-One other test file does fault injection of its own, inside the file —
-`test_projects_api.py`. It plants shapes in its own fixtures rather than editing
-the app, so `run.py` does not drive it, and what it proves is narrower: that the
-sweep reads what its author planted. `string_refs` below is what that
-distinction costs.
+**That list of files doing fault injection of their own is now empty.**
+`test_projects_api.py` was the last of them — it planted shapes in its own
+fixtures rather than editing the app, so what it proved was narrower: that the
+sweep reads what its author planted. It is the seventeenth target, and driving
+it found **seven regressions it did not notice**. `string_refs` below is what
+that distinction costs.
 
 `test_afterz_timesheet_workflow.py` was in that list until the thirteenth
 target. It had a test named "the fault-injection half, so a green run above
@@ -271,6 +272,146 @@ were green anyway** — because that half asks the rule one question, about one
 field, at one call site, and the nine live everywhere else. Driving a file that
 tests itself is not redundant with the file testing itself. It is the only way
 to find out what the file's own questions do not cover.
+
+### `projects_api` — `tests/offline/test_projects_api.py`
+
+The three whitelisted endpoints behind the timesheet calendar and the admin
+assignment dialog, reading Activity through Frappe's standard assignment
+mechanism (a ToDo row per assignee). **26 injections, eight of them green:
+seven real gaps, and one fault that turned out to be a control** (the
+correction is below, and it is the part of this target worth reading). That
+leaves 21 faults and 5 controls.
+
+**Four of the eight greens are on the admin dialog, and three of those are
+rules the calendar asserts and the dialog did not.**
+`get_projects_and_activities` (the calendar) and
+`get_all_projects_and_activities` (the dialog) each exclude archived projects,
+each exclude Cancelled and Closed ToDos, and each alias `activity_name as
+subject`. Every one of those three was asserted on the calendar and **none of
+them on the dialog**. Delete all three from the dialog and all 28 tests passed.
+
+That is the thirteenth target's approve/reject finding one level up. There it
+was two copies of a rule forty lines apart in one function pair; here it is two
+copies **across two endpoints**, far enough apart and differently enough named
+that they read as separate features rather than as one rule twice. **The second
+copy of a rule is free to be wrong for exactly as long as nobody asks it the
+questions the first one was asked** — and "far apart, different name" is what
+stops anyone asking. The cheap tell from the thirteenth target applies
+unchanged: a search pattern that needs its trailing context in it to match once
+is the code telling you there are two copies. Both "Get all projects" blocks
+here are byte-identical, so every pattern in this target carries the line that
+follows the block.
+
+**Three of the eight closed with no new assertion at all — the fixture was the
+hole.** (The dialog's Cancelled/Closed and unallocated-ToDo gaps, and the
+calendar's project confinement.) The dialog's existing test already asserted that `act_unassigned` has no
+assignees, and the calendar's already asserted that no error was swallowed.
+They could not fail, because no fixture row could reach the rule: there was no
+Cancelled ToDo and no unallocated ToDo anywhere the dialog looks, and no
+activity at all on the archived project. Adding those three rows turned three
+assertions that were already written into three assertions that bite. **An
+assertion a fixture cannot reach is decoration**, and it is cheaper to audit
+fixtures for unreachable cases than to write new tests for them.
+
+The archived-project row is the sharpest of the three, because the consequence
+is not a wrong answer but a blank screen. The calendar confines activities to
+the projects it listed with `"project": ["in", list(result)]`. With no fixture
+activity on an excluded project that filter deleted nothing; live it is a
+`KeyError` on a project never put in the dict, straight into the endpoint's own
+`except Exception`, which returns `{}` — **a silently empty calendar with no
+error a user can see.**
+
+**And the dialog needed the absence lesson this file already carried, in the
+place it had not been applied.** The calendar's archived-project test says in
+its own docstring that asserting only `assertNotIn("dead01", ...)` is satisfied
+by the endpoint failing outright. The dialog returns `{"success": False,
+"message": ...}` on an exception, in which "dead01" is equally absent — so its
+new test names the projects that must be there as well as the one that must
+not. A lesson written down in a file is not thereby applied to the rest of it.
+
+**The one worth copying, and it is a correction to me rather than to the code.**
+`assign_activities_to_user` opens with `if not activity_id: continue`. Delete it
+and all 28 tests passed, which reads as a test gap: the `frappe.db.exists` check
+below only appears to catch the same case.
+
+I was about to report it as the target's most interesting finding — *a stand-in
+kinder than the framework turns a load-bearing guard into dead code* — on this
+reasoning: `fake_frappe.exists` is `any(r.get("name") == name for r in rows)`,
+which is `False` for a blank name, whereas real `exists(dt, dn)` calls
+`get_value(dt, dn, ...)` and `get_value`'s own docstring says a `filters` of
+`None` means **Single DocType**, i.e. no WHERE clause — so live it would return
+the first Activity row and be truthy, making the guard the only thing between a
+blank id and an assignment against an arbitrary activity.
+
+**That is wrong, and one more step down the code path says so.** In frappe
+15.52.0:
+
+    exists(dt, dn)  ->  get_value(dt, dn, ignore=True, ...)   database.py:1259
+    get_values:  if (filters is not None) and (filters != doctype or ...)  :612
+
+`None` and `""` take **different branches of that line**, and neither does what
+I claimed:
+
+* `dn is None` fails the test, so it goes to the `else` — `get_values_from_single`,
+  which reads `tabSingles`. Activity is not a Single DocType, so there is
+  nothing there and the answer is `None`. It never reaches the Activity table
+  at all; there is no filter-less read of it to be had.
+* `dn == ""` passes the test, reaches the table, and `apply_filters` turns a
+  bare string into `{"name": str(filters)}` (`query.py:122`) — a real
+  `WHERE name = ''`, which matches nothing.
+
+Verified read-only on the live site, which holds 23 Activity rows, so a
+first-row read would have returned one:
+
+    exists("Activity", None) -> None        exists("Activity", "") -> None
+    exists("Activity", "g68cfomvvu") -> 'g68cfomvvu'
+
+**So the stand-in's `False` was faithful, and the guard really is redundant.**
+The fault is a **control**, and it is in the control list now with that
+measurement beside it. The behavioural test keeps both blank forms — they take
+different paths through frappe, so both are worth asserting — and deliberately
+does not assert *which* of the two rejections did the work, because a test that
+pinned the explicit guard would be pinning an internal.
+
+**The transferable part is about where the claim came from.** The sentence that
+misled me was a docstring: *"Filters like `{"x":"y"}` or name of the document.
+`None` if Single DocType."* It is accurate, and it describes the parameter, not
+the branch. I turned "None means Single DocType" into "None means no WHERE
+clause", which sounds like the same thing and is not — the Single path does not
+query that table at all. **A docstring tells you what an argument means; only
+the code tells you what the function does with it.** Same shape as the
+fourteenth target's reminder that a green fault is a question rather than a
+verdict: this green was the code answering correctly and me preparing to
+overrule it. The fourth target in a row where the lesson is *check the
+instrument before reporting the reading*, and this time the instrument was my
+own inference from a line of prose.
+
+Worth saying plainly, because it is the reason any of this was caught: the claim
+was going into a pull request as a statement about production, so it had to be
+verified on production rather than reasoned about. **If a finding is only true
+given something you have not measured, it is not a finding yet.**
+
+**A default is only tested by a caller who omits it.**
+`assignment.get('assign', False)` could be flipped to `True` with everything
+green, because every test supplied the key. Flipped, a dialog save that meant
+"leave this alone" assigns instead. The same shape as the thirteenth target's
+one-person fixture: not a rule nobody wrote a test for, a rule no test was
+*shaped* to reach.
+
+**And a count the dialog shows a human.** `updated_count` could be changed to
+count assignments only, with nothing red, because no test read the number back
+after an unassignment. A save that really did unassign two activities then
+reports "updated 0", which reads as a save that silently did nothing — a bug
+whose entire symptom is a message, and messages are the part of an endpoint
+tests most often leave unread.
+
+**What this target does not reach.** That `frappe.db.exists(dt, None)` really
+returns the first row needs the live site; it is read from frappe's own
+`database.py` and stated here as the reason the guard matters, not asserted by
+any test. The endpoints' `except Exception` wrappers are pinned as they stand —
+`test_no_error_was_swallowed` in both classes is what stops a fault hiding
+inside them — and whether an endpoint that returns `{}` on failure should
+instead raise is a decision about the app, not something a test should settle.
 
 ### `mandatory_fields` — `tests/offline/test_mandatory_fields_on_insert.py`
 
