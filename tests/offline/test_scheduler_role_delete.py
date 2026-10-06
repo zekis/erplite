@@ -56,6 +56,25 @@ question and not this change. They are left exactly as they are and pinned in
 `TestWhatIsStillBroken` so the scope is recorded rather than forgotten.
 `test_scheduler_read_gate.py` already holds `get_role_resources`' exemption
 from the read gate for the same reason.
+
+WHAT FAULT INJECTION ADDED (6 Oct 2026, nineteenth target)
+----------------------------------------------------------
+Sixteen injections against this file, fourteen of which it noticed. The two it
+did not are now `TestARenamedRoleIsStillGuarded` and
+`TestTheGuardDoesNotDependOnWhoIsDeleting`, and neither was a case nobody had
+thought of -- both were cases every fixture here made unreachable:
+
+  * every fixture gives the role the same string for `name` and `role_name`,
+    so filtering the guard on the label instead of the link target passed
+    every test in the file; and
+  * every fixture is a System Manager, who holds both the delete on Scheduler
+    Role and the read on Schedule Row, so moving the integrity read from
+    `get_all` to `get_list` -- which breaks the delete outright for a
+    Scheduler Manager, who holds the first and not the second -- passed every
+    test in the file as well.
+
+Auditing a fixture for the cases it cannot reach is cheaper than thinking of
+new assertions, and it is where both of these were.
 """
 
 import ast
@@ -256,6 +275,155 @@ class TestTheTestWouldHaveCaughtIt(SchedulerRoleDeleteTestCase):
         rows = self.frappe.get_all("Schedule Row",
                                    filters={"role": ROLE}, fields=["name"])
         self.assertEqual([r["name"] for r in rows], ["SCH-ROW-2026-00001"])
+
+
+class TestARenamedRoleIsStillGuarded(SchedulerRoleDeleteTestCase):
+    """The guard must filter on the link target, not on the label.
+
+    `Schedule Row.role` is a Link to Scheduler Role, so it holds the role's
+    **`name`**. The row also carries `role_name`, a read-only Data field with
+    `fetch_from: "role.role_name"` -- the label, denormalised onto the row.
+    For a role nobody has renamed the two are the same string, which is why
+    the fixtures above cannot tell them apart: a guard filtering on
+    `self.role_name` instead of `self.name` passes every other test in this
+    file. Found by fault injection, which is the only reason it is here.
+
+    They come apart on a rename, and that is a supported operation on this
+    DocType rather than a hypothetical: `scheduler_role.json` declares
+    `"allow_rename": 1` alongside `"autoname": "field:role_name"`, so the
+    name is seeded from the label once, at insert, and can be changed
+    afterwards without touching it. `frappe.rename_doc` updates the Link
+    columns that point at the old name, so the schedule rows follow the
+    document and hold the **new name** -- never the label. A guard reading the
+    label then finds no rows, and the role is deleted out from under the
+    schedule entries using it, which is precisely the orphan the guard exists
+    to prevent.
+    """
+
+    LABEL = "Senior Systems Engineer"   # role_name, seeded the name at insert
+    NAME = "SSE"                        # what a later rename left behind
+
+    def setUp(self):
+        super(TestARenamedRoleIsStillGuarded, self).setUp()
+        self.frappe.tables["Scheduler Role"] = [
+            {"name": self.NAME, "role_name": self.LABEL, "role_code": "SSE",
+             "is_active": 1, "hourly_rate": 154.0},
+        ]
+
+    def renamed_role(self):
+        doc = make_doc(
+            self.module.SchedulerRole, "Scheduler Role", "scheduler",
+            "scheduler_role",
+            {"role_name": self.LABEL, "role_code": "SSE", "is_active": 1,
+             "hourly_rate": 154.0},
+            is_new=False,
+        )
+        doc.name = self.NAME
+        return doc
+
+    def row(self, name="SCH-ROW-2026-00001"):
+        """A schedule row as a rename leaves it: link = name, label = role_name."""
+        return {"name": name, "naming_series": "SCH-ROW-.YYYY.-",
+                "project": "5gofgdoomv", "role": self.NAME,
+                "role_name": self.LABEL, "total_hours": 8.0}
+
+    def test_the_fixture_really_tells_the_two_apart(self):
+        """Without this the two tests below could pass on either field."""
+        doc = self.renamed_role()
+        self.assertNotEqual(
+            doc.name, doc.role_name,
+            "this fixture exists to separate the link target from the label; "
+            "if they are equal again it proves nothing")
+
+    def test_a_renamed_role_in_use_cannot_be_deleted(self):
+        self.frappe.tables["Schedule Row"] = [self.row()]
+        doc = self.renamed_role()
+        with self.assertRaises(ValidationError) as caught:
+            doc.on_trash()
+        self.assertIn("1 schedule entries", str(caught.exception))
+
+    def test_the_guard_filters_on_the_name_the_rows_actually_hold(self):
+        self.frappe.tables["Schedule Row"] = [self.row()]
+        doc = self.renamed_role()
+        with self.assertRaises(ValidationError):
+            doc.on_trash()
+        self.assertEqual(self.frappe.queries[0].filters, {"role": self.NAME},
+                         "the Link column holds the name, so that is what the "
+                         "guard must ask for")
+
+
+class TestTheGuardDoesNotDependOnWhoIsDeleting(SchedulerRoleDeleteTestCase):
+    """The integrity read must ignore permissions, or the delete breaks again.
+
+    `frappe.get_all` is `frappe.get_list` with `ignore_permissions=True`
+    (`frappe/__init__.py:1993-2012`), and `get_list` refuses a user with no
+    read row -- `frappe.PermissionError`, not an empty list
+    (`db_query.py:114-115`). So which of the pair this one read uses decides
+    whether the guard's answer is a property of the data or of whoever is
+    deleting.
+
+    That is not a hypothetical here, and it needs no claim about frappe's
+    row-level narrowing. Straight off the two DocType JSONs in this repo:
+
+        Scheduler Role  delete: System Manager, Scheduler Manager
+        Schedule Row    read:   System Manager, Projects Manager, Projects User
+
+    **A `Scheduler Manager` may delete a Scheduler Role and has no read
+    permission on Schedule Row at all.** Move this read to `get_list` and
+    every delete by a Scheduler Manager raises PermissionError from inside
+    `on_trash` -- the defect this file was written for, in a different colour,
+    hitting the role most likely to be doing the deleting. Nothing else in
+    the file noticed, because its own fixture is a System Manager, who holds
+    both rights.
+    """
+
+    USER = "scheduler.manager@tierneymorris.com.au"
+
+    def a_scheduler_manager(self):
+        """A stand-in whose session user may delete roles and read no rows."""
+        frappe = FakeFrappe(session_user=self.USER, roles=["Scheduler Manager"])
+        frappe.tables["Scheduler Role"] = [
+            {"name": ROLE, "role_name": ROLE, "role_code": "SSE",
+             "is_active": 1, "hourly_rate": 154.0},
+        ]
+        frappe.tables["Schedule Row"] = []
+        return frappe, load_scheduler_role(frappe)
+
+    def role_of(self, module):
+        doc = make_doc(
+            module.SchedulerRole, "Scheduler Role", "scheduler",
+            "scheduler_role",
+            {"role_name": ROLE, "role_code": "SSE", "is_active": 1,
+             "hourly_rate": 154.0},
+            is_new=False,
+        )
+        doc.name = ROLE
+        return doc
+
+    def test_that_user_may_delete_a_role_and_may_not_read_schedule_rows(self):
+        """The two permission rows the tests below rest on, from the JSONs."""
+        frappe, _module = self.a_scheduler_manager()
+        self.assertTrue(
+            frappe.has_permission("Scheduler Role", "delete"),
+            "a Scheduler Manager is granted delete on Scheduler Role")
+        self.assertFalse(
+            frappe.has_permission("Schedule Row", "read"),
+            "and is granted nothing at all on Schedule Row -- if that "
+            "changes, this class is testing a user who no longer exists")
+
+    def test_a_role_in_use_is_still_refused_for_that_user(self):
+        frappe, module = self.a_scheduler_manager()
+        frappe.tables["Schedule Row"] = [self.schedule_row(ROLE)]
+        with self.assertRaises(ValidationError) as caught:
+            self.role_of(module).on_trash()
+        self.assertIn("1 schedule entries", str(caught.exception))
+
+    def test_an_unused_role_still_deletes_for_that_user(self):
+        frappe, module = self.a_scheduler_manager()
+        self.assertIsNone(self.role_of(module).on_trash(),
+                          "on_trash must not depend on the deleting user's "
+                          "read rows: that is what get_all is for")
+        self.assertEqual(frappe.messages, [])
 
 
 class TestWhatIsStillBroken(unittest.TestCase):

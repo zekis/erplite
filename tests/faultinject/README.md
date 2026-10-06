@@ -233,7 +233,7 @@ breaking the code.
 
 ## Targets
 
-Eighteen so far, 527 injections: edits applied to the app's real source, with
+Nineteen so far, 543 injections: edits applied to the app's real source, with
 `run.py` watching one test file go red.
 
 **That list of files doing fault injection of their own is now empty.**
@@ -358,6 +358,85 @@ hoisted local holding the *identical* literal (`query = """..."""` then
 is the blunt rule working: literal-or-not is decidable from the AST and
 "does caller input reach this" is not. The cost is now measured rather than
 asserted, which is the only honest way to carry a rule that rejects safe code.
+
+### `scheduler_role_delete` — `tests/offline/test_scheduler_role_delete.py`
+
+The nineteenth target, and the first to drive a file written for a **defect the
+owner had already decided**: `Scheduler Role.on_trash` opened with
+`frappe.get_all("Resource Role", ...)` against a DocType that has no table, so
+`get_table_columns` raised `TableMissingError` before any SQL ran and **every
+Scheduler Role was undeletable** (PR #44). The dead read is gone; the
+`Schedule Row` integrity check below it stays. Whether the file guarding that
+pair actually bites is the live question, because the whole change is one
+deletion and one thing left standing.
+
+Sixteen injections: the dead read coming back, the delete hook renamed, five
+ways to take the surviving guard apart, four ways to spoil the read it rests
+on, the two directions the recorded scope list can rot in, and three controls.
+**Fourteen went as expected and two did not** — and both greens were the same
+shape, which is why they are worth more than the count:
+
+**The fixture was the hole, not the assertion.** Neither green needed a new
+idea about what to assert. The file already asserted that the guard filters on
+the right role and that it refuses a role in use. Both assertions were simply
+unreachable for the case that mattered, because every fixture in the file
+closed it off.
+
+**1. A guard filtering on the label passes every test, because no fixture tells
+the label from the link.** `Schedule Row.role` is a Link to Scheduler Role, so
+it holds the role's `name`; the row also carries `role_name`, a read-only Data
+field with `fetch_from: "role.role_name"` — the same string, denormalised. Every
+fixture in the file gave the role one value for both, so
+`filters={"role": self.role_name}` was indistinguishable from
+`filters={"role": self.name}` and went green.
+
+They come apart on a rename, which `scheduler_role.json` declares as supported:
+`"allow_rename": 1` alongside `"autoname": "field:role_name"`, so the name is
+seeded from the label once, at insert, and can be changed afterwards without
+touching it. `frappe.rename_doc` updates the Link columns pointing at the old
+name, so the schedule rows follow the document and hold the **new name**, never
+the label. A guard reading the label then finds no rows and the role is deleted
+out from under the entries using it — exactly the orphan it exists to prevent.
+
+Closed by `TestARenamedRoleIsStillGuarded`, whose fixture is a renamed role, and
+by one assertion inside it that the two fields really differ — without which
+the class could quietly go back to proving nothing.
+
+**2. An integrity read must not consult the deleting user's permissions, and
+the only user who could show that was missing from the fixtures.**
+`frappe.get_all` is `get_list` with `ignore_permissions=True`, and `get_list`
+refuses a user with no read row — `PermissionError`, not an empty list. So the
+choice between the two decides whether the guard's answer is a property of the
+data or of whoever is deleting. Moving this one read to `get_list` went green.
+
+It needs no claim about frappe's row-level narrowing. Straight off the two
+DocType JSONs in this repo:
+
+| DocType | right | roles |
+| --- | --- | --- |
+| Scheduler Role | delete | System Manager, **Scheduler Manager** |
+| Schedule Row | read | System Manager, Projects Manager, Projects User |
+
+**A `Scheduler Manager` may delete a Scheduler Role and is granted nothing at
+all on Schedule Row.** Under `get_list`, every delete by one raises
+`PermissionError` from inside `on_trash` — PR #44's defect again, in a different
+colour, hitting the role most likely to be doing the deleting. Nothing noticed
+because every fixture in the file is a System Manager, who holds both rights.
+
+Closed by `TestTheGuardDoesNotDependOnWhoIsDeleting`, which drives `on_trash`
+as that user and asserts both halves: a role in use is still refused, and an
+unused one still deletes. Its first test asserts the two permission rows the
+other two rest on, so the class fails loudly rather than vacuously if the JSONs
+change. **Note what this is not**: an assertion that the source says `get_all`.
+Pinning the spelling would have gone red on the control that renames the local
+variable. The behaviour — the guard sees the rows whoever is deleting — is what
+is asserted.
+
+**What two of the sixteen could not be**: `test_the_source_really_parses` proves
+itself (it plants a syntax error and requires `SyntaxError`), and
+`test_no_resource_role_doctype_appeared` needs a **new file** to go red, which
+this harness cannot make — its edits are literal replacements in files that
+already exist. Both are noted here rather than silently uncovered.
 
 ### `projects_api` — `tests/offline/test_projects_api.py`
 
