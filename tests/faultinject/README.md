@@ -233,7 +233,7 @@ breaking the code.
 
 ## Targets
 
-Twenty-one so far, 569 injections: edits applied to the app's real source, with
+Twenty-two so far, 587 injections: edits applied to the app's real source, with
 `run.py` watching one test file go red.
 
 Those two numbers are counted from `faults.py`, not kept by hand. They said
@@ -288,6 +288,93 @@ were green anyway** — because that half asks the rule one question, about one
 field, at one call site, and the nine live everywhere else. Driving a file that
 tests itself is not redundant with the file testing itself. It is the only way
 to find out what the file's own questions do not cover.
+
+### `client_doctypes` — `tests/offline/test_client_doctypes.py`
+
+The twenty-second target, and the first to reach the browser for anything but a
+method path. `endpoint_wiring` judges whether a DocType literal names something
+real and `read_shapes` judges whether the call fits the kind of DocType -- both
+in `.py`. This one asks the first of those questions where nobody had asked it:
+in the 61 `.js` files the front end is actually made of.
+
+**Eighteen injections, thirteen red and five controls, all eighteen as expected**
+(baseline 25 passed; `run.py client_doctypes` exit 0). Six name a DocType that
+exists nowhere, one per shape the app uses: a form script, a list view's
+settings, a route, a client read, a `doctype:` key in the Vue app's resource, and
+a dialog's Link field. Two name a DocType that *does* exist but on the wrong
+form, which only the location rule can judge. Three move a literal into a
+variable, so the site leaves the sweep and only the measured floor notices. Two
+are desk URLs, below.
+
+**Two of these shapes fail in complete silence, and that is the argument for the
+target.** Read off frappe version-15 rather than from memory:
+`frappe.ui.form.on(doctype, ...)` pushes handlers into
+`frappe.ui.form.handlers[doctype]` through `get_event_handler_list`, which
+*creates* the bucket if it is not there (`script_manager.js:14-26`), and
+`get_handlers` only ever reads the bucket of the form being opened (`:154`). So a
+misspelt DocType registers every handler in the file where nothing will look:
+no error, no console line, the form simply does not do what its script says.
+`frappe.listview_settings[doctype]` is read as `|| {}` (`base_list.js:43`), so
+misnamed settings are silently absent. Compare `test_client_scripts.py`, the
+field half of the same class: `frm.set_value` on a missing field *throws* and
+puts a modal on the user's screen. A loud bug gets reported on the first click.
+
+**The gap that mattered was not another typo: it was the shape the patterns could
+not see.** All fifteen of the first injections landed first time, which measures
+the author's imagination and not the file, so the next move was a probe for what
+the sweep would miss. It found `/app/<slug>` desk URLs -- a DocType reference
+that does not look like one -- eight of them, and **six are in `.vue` files**,
+which nothing in this target was reading. The file's own docstring had said
+`.vue` carried no DocType references, measured; that was true of the six call
+shapes and false of the file, so the claim was corrected rather than kept.
+
+**The half of that rule that could reject correct code is the half worth
+describing.** `/app/` serves desk *pages* as well as DocTypes, and the app links
+to one (`/app/user-profile`). A rule reading every slug as a DocType would
+report that correct link as a fault. So the judgement is "neither a known
+DocType slug nor a page named in `DESK_PAGES`", one entry today, with a test
+asserting every entry is still linked to -- the same shape as
+`FOREIGN_DOCTYPES`'s `test_the_skip_list_is_still_needed_and_still_small`, for
+the same reason: an allowlist bigger than the problem is a way of silencing the
+rule it belongs to. `options:` is the other half of that question and is judged
+only inside a `Link`/`Table` field object, because on a `Select` it is a value
+list, on `Data` it is `Email`/`Phone`/`URL`, and on a `Dynamic Link` it is a
+*fieldname*. Four of the five controls exist to prove exactly those non-cases
+stay green.
+
+**Comments are the trap here, not an edge case.** The tree carries nine
+commented-out `frappe.ui.form.on("X", {...})` scaffold blocks, left by
+`bench new-doctype` in nine DocType folders. A sweep that reads the text finds
+31 `form.on` sites; 22 are real. So judging comments would mean judging more
+scaffold than code -- the same trap `test_string_references.py` already carries a
+Python control for. One control injects a *tenth* commented block naming a
+DocType that exists nowhere and requires it to stay green, and a test asserts
+both that the nine are still there and that the judged count has not moved: if
+the stripper ever stopped stripping, nine of the extra sites name real DocTypes,
+so the existence rule would stay green and only that test would notice.
+
+**The comment stripper tracks strings and template literals but deliberately not
+regular-expression literals, and that is a measurement rather than a shortcut.**
+The first version did track them and was measurably worse: a `</div>` inside a
+nested template literal in `TimeBlockManager.js` desynchronises any flat string
+scanner, and with the regex heuristic on top the `/` was read as the start of a
+regex literal, which swallowed the rest as code and left three real `//`
+comments and two `/* */` blocks **unstripped further down the same file**. Both
+versions agreed on all 83 sites, which is the point: *the broken one looked
+right*, and only a diff of the two stripped texts said otherwise. The per-shape
+floors are what would catch the other direction, a regex literal eating real
+sites.
+
+**What this target does not reach.** A DocType held in a variable or built by
+concatenation -- nothing static can judge those, and three of the faults are
+exactly that case going red on the floor rather than on the rule. Whether a
+Link's target is the *right* DocType (`test_doctype_metadata.py` and
+`test_client_scripts.py` between them). The built bundles under
+`erplite/public/frontend/assets`, which are output and not source. And the
+shapes measured at zero today -- `frappe.new_doc` in `.js`, `/api/resource/...`
+fetches, `frappe.db.set_value`, `set_df_property(..., 'options', ...)`: patterns
+exist for the first and a floor of zero says nothing, so the honest statement is
+that a *first* site in those shapes would arrive unjudged.
 
 ### `read_shapes` — `tests/offline/test_read_shapes.py`
 
