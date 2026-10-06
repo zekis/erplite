@@ -28,11 +28,16 @@ frappe.ui.form.on('Activity', {
 		
 		// Set color indicators based on status
 		frm.set_indicator_formatter('status', function(doc) {
+			// Every value Activity.status can hold, with the colours activity.json already
+			// gives them in its `states` block. Keep the two in step: this formatter has no
+			// fallback -- frappe's form.js:1889 interpolates the return value straight into
+			// a class attribute -- so a status missing from this map renders as
+			// class="indicator undefined" rather than failing in any visible way.
 			return {
-				'Open': 'blue',
-				'In Progress': 'orange',
-				'Review': 'yellow',
-				'Completed': 'green',
+				'Estimate': 'yellow',
+				'Open': 'green',
+				'Complete': 'blue',
+				'Closed': 'orange',
 				'Cancelled': 'red'
 			}[doc.status];
 		});
@@ -68,7 +73,7 @@ frappe.ui.form.on('Activity', {
 			let due_date = frappe.datetime.str_to_obj(frm.doc.due_date);
 			let today = frappe.datetime.str_to_obj(frappe.datetime.get_today());
 			
-			if (due_date < today && frm.doc.status != 'Completed') {
+			if (due_date < today && frm.doc.status != 'Complete') {
 				frappe.msgprint({
 					message: __('Due date is in the past'),
 					indicator: 'orange'
@@ -93,15 +98,15 @@ frappe.ui.form.on('Activity', {
 // Custom list view formatting
 frappe.listview_settings['Activity'] = {
 	add_fields: ["status", "priority", "due_date"],
-	get_indicator: function(doc) {
-		return [__(doc.status), {
-			"Open": "blue",
-			"In Progress": "orange", 
-			"Review": "yellow",
-			"Completed": "green",
-			"Cancelled": "red"
-		}[doc.status], "status,=," + doc.status];
-	},
+	// No get_indicator here on purpose. activity.json declares a `states` block for
+	// all five statuses, and frappe checks that before listview_settings.get_indicator
+	// (indicator.js:82 runs ahead of :88), so a custom indicator never ran for any
+	// value this field can hold. The one that used to be here keyed its colours on
+	// 'In Progress', 'Review' and 'Completed', none of which Activity.status has, so
+	// had the `states` block ever been dropped it would have returned an array with an
+	// undefined colour in it -- which passes frappe's `if (indicator)` guard, because
+	// a non-empty array is truthy, and prints class="indicator-pill undefined".
+	// Colours for this field belong in the `states` block.
 	formatters: {
 		due_date: function(value) {
 			if (value) {

@@ -45,6 +45,14 @@ asserted as a floor so that a site cannot leave the sweep's reach without a word
     Link options   7      desk URL       8                 ----
                                                        total  83
 
+Those eight shapes are not all asserted together, and the two totals below are not in conflict:
+83 is every site in the table, while EXPECTED_TOTAL is 75 -- the seven shapes collected into
+SITES. Desk URLs are the eighth, swept separately into DESK_URLS and judged by their own test
+class at the foot of this file, because six of the eight live in `.vue` files that the rest of
+this sweep does not read. 83 = 75 + 8, and the two are counted against different standards:
+the sentence below is about the 75, because a desk URL is allowed to name a desk page
+(`user-profile`) or one of frappe's own DocTypes (`todo`, `user`), and three of the eight do.
+
 All 75 name a DocType this app declares (47 of them). Not one needs frappe's own names today,
 and FRAPPE_DOCTYPES is imported from `test_endpoint_wiring.py` rather than copied, so there is
 one such list in the suite and it stays where its provenance is recorded.
