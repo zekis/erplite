@@ -233,14 +233,14 @@ breaking the code.
 
 ## Targets
 
-Fifteen so far, 460 injections: edits applied to the app's real source, with
+Sixteen so far, 478 injections: edits applied to the app's real source, with
 `run.py` watching one test file go red.
 
-Two other test files do fault injection of their own, inside the file —
-`test_mandatory_fields_on_insert.py` and `test_projects_api.py`. Those plant
-shapes in their own fixtures rather than editing the app, so `run.py` does not
-drive them, and what they prove is narrower: that the sweep reads what its
-author planted. `string_refs` below is what that distinction costs.
+One other test file does fault injection of its own, inside the file —
+`test_projects_api.py`. It plants shapes in its own fixtures rather than editing
+the app, so `run.py` does not drive it, and what it proves is narrower: that the
+sweep reads what its author planted. `string_refs` below is what that
+distinction costs.
 
 `test_afterz_timesheet_workflow.py` was in that list until the thirteenth
 target. It had a test named "the fault-injection half, so a green run above
@@ -262,6 +262,90 @@ three `assertEqual([], findings)` calls, and nothing anywhere that asked whether
 a violation put in front of them would be reported. Seven of twenty-two faults
 were green. A sweep that tests itself over-claims about its reach;
 a sweep that does not test itself has made no claim anyone can check.
+
+`test_mandatory_fields_on_insert.py`, the sixteenth target, was the last file
+in that self-injecting list, and it closes the argument the thirteenth and
+fourteenth opened. Its self-injection half is good: it removes the key the
+original bug removed and asserts the rule names it. **Nine of eighteen faults
+were green anyway** — because that half asks the rule one question, about one
+field, at one call site, and the nine live everywhere else. Driving a file that
+tests itself is not redundant with the file testing itself. It is the only way
+to find out what the file's own questions do not cover.
+
+### `mandatory_fields` — `tests/offline/test_mandatory_fields_on_insert.py`
+
+A whole-app rule after a Xero import failed in production: `Customer` was built
+from a dict that did not pass `customer_type`, which is `reqd`, so `insert()`
+raised `MandatoryError` for every input and the call site could never create a
+record. The sweep reads every `get_doc({...})` in the app and checks the dict
+against the DocType's `reqd` fields. **18 faults, nine green.** Half the
+regressions it exists to catch, it did not catch.
+
+**A key being present is not a value being there, and that is the whole file.**
+The sweep asked whether the dict contained each mandatory field's *name*. frappe
+asks something quite different (`base_document.py:776`):
+
+    if self.get(df.fieldname) in (None, []) or not has_content(df):
+
+`has_content` is `strip_html(cstr(value)).strip()`. So `None`, `""`, `"   "` and
+`"<p></p>"` are all missing, and all four satisfied a sweep that only looked for
+the key. The rule now reads each key's **value expression** and applies frappe's
+own test to it: a provably empty literal is EMPTY, anything it cannot read is
+CONTENT — because a runtime value is not this rule's business, only a value that
+is provably empty.
+
+**The regression to expect is not the one that was found.** It is
+`contact.get("Name", "")`, because **every optional field in that same dict is
+already written exactly that way**. It is a one-word edit, it reads as *more*
+careful than the original, and it brings the production failure back. It is
+also not quite the same fact as an empty literal — it is empty exactly when the
+source mapping omits the key — so it is reported as its own finding, in its own
+words. "Always raises" and "raises for some inputs" are both defects and only
+one of them is honest about which. (`update_if_missing` makes it worse than it
+looks: it fills a field only when the value `is None`, so passing `""` *defeats
+a default that would otherwise have saved the record*.)
+
+**Two exemptions the sweep granted that frappe does not honour.** A `reqd` field
+with a `default` was skipped as frappe's job, tested with `is not None` — but
+`create_new.py:101` applies a default only `if df.get("default")`, so
+`"default": ""` is skipped by the sweep and never applied by frappe, and the
+field is mandatory, unfilled and unchecked. And `read_only` was skipped on the
+reasoning that it "cannot be passed in anyway": `_get_missing_mandatory_fields`
+does not exempt `read_only`, and a server-side dict can set it, so that
+exemption was wrong in both directions at once. It is gone.
+
+**Both of those first showed RED, and it was the wrong red.** They also remove
+`customer_type`, and `Customer` is one of the two cases in the file's *own*
+self-injection test — so that assertion fired, not the sweep. Re-planted on
+`Xero Sync Log.company`, which no self-test mentions, both went green. **A fault
+that trips a test's own fixture assertions tells you nothing about the rule the
+test exists to enforce.** It is the mirror of the unearned green and it is harder
+to see, because red feels like the safe answer and you stop looking. Read *which*
+test went red before believing a verdict — both this target and the fifteenth
+turned on reading a count or a name instead of a colour.
+
+**The walker saw one call shape.** It required `<attr>.get_doc(<Dict literal>)`
+with a literal doctype, so `get_doc(dict(...))`, `_new = frappe.get_doc` then
+`_new({...})`, and `"doctype": _dt` each made a real insert site **vanish in
+silence**. It now follows a local alias of `get_doc`, reads `dict(...)`
+keywords, treats a `**` spread as unreadable rather than as a short dict, and —
+the part worth copying — **reports a site whose doctype it cannot read instead of
+dropping it.** Same lesson as the fifteenth target from the other end: "out of
+scope" and "we cannot tell" are different facts, and only one of them is allowed
+to be silent.
+
+**And the slack that let three of those nine hide.** The guard against the sweep
+passing by finding nothing read `assertGreaterEqual(len(sites), 5)` — with six
+sites in the app. One site could disappear from the walker's reach entirely and
+nothing said a word. It is now the exact count. **A floor set below the real
+number is slack, and slack is where the silence lives.** If you have written an
+`assertGreaterEqual` against a number you once measured, check what the number
+is now.
+
+Nothing was wrong in the app: all six sites pass today, and the two exemption
+changes produce no new finding against the real tree. The three `.get(k, "")`
+values in the import dicts are on optional fields, which is exactly why the
+shape is the believable regression.
 
 ### `undeclared_attrs` — `tests/offline/test_undeclared_attributes.py`
 

@@ -6,15 +6,31 @@
 `erplite/xero/accounts.py`, `import_customer_from_xero` and
 `import_supplier_from_xero`, each built its document from a dict literal that
 omitted `customer_type` / `supplier_type`. Both fields are `reqd: 1` on their
-DocType with **no default and not read_only**, so there was no second chance to
-fill them in: `insert()` raised `MandatoryError` for every contact Xero returned.
+DocType with **no default**, so there was no second chance to fill them in:
+`insert()` raised `MandatoryError` for every contact Xero returned.
 Neither endpoint could create a single Customer or Supplier, for any input.
 
 Traced through frappe-version-15 rather than recalled: `insert()` calls
 `_validate()` (`frappe/model/document.py:309-310`), which calls
 `_validate_mandatory()` first (`:624-625`); that calls
-`_get_missing_mandatory_fields`, which counts any `reqd` field whose value is
-`in (None, [])` (`frappe/model/base_document.py:775-777`) and raises at `:963`.
+`_get_missing_mandatory_fields` (`frappe/model/base_document.py:776`), which
+raises at `:963` for any `reqd` field where:
+
+    self.get(df.fieldname) in (None, []) or not has_content(df)
+
+**Both clauses matter, and the second is the one that is easy to leave out.**
+`has_content` (`:760-771`) is `strip_html(cstr(value)).strip()`, so `""`,
+`"   "` and `"<p></p>"` are missing too. A field is not supplied because its key
+is in the dict; it is supplied because its *value* survives that test. This rule
+therefore reads each key's value expression, and treats an expression it cannot
+read as content -- a runtime value is not its business, only one that is
+provably empty.
+
+Two exemptions this rule does **not** grant, both measured rather than reasoned:
+`read_only` is not exempt (`_get_missing_mandatory_fields` does not exempt it,
+and a server-side dict can set it), and a `default` exempts a field only when it
+is *truthy*, because `create_new.py:101` applies it only `if df.get("default")`
+-- so `"default": ""` is no default at all.
 
 Why it stayed invisible: both call sites sit inside two nested
 `except Exception` layers that report a local schema problem as
@@ -51,6 +67,7 @@ Runs without a bench. See fake_frappe.py for the stand-in these tests share.
 import ast
 import json
 import os
+import re
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -62,6 +79,12 @@ SKIP_DIRS = ("__pycache__", "node_modules", "public", "dist")
 # DocTypes this app inserts but does not own. Each is frappe's, so its JSON is
 # not in this tree and the rule cannot be evaluated against it.
 FOREIGN_DOCTYPES = {"ToDo"}
+
+# The insert sites in the app today. An exact count, not a floor: a floor set
+# below the real number is slack, and one site can disappear from the walker's
+# reach -- which is how a widened shape used to go unnoticed -- without a word
+# being said. Changing this number is a deliberate act; dropping it is not.
+EXPECTED_INSERT_SITES = 6
 
 
 def _walk(ext):
@@ -89,8 +112,129 @@ def _doctype_index():
     return index
 
 
+def _get_doc_aliases(tree):
+    """Local names bound to frappe's get_doc: `_new = frappe.get_doc`."""
+    aliases = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Assign)
+                and isinstance(node.value, ast.Attribute)
+                and node.value.attr == "get_doc"):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    aliases.add(target.id)
+    return aliases
+
+
+def _get_doc_calls(tree):
+    """Every call that reaches get_doc, by attribute or through a local alias."""
+    aliases = _get_doc_aliases(tree)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr == "get_doc":
+            yield node
+        elif isinstance(func, ast.Name) and func.id in aliases:
+            yield node
+
+
+_TAG = re.compile(r"<[^>]*>")
+
+
+def _has_content(text):
+    """frappe's has_content, for a string we can read statically.
+
+    base_document.py:760-771: `strip_html(cstr(value)).strip()`, or any `<img`.
+    The Text Editor and Code/HTML branches only ever widen this, so a literal
+    this says is empty is empty for every fieldtype.
+    """
+    if "<img" in text:
+        return True
+    return bool(_TAG.sub("", text).strip())
+
+
+# What a dict literal's value tells us about the field having content at insert.
+CONTENT = "content"            # cannot be empty, or is not ours to judge
+EMPTY = "empty"                # empty for every input: insert always raises
+CONDITIONAL = "conditional"    # empty exactly when the source dict omits the key
+
+_NO_DOCTYPE = object()
+
+
+def _value_kind(value):
+    """Apply frappe's missing-value test to the expression a dict supplies.
+
+    frappe asks `self.get(f) in (None, []) or not has_content(df)` -- so the
+    *value* decides, never the key's presence. Anything we cannot read is
+    CONTENT: a runtime value is not this rule's business, only a value that is
+    provably empty, or provably defaulted to empty.
+    """
+    if isinstance(value, ast.Constant):
+        if value.value is None:
+            return EMPTY
+        if isinstance(value.value, str):
+            return CONTENT if _has_content(value.value) else EMPTY
+        # cstr(0) is "0" and cstr(False) is "False": both have content.
+        return CONTENT
+    if isinstance(value, (ast.List, ast.Tuple)):
+        # `[]` is named in frappe's test directly; ["x"] stringifies to "['x']".
+        return EMPTY if not value.elts else CONTENT
+    if isinstance(value, ast.Dict) and not value.keys:
+        # Deliberately CONTENT: cstr({}) is "{}", which strip_html keeps.
+        return CONTENT
+    if isinstance(value, ast.JoinedStr):
+        if all(isinstance(v, ast.Constant) for v in value.values):
+            joined = "".join(str(v.value) for v in value.values)
+            return CONTENT if _has_content(joined) else EMPTY
+        return CONTENT
+    if isinstance(value, ast.BoolOp) and isinstance(value.op, ast.Or):
+        # `x or "Company"`: the last operand is the fallback, so it decides.
+        return _value_kind(value.values[-1])
+    if (isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute)
+            and value.func.attr == "get"):
+        if len(value.args) == 1:
+            return CONDITIONAL          # .get(k) defaults to None
+        if len(value.args) == 2 and _value_kind(value.args[1]) == EMPTY:
+            return CONDITIONAL          # .get(k, "") is empty when k is absent
+    return CONTENT
+
+
+def _supplied_from_dict_literal(literal):
+    """name -> kind for a dict literal, plus its doctype expression."""
+    supplied, doctype = {}, _NO_DOCTYPE
+    for key, value in zip(literal.keys, literal.values):
+        if key is None:
+            return None, None           # {**base, ...}: contents unreadable
+        if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+            continue
+        if key.value == "doctype":
+            doctype = value
+            continue
+        supplied[key.value] = _value_kind(value)
+    return supplied, doctype
+
+
+def _supplied_from_dict_call(call):
+    """The same, for `dict(doctype="X", ...)` instead of a literal."""
+    supplied, doctype = {}, _NO_DOCTYPE
+    for keyword in call.keywords:
+        if keyword.arg is None:
+            return None, None           # dict(**base): contents unreadable
+        if keyword.arg == "doctype":
+            doctype = keyword.value
+            continue
+        supplied[keyword.arg] = _value_kind(keyword.value)
+    return supplied, doctype
+
+
 def _get_doc_dict_sites():
-    """Every `*.get_doc({...})` whose dict names its doctype literally."""
+    """Every get_doc call that builds its document from a dict in place.
+
+    Each site is (relpath, lineno, doctype or None, name -> kind, written-as).
+    `doctype is None` means the call builds a document here and this rule
+    cannot tell which -- reported, never dropped, because an unreadable site
+    and a site with nothing wrong are not the same fact.
+    """
     sites = []
     for path in _walk(".py"):
         with open(path, encoding="utf-8") as fh:
@@ -99,47 +243,67 @@ def _get_doc_dict_sites():
             tree = ast.parse(source)
         except SyntaxError:
             continue
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
+        for node in _get_doc_calls(tree):
+            if not node.args:
                 continue
-            if not (isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "get_doc"):
+            argument = node.args[0]
+            if isinstance(argument, ast.Dict):
+                supplied, doctype = _supplied_from_dict_literal(argument)
+            elif (isinstance(argument, ast.Call)
+                    and isinstance(argument.func, ast.Name)
+                    and argument.func.id == "dict"):
+                supplied, doctype = _supplied_from_dict_call(argument)
+            else:
+                continue                # get_doc("Customer", name): a load
+            rel = os.path.relpath(path, APP_ROOT)
+            if supplied is None:
+                sites.append((rel, node.lineno, None, {}, "a dict it spreads "
+                              "another mapping into"))
                 continue
-            if not node.args or not isinstance(node.args[0], ast.Dict):
-                continue
-            literal = node.args[0]
-            keys = {k.value for k in literal.keys
-                    if isinstance(k, ast.Constant) and isinstance(k.value, str)}
-            doctype = None
-            for key, value in zip(literal.keys, literal.values):
-                if (isinstance(key, ast.Constant) and key.value == "doctype"
-                        and isinstance(value, ast.Constant)):
-                    doctype = value.value
-            if doctype:
-                sites.append((os.path.relpath(path, APP_ROOT),
-                              node.lineno, doctype, keys))
+            if doctype is _NO_DOCTYPE:
+                continue                # not an insert dict at all
+            if isinstance(doctype, ast.Constant) and isinstance(doctype.value, str):
+                sites.append((rel, node.lineno, doctype.value, supplied, None))
+            else:
+                sites.append((rel, node.lineno, None, supplied,
+                              "doctype=%s" % ast.dump(doctype).split("(")[0]))
     return sites
 
 
-def _unsatisfiable_mandatory_fields(doctype_json, supplied):
-    """`reqd` fields the dict must carry: no default, and not read_only.
+def _caller_supplied_mandatory_fields(doctype_json):
+    """`reqd` fields whose value has to come from the caller.
 
-    A `reqd` field with a `default` is filled in by frappe before validation, and
-    a `read_only` one cannot be passed in anyway -- neither can be the caller's
-    fault, so neither belongs in this rule.
+    A field frappe fills in itself is not the caller's fault. Only a *truthy*
+    default is ever applied -- `create_new.py:101` guards on `if df.get(
+    "default")` -- so `"default": ""` exempts nothing and is not treated as a
+    default here either.
+
+    read_only is deliberately NOT an exemption: _get_missing_mandatory_fields
+    does not exempt it, and a server-side dict can set it, so a read_only reqd
+    field with no default raises exactly like any other.
     """
-    missing = []
     for field in doctype_json.get("fields", []):
         if not field.get("reqd"):
             continue
-        if field.get("default") is not None:
+        if field.get("default"):
             continue
-        if field.get("read_only"):
-            continue
-        if field["fieldname"] in supplied:
-            continue
-        missing.append(field["fieldname"])
+        yield field["fieldname"]
+
+
+def _unsatisfiable_mandatory_fields(doctype_json, supplied):
+    """Fields this dict can never give content to: insert() always raises."""
+    missing = []
+    for fieldname in _caller_supplied_mandatory_fields(doctype_json):
+        if supplied.get(fieldname, EMPTY) == EMPTY:
+            missing.append(fieldname)
     return missing
+
+
+def _conditionally_empty_mandatory_fields(doctype_json, supplied):
+    """Fields supplied as `.get(key, "")`: empty whenever the source omits it."""
+    return [fieldname
+            for fieldname in _caller_supplied_mandatory_fields(doctype_json)
+            if supplied.get(fieldname) == CONDITIONAL]
 
 
 class TestEveryGetDocDictSuppliesItsMandatoryFields(unittest.TestCase):
@@ -152,13 +316,24 @@ class TestEveryGetDocDictSuppliesItsMandatoryFields(unittest.TestCase):
         self.assertGreaterEqual(len(self.doctypes), 40,
                                 "DocType index collapsed; the rule below would "
                                 "pass by finding no JSON to compare against")
-        self.assertGreaterEqual(len(self.sites), 5,
-                                "no get_doc dict literals found, so the AST "
-                                "walker is broken")
+        self.assertEqual(
+            len(self.sites), EXPECTED_INSERT_SITES,
+            "the walker finds %d insert sites, not the %d this app has. Fewer "
+            "means a site is written in a shape it cannot read and is now "
+            "unchecked; more means a new site to account for here."
+            % (len(self.sites), EXPECTED_INSERT_SITES))
 
     def test_no_insert_site_can_raise_mandatory_error_for_every_input(self):
         failures = []
-        for rel, lineno, doctype, keys in sorted(self.sites):
+        for rel, lineno, doctype, supplied, note in sorted(
+                self.sites, key=lambda s: (s[0], s[1])):
+            if doctype is None:
+                failures.append(
+                    "%s:%d builds a document from %s, so this rule cannot tell "
+                    "which DocType it is and the site goes unchecked. Name the "
+                    "doctype literally, or add it here as a stated exception."
+                    % (rel, lineno, note))
+                continue
             if doctype in FOREIGN_DOCTYPES:
                 continue
             if doctype not in self.doctypes:
@@ -169,19 +344,30 @@ class TestEveryGetDocDictSuppliesItsMandatoryFields(unittest.TestCase):
                     % (rel, lineno, doctype))
                 continue
             _, doctype_json = self.doctypes[doctype]
-            missing = _unsatisfiable_mandatory_fields(doctype_json, keys)
+            missing = _unsatisfiable_mandatory_fields(doctype_json, supplied)
             if missing:
                 failures.append(
                     "%s:%d builds a %s without %s. Each is reqd on the DocType "
-                    "with no default and is not read_only, so insert() raises "
-                    "MandatoryError for every input -- this call site can never "
-                    "create a record."
+                    "with no default that frappe would apply, and is given no "
+                    "value with content here, so insert() raises MandatoryError "
+                    "for every input -- this call site can never create a "
+                    "record."
                     % (rel, lineno, doctype, ", ".join(sorted(missing))))
+            conditional = _conditionally_empty_mandatory_fields(
+                doctype_json, supplied)
+            if conditional:
+                failures.append(
+                    "%s:%d builds a %s whose %s is taken from another mapping "
+                    "with an empty default, so it is empty exactly when that "
+                    "mapping omits the key and insert() raises MandatoryError "
+                    "for those inputs. A mandatory field cannot default to "
+                    "nothing: give it a real fallback, or let the lookup raise."
+                    % (rel, lineno, doctype, ", ".join(sorted(conditional))))
         self.assertEqual(failures, [], "\n" + "\n".join(failures))
 
     def test_the_skip_list_is_still_needed_and_still_small(self):
         """So FOREIGN_DOCTYPES cannot quietly become a way to silence the rule."""
-        inserted = {dt for _, _, dt, _ in self.sites}
+        inserted = {s[2] for s in self.sites if s[2] is not None}
         for doctype in FOREIGN_DOCTYPES:
             self.assertIn(doctype, inserted,
                           "%s is skipped but nothing inserts it any more; "
@@ -219,17 +405,18 @@ class TestTheRuleCatchesTheBugItWasWrittenFor(unittest.TestCase):
                     site, "%s no longer builds a %s from a dict literal; this "
                           "fault injection has nothing to inject into"
                           % (rel, doctype))
-                keys = set(site[3])
+                supplied = dict(site[3])
 
-                self.assertIn(fieldname, keys,
-                              "%s must pass %s" % (rel, fieldname))
+                self.assertEqual(supplied.get(fieldname), CONTENT,
+                                 "%s must pass %s, with a value that has "
+                                 "content" % (rel, fieldname))
                 self.assertEqual(
-                    _unsatisfiable_mandatory_fields(doctype_json, keys), [],
+                    _unsatisfiable_mandatory_fields(doctype_json, supplied), [],
                     "with the fix in place there is nothing missing")
 
-                keys.discard(fieldname)
+                supplied.pop(fieldname)
                 self.assertEqual(
-                    _unsatisfiable_mandatory_fields(doctype_json, keys),
+                    _unsatisfiable_mandatory_fields(doctype_json, supplied),
                     [fieldname],
                     "with %s removed the rule must name it, or it would not "
                     "have caught the original bug" % fieldname)
