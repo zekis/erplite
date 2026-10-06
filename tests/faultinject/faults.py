@@ -5905,6 +5905,212 @@ DOCTYPE_METADATA = Target(
 ])
 
 
+# -- test_child_doctype_hooks.py ---------------------------------------------
+# A child DocType's controller hooks never run. Frappe's Document._validate()
+# calls only its own _validate_* helpers on get_all_children(), and every
+# run_method("...") in model/document.py is called on the parent, so a
+# validate() on a child class compiles, imports, reads fine and never executes.
+# Nothing raises and nothing reaches the Error Log. That is how Supplier Quote
+# shipped totalling zero for every quote not built in the browser.
+#
+# The file has two halves that cannot cover for each other, so each needs its
+# own faults:
+#
+#   * the whole-app sweep (ChildDoctypeHooks) catches a hook REPLANTED on a
+#     child controller, and would not notice the parent's fix being reverted;
+#   * the regression tests (SupplierQuoteTotals) catch the fix being reverted,
+#     and would not notice a replanted hook -- they drive a hook-free stand-in
+#     child row, not the real Supplier Quote Item controller.
+#
+# The controls are where the cost sits, because this guard reports code by its
+# shape and four shapes look exactly like a hook without being one: a nested
+# def, a module-level def, a method whose name frappe never calls, and a hook
+# on a DocType that is not a child. A guard that fails on correct code does not
+# get fixed, it gets deleted.
+
+SQI_PY = "erplite/accounts/doctype/supplier_quote_item/supplier_quote_item.py"
+SII_PY = "erplite/accounts/doctype/sales_invoice_item/sales_invoice_item.py"
+HOL_PY = "erplite/setup/doctype/holiday/holiday.py"
+PCON_PY = "erplite/erplite/doctype/project_contacts/project_contacts.py"
+SQ_PY = "erplite/accounts/doctype/supplier_quote/supplier_quote.py"
+SQI_JSON = "erplite/accounts/doctype/supplier_quote_item/supplier_quote_item.json"
+SQ_JSON = "erplite/accounts/doctype/supplier_quote/supplier_quote.json"
+
+# Each child controller is `class X(Document):` then `pass`. Note the
+# indentation differs between files -- supplier_quote_item.py and
+# project_contacts.py use tabs, the other two spaces -- so a replanted hook
+# has to match its own file or it will not parse.
+SQI_CLASS = "class SupplierQuoteItem(Document):\n\tpass\n"
+SII_CLASS = "class SalesInvoiceItem(Document):\n    pass\n"
+HOL_CLASS = "class Holiday(Document):\n    pass\n"
+PCON_CLASS = "class ProjectContacts(Document):\n\tpass\n"
+
+SQ_LINE_AMOUNT = ("\t\t\titem.amount = flt(item.qty) * flt(item.rate)\n"
+                  "\t\t\tself.total += item.amount\n")
+
+CHILD_DOCTYPE_HOOKS = Target(
+    "tests/offline/test_child_doctype_hooks.py", [
+
+    # -- a hook replanted on a child controller: the whole-app sweep ------
+    # The bug itself, put back where it was. validate() computes the line
+    # amount and never runs, so `amount` stays None and the parent's
+    # `if item.amount:` skips the line.
+    Fault("the live Supplier Quote bug replanted: validate() on the child "
+          "computes the line amount and never runs", True,
+          [(SQI_PY, SQI_CLASS,
+            "class SupplierQuoteItem(Document):\n"
+            "\tdef validate(self):\n"
+            "\t\tself.calculate_amount()\n"
+            "\n"
+            "\tdef calculate_amount(self):\n"
+            "\t\tself.amount = (self.qty or 0) * (self.rate or 0)\n")]),
+    # A different hook name, on a different child, in a spaces-indented file:
+    # the sweep must not be pinned to validate() or to one module.
+    Fault("on_update() on Sales Invoice Item -- a hook name other than "
+          "validate, in another module", True,
+          [(SII_PY, SII_CLASS,
+            "class SalesInvoiceItem(Document):\n"
+            "    def on_update(self):\n"
+            "        self.tax_amount = (self.amount or 0) * "
+            "(self.tax_rate or 0) / 100\n")]),
+    # autoname is called from model/naming.py rather than document.py, which
+    # is why HOOKS was read out of four frappe modules and not one.
+    Fault("autoname() on Holiday -- a hook frappe calls from naming.py, not "
+          "document.py", True,
+          [(HOL_PY, HOL_CLASS,
+            "class Holiday(Document):\n"
+            "    def autoname(self):\n"
+            '        self.name = "%s-%s" % (self.holiday_date, self.description)\n')]),
+    # ast.AsyncFunctionDef is a different node type from FunctionDef; a walker
+    # that checks only the latter reads straight past this.
+    Fault("an async hook on Project Contacts -- a different ast node type", True,
+          [(PCON_PY, PCON_CLASS,
+            "class ProjectContacts(Document):\n"
+            "\tasync def on_submit(self):\n"
+            "\t\tpass\n")]),
+    # Not a hook at all: a controller that does not compile. Before Unparseable
+    # existed this surfaced as a traceback inside ast.py naming no file.
+    Fault("a child controller that does not compile is reported as itself, "
+          "not swallowed", True,
+          [(SQI_PY, SQI_CLASS,
+            "class SupplierQuoteItem(Document):\n"
+            "\tdef validate(self)\n"
+            "\t\tpass\n")]),
+
+    # -- what the sweep sweeps -------------------------------------------
+    # istable is the whole basis of the judgement: a hook is dead because the
+    # DocType is a child table. Both directions are faults, because a sweep
+    # that looks at the wrong set of files passes for the wrong reason.
+    Fault("the child DocType stops being istable, so the sweep no longer "
+          "looks at it at all", True,
+          [(SQI_JSON, ' "istable": 1,\n', ' "istable": 0,\n')]),
+    Fault("a parent DocType becomes istable, so the sweep starts judging a "
+          "controller whose hooks do run", True,
+          [(SQ_JSON, ' "links": [],\n', ' "istable": 1,\n "links": [],\n')]),
+
+    # -- the parent's own derivation: the regression tests ----------------
+    # The fix reverted, exactly as it was before: read `amount` instead of
+    # deriving it. Nothing sets it outside the browser, so every total is zero
+    # and nothing raises. The sweep above stays green through this.
+    Fault("the fix reverted -- the parent reads item.amount instead of "
+          "deriving it, which is the original bug", True,
+          [(SQ_PY, SQ_LINE_AMOUNT,
+            "\t\t\tif item.amount:\n"
+            "\t\t\t\tself.total += flt(item.amount)\n")]),
+    Fault("rate is not cast, so a string rate is concatenated rather than "
+          "multiplied", True,
+          [(SQ_PY, "\t\t\titem.amount = flt(item.qty) * flt(item.rate)\n",
+            "\t\t\titem.amount = flt(item.qty) * item.rate\n")]),
+    # flt() is not float(): it maps None and anything uncastable to 0.0. A line
+    # with no rate yet is ordinary data, and the file claims it does not raise.
+    Fault("float() in place of flt(), so a line with no rate raises instead "
+          "of contributing nothing", True,
+          [(SQ_PY, "\t\t\titem.amount = flt(item.qty) * flt(item.rate)\n",
+            "\t\t\titem.amount = flt(item.qty) * float(item.rate)\n")]),
+    Fault("grand_total drops the line total and carries only the tax", True,
+          [(SQ_PY, "\t\tself.grand_total = self.total + self.total_tax\n",
+            "\t\tself.grand_total = self.total_tax\n")]),
+    Fault("the running total is not reset before the loop", True,
+          [(SQ_PY, "\t\tself.total = 0\n\t\tself.total_tax = 0\n",
+            "\t\tself.total_tax = 0\n")]),
+
+    # -- the premises, read out of the DocType JSON ------------------------
+    # Why the browser was the only thing filling `amount`: nobody could type
+    # it. If this stops being read_only the bug's shape changes.
+    Fault("amount stops being read_only, so the premise the fix rests on is "
+          "no longer true", True,
+          [(SQI_JSON, '   "read_only": 1\n', '   "read_only": 0\n')]),
+    Fault("qty is renamed, so the input the parent multiplies is not a field "
+          "of the child DocType", True,
+          [(SQI_JSON, '   "fieldname": "qty",\n',
+            '   "fieldname": "quantity",\n')]),
+    Fault("amount is renamed, so the parent writes a column that does not "
+          "exist", True,
+          [(SQI_JSON, '   "fieldname": "amount",\n',
+            '   "fieldname": "line_amount",\n')]),
+
+    # -- controls: the four shapes that look like a hook and are not -------
+    # A method the parent calls is correct code on a child controller. Only
+    # frappe's own hook names are dead there.
+    Fault("CONTROL: a non-hook method on a child controller", False,
+          [(SQI_PY, SQI_CLASS,
+            "class SupplierQuoteItem(Document):\n"
+            "\tdef line_amount(self):\n"
+            "\t\treturn (self.qty or 0) * (self.rate or 0)\n")]),
+    # The scope boundary, driven from app source rather than from a string in
+    # the test: a local function named validate is not a hook.
+    Fault("CONTROL: a def named validate nested inside a non-hook method", False,
+          [(SQI_PY, SQI_CLASS,
+            "class SupplierQuoteItem(Document):\n"
+            "\tdef line_amount(self):\n"
+            "\t\tdef validate(value):\n"
+            "\t\t\treturn value or 0\n"
+            "\n"
+            "\t\treturn validate(self.qty) * validate(self.rate)\n")]),
+    # A module-level validate(doc, method) is the shape hooks.py doc_events
+    # use. It is wired by name from hooks.py and runs; it is not a method.
+    Fault("CONTROL: a module-level validate(doc, method), the doc_event "
+          "shape, in a child controller", False,
+          [(SII_PY, SII_CLASS,
+            "class SalesInvoiceItem(Document):\n"
+            "    pass\n"
+            "\n"
+            "\n"
+            "def validate(doc, method=None):\n"
+            '    """A hooks.py doc_event handler, which is not a controller '
+            'hook."""\n'
+            "    return None\n")]),
+    # Pins the HOOKS set from the other side. after_save reads like a hook and
+    # frappe calls nothing by that name, so reporting it would be reporting
+    # code that is fine -- and if HOOKS ever gains an invented name, this goes
+    # red before the invented name reaches anyone's controller.
+    Fault("CONTROL: a method named after_save, which frappe never calls, so "
+          "the guard must not report it", False,
+          [(HOL_PY, HOL_CLASS,
+            "class Holiday(Document):\n"
+            "    def after_save(self):\n"
+            "        pass\n")]),
+    # A hook on a DocType that is not a child is the ordinary, correct way to
+    # write a controller. Supplier Quote's own validate() is three lines above.
+    Fault("CONTROL: a hook added to a parent DocType's controller, where "
+          "hooks do run", False,
+          [(SQ_PY, "\tdef set_created_by(self):\n",
+            "\tdef onload(self):\n\t\tpass\n\n\tdef set_created_by(self):\n")]),
+    # The derivation refactored, same arithmetic. Without this, "every fault
+    # went red" could just mean the file is red at any touch of the loop.
+    Fault("CONTROL: the line amount goes through a local, same arithmetic", False,
+          [(SQ_PY, SQ_LINE_AMOUNT,
+            "\t\t\tline_amount = flt(item.qty) * flt(item.rate)\n"
+            "\t\t\titem.amount = line_amount\n"
+            "\t\t\tself.total += line_amount\n")]),
+    # The sweep judges fieldnames and istable. If this goes red it has started
+    # pinning the form's wording.
+    Fault("CONTROL: a field's label is reworded", False,
+          [(SQI_JSON, '   "label": "Lead Time (Days)"\n',
+            '   "label": "Lead Time (days)"\n')]),
+])
+
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -5935,4 +6141,5 @@ TARGETS = {
     "scheduler_api": SCHEDULER_API,
     "schedule_entry": SCHEDULE_ENTRY,
     "doctype_metadata": DOCTYPE_METADATA,
+    "child_doctype_hooks": CHILD_DOCTYPE_HOOKS,
 }
