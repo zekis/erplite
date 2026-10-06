@@ -307,11 +307,19 @@ went green, and neither was the sweep's fault:
   parses.** Read what the edit actually does before believing the verdict.
 
 Found while writing this and left alone deliberately, because it is an app
-decision and not a test's to make: `Scheduler Role.on_trash()` queries
+decision and not a test's to make: `Scheduler Role.on_trash()` queried
 `"Resource Role"`, a DocType that exists nowhere in this repo — no JSON, no
-Table field pointing at it, referenced in that one file. The sweep is silent on
-it by design (it judges only DocTypes the app defines), which is exactly the
-blind spot an unknown DocType leaves.
+Table field pointing at it. The sweep is silent on it by design (it judges only
+DocTypes the app defines), which is exactly the blind spot an unknown DocType
+leaves.
+
+**Settled since.** The owner's answer was that there was never meant to be a
+`Resource Role` table, so that read was dead code and it made every
+`Scheduler Role` undeletable — `get_all` raises `TableMissingError` before it
+runs any SQL. It is gone, with
+`tests/offline/test_scheduler_role_delete.py` on it. `get_role_resources` and
+`get_role_statistics` still read the missing DocType and are still an app
+decision, so the blind spot described above is still worth having in mind.
 
 ### `xero_gate` — `tests/offline/test_xero_permission_gate.py`
 
@@ -466,7 +474,7 @@ them, or a user with no read rows could delete a division that is still in use.
   its `scheduler_sources()` walk to `api.py`, would leave six call sites with no
   guard at all — which is the kind of thing that looks like a tidy-up;
 * **the three internal reads made to run as the caller** — `Division.on_trash`,
-  `Scheduler Role.on_trash` (both of its reads) and
+  `Scheduler Role.on_trash` and
   `Schedule Entry.get_activity_progress`;
 * **`Division.on_trash` whitelisted**, which turns a delete guard into an HTTP
   endpoint while leaving its `get_all` in place. The AST sweep for call sites is

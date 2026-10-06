@@ -63,16 +63,6 @@ class SchedulerRole(Document):
 	
 	def on_trash(self):
 		"""Actions before deletion"""
-		# Check if role is used in resources
-		resources_using_role = frappe.get_all("Resource Role", 
-			filters={"role": self.name},
-			fields=["parent"]
-		)
-		
-		if resources_using_role:
-			resource_names = list(set([r.parent for r in resources_using_role]))
-			frappe.throw(f"Cannot delete role. It is used by resources: {', '.join(resource_names)}")
-		
 		# Check if role is used in schedule rows
 		schedule_rows_using_role = frappe.get_all("Schedule Row", 
 			filters={"role": self.name},
