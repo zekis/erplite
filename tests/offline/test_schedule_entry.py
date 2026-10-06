@@ -112,12 +112,12 @@ class ScheduleEntryTestCase(unittest.TestCase):
     def setUp(self):
         self.frappe = FakeFrappe(session_user=USER, roles=["System Manager"])
         self.frappe.tables["Project"] = [
-            _dict(name="5gofgdoomv", project_name="Novalith", status="Open"),
+            _dict(name="5gofgdoomv", project_name="Northwind", status="Open"),
             _dict(name="other01", project_name="Another project", status="Open"),
         ]
         self.frappe.tables["Activity"] = [
             _dict(name="g68cfomvvu", project="5gofgdoomv", status="Open",
-                  activity_name="PO-0392 - CCTP Systems Engineering support"),
+                  activity_name="PO-0001 - Systems engineering support"),
             _dict(name="act_other_proj", project="other01", status="Open",
                   activity_name="Activity on another project"),
         ]

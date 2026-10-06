@@ -81,7 +81,7 @@ class ActivityQueryTestCase(unittest.TestCase):
     def setUp(self):
         self.frappe = FakeFrappe(session_user=USER, roles=["System Manager"])
         self.frappe.tables["Project"] = [
-            _dict(name="5gofgdoomv", project_name="Novalith", status="Open"),
+            _dict(name="5gofgdoomv", project_name="Northwind", status="Open"),
             _dict(name="other01", project_name="Another project", status="Open"),
             # "Archived", not "Cancelled": Project.status has no Cancelled option.
             # This fixture said Cancelled for several sweeps and the test below passed
@@ -89,8 +89,8 @@ class ActivityQueryTestCase(unittest.TestCase):
             _dict(name="dead01", project_name="Shelved", status="Archived"),
         ]
         self.frappe.tables["Activity"] = [
-            _dict(name="g68cfomvvu", activity_name="PO-0392 - CCTP Systems Engineering support",
-                  description="Novalith PO-0392", project="5gofgdoomv", status="Open",
+            _dict(name="g68cfomvvu", activity_name="PO-0001 - Systems engineering support",
+                  description="Northwind PO-0001", project="5gofgdoomv", status="Open",
                   _assign='["%s"]' % USER),
             _dict(name="act_unassigned", activity_name="Nobody's activity",
                   description="", project="5gofgdoomv", status="Open", _assign=None),
@@ -151,7 +151,7 @@ class TestGetProjectsAndActivities(ActivityQueryTestCase):
         result = self.api.get_projects_and_activities()
         activity = result["5gofgdoomv"]["activities"][0]
 
-        self.assertEqual("PO-0392 - CCTP Systems Engineering support", activity["activity_name"])
+        self.assertEqual("PO-0001 - Systems engineering support", activity["activity_name"])
         self.assertIsNotNone(activity["activity_name"])
 
     def test_keeps_a_subject_alias_for_older_front_end_code(self):
@@ -267,7 +267,7 @@ class TestGetAllProjectsAndActivities(ActivityQueryTestCase):
         activities = response["data"]["5gofgdoomv"]["activities"]
         titles = {a["name"]: a["activity_name"] for a in activities}
         self.assertEqual(
-            "PO-0392 - CCTP Systems Engineering support", titles["g68cfomvvu"]
+            "PO-0001 - Systems engineering support", titles["g68cfomvvu"]
         )
         self.assertNotIn(None, titles.values(), "the dialog showed blank labels before")
 

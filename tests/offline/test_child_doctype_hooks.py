@@ -338,7 +338,7 @@ class SupplierQuoteTotals(unittest.TestCase):
         self.frappe = FakeFrappe(session_user="pat@company.test",
                                  roles=["System Manager"])
         self.frappe.tables["Supplier"] = [
-            _dict(name="SUP-0001", supplier_name="Novalith Technologies"),
+            _dict(name="SUP-0001", supplier_name="Northwind Technologies"),
         ]
         self.module = load_controller(self.frappe, "accounts", "supplier_quote")
 
