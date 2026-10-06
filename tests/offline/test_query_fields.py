@@ -247,9 +247,8 @@ KNOWN = [
 
 
 def _doctypes():
-    doctypes = _app_doctypes()
-    doctypes.pop("__paths__", None)
-    return doctypes
+    fields, _dirpaths, _unreadable = _app_doctypes()
+    return fields
 
 
 class TestNoQueryNamesAnUndeclaredField(unittest.TestCase):

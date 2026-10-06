@@ -233,7 +233,7 @@ breaking the code.
 
 ## Targets
 
-Fourteen so far, 436 injections: edits applied to the app's real source, with
+Fifteen so far, 460 injections: edits applied to the app's real source, with
 `run.py` watching one test file go red.
 
 Two other test files do fault injection of their own, inside the file —
@@ -255,6 +255,133 @@ makes the point twice over, because it is a *sweep*: its self-tests run the
 detector over synthetic snippets, which proves the detector understands a
 shape, never that the sweep reaches that shape where it really occurs. Three
 of those two claims came apart — see `query_fields` below.
+
+`test_undeclared_attributes.py`, the fifteenth target, is the opposite case and
+worth naming beside it: it had **no self-tests at all**. Three whole-app sweeps,
+three `assertEqual([], findings)` calls, and nothing anywhere that asked whether
+a violation put in front of them would be reported. Seven of twenty-two faults
+were green. A sweep that tests itself over-claims about its reach;
+a sweep that does not test itself has made no claim anyone can check.
+
+### `undeclared_attrs` — `tests/offline/test_undeclared_attributes.py`
+
+Three whole-app sweeps in one file, after the regression that stopped the
+scheduler creating entries: `Schedule Row.task` was written by code and declared
+by no DocType, so every row saved with no work attached and nothing raised. The
+sweeps are a controller one (`self.<x>` against its own DocType's fields, split
+hot/cold by whether a new-document hook reaches it), a read one (anywhere in the
+app, on documents built in memory) and a write one (anywhere, however the
+document arrived). **22 faults, seven green.** Two more were added for a shape
+the fix introduced, so 24 now.
+
+Every one of the seven was on the same side of the sweep. Not one was a shape it
+misunderstood; all seven were shapes it never asked about — and the useful
+generalisation is why they were invisible:
+
+**A sweep's documented scope limits and its undocumented blind spots look
+identical from the outside.** Both are green. This file documents, at length and
+correctly, that a document loaded by `get_doc("X", name)` is out of scope for
+the *read* sweep: it is populated by `SELECT *`, so an orphan column is really
+there and reading it returns something stale rather than raising. The
+implementation of that limit resolved a loaded binding to **nothing** — which
+marked the variable *unresolved*, and the conservative rule then dropped the
+variable altogether. So `save_timesheet_entries`, which binds `timesheet_doc`
+from `get_doc("Timesheet Entry", id)` in its update branch and from `new_doc` in
+its insert branch, was read-checked in **neither** branch, although the new-doc
+branch still raises. "Out of scope" and "we cannot tell what this is" are
+different facts, and conflating them turned a deliberate limit into a hole of
+unknown size — *behind the limit's own documentation*, which is what made the
+green look earned. The rule is now applied per binding: a loaded binding agrees
+about the DocType and only declines to be reportable, so a purely-loaded name is
+still dropped (the limit, intact and still measured by its own fault) while a
+name some other binding builds in memory is checked.
+
+**A write does not have to look like `doc.x = v`.** The write sweep read
+attribute assignment and nothing else, so `self.db_set("x", v)`,
+`doc.update({...})`, `setattr(doc, "x", v)` and `doc.set("x", v)` were all
+invisible. The cheapest way to find that, and the same move that worked in
+`query_fields`: **ask which shapes the app actually writes, not which shapes the
+sweep already lists.** `db_set` is the answer here — **five of the six `db_set`
+sites in this tree** are the `self.db_set("x", v)` form, in DocType controllers,
+and it is the worst shape to miss because it is the one that does not merely get
+dropped: `db_set` builds its `UPDATE` from the name it was handed rather than
+from `get_valid_dict()`, so an undeclared name is a failed statement, not a
+discarded value. There are no `setattr` sites and no `.update({...})` on a
+document, so those two cost nothing in noise — but `self.set(...)` and
+`doc.set(...)` were implemented at the same time and *nothing measured them*,
+which is this target's own subject, so two faults were added rather than
+shipping a fourth shape on the strength of reading the code.
+
+**The one that needed a new rule rather than a wider walker.** A controller
+writing `self.<undeclared> = v` loses the value on save: computed, dropped by
+`get_valid_dict()`, and the document still saves. But this file's stated
+position — correctly — is that a controller may invent attributes of its own,
+which is precisely why `scan.assigned` is in the *read* sweep's known set. So
+"it is assigned here" cannot also be what excuses the write; that reasoning is
+circular and would make the rule report nothing. What actually separates a
+working transient from a lost field is that **a transient is read back somewhere
+in the class**. An undeclared attribute that is only ever written is not a
+transient, it is a dropped field. The app has zero such writes today — measured,
+not assumed — so the rule costs nothing, and the control that holds the file to
+its position (assign `self._open_entry`, then read it back) stays green.
+
+**The coverage-collapse pair, and the schema half is the worse one.**
+`query_fields` found that a file the sweep cannot parse contributes no findings
+and says nothing, so coverage can shrink with every assertion green. The same
+hole was here, in all three sweeps. But the DocType JSONs are the half worth
+transferring: `_app_doctypes` dropped an unparseable JSON with a bare
+`continue`, which dropped the DocType from the map — and **the map is what
+"undeclared" is measured against**, so the `doctype in doctypes` guard
+downstream then made every violation on that DocType unreportable, in every file
+in the app, not just in the one that would not read. A detector losing its
+*standard of comparison* is quieter than a detector losing its input: the second
+shows up in a parsed-file count, the first shows up nowhere. Both are now
+collected and asserted empty.
+
+**Two faults I got wrong, and both failures were in the measuring, not the
+code.** The first: the two "the sweep cannot parse this" faults originally
+planted `'this is not python'`, which **is valid Python** — `is not` comparing
+two names. Those files were never unparseable; they went red for the ordinary
+reason, and "the sweep notices its coverage collapsing" was about to be recorded
+as measured. The tell was reading the code instead of the colour: one case was
+red where the source plainly said `continue`. **`ast.parse` a planted syntax
+error before trusting it**; `(((` is a real one. The second: a pre-flight script
+written to check every pattern matched exactly once reported **24 of 24
+patterns broken**, because it read the files with `newline=""` and the sources
+are a mix of CRLF and LF, which the harness normalises and it did not. A
+measuring tool failing looks exactly like the thing it measures failing — and
+the tell was the count, for the third time in three targets: 24 of 24 is not a
+plausible number of broken patterns. **Read the count before you believe the
+verdict**, now including the verdicts of your own instruments.
+
+**How each red was attributed.** A green run of the fixed file proves the faults
+land, not that this change is what lands them. So the 24 faults were run again
+against the **old** test file: exactly nine flipped to green, and they were
+exactly the seven holes plus the two new `set` faults. Everything else —
+including all three controls and scope limits, and the one parse fault that was
+already red for the wrong reason — behaved identically against both versions.
+
+**What a target cannot tell you: the blast radius.** `_app_doctypes` is shared.
+Changing its signature broke **ten tests in two other files** that import it,
+and `run.py` on this target was green throughout, because `run.py` runs one test
+file. The full offline suite found it. Those two call sites now take the tuple
+and discard the unreadable list deliberately: an unreadable JSON shrinks their
+coverage too, but it is one fact that only needs to be loud once, and no DocType
+JSON can stop parsing without this file going red in the same run. That is
+written at the helper rather than left for someone to infer from two call sites
+that look unguarded.
+
+**What this target does not reach**, now pinned in `TestWhatTheseSweepsCannotSee`
+rather than left in prose: a document arriving as a function parameter (so every
+module-level helper taking a doc), a fieldname assembled at runtime, child rows
+added by `doc.append("rows", {...})` whose keys belong to a DocType these sweeps
+never resolve, and a name bound from two different DocTypes in one function,
+which is dropped by the conservative rule — a violation hidden behind a
+disagreement is the price of never reporting one. That class also holds the one
+rule `run.py` **cannot** measure: the hot/cold split asserts empty in both
+buckets, so a change collapsing one into the other would fail nothing. It is
+tested directly, on a class whose `validate()` reaches a helper two self-calls
+deep and whose `on_trash()` reaches one that must stay cold.
 
 ### `query_fields` — `tests/offline/test_query_fields.py`
 
