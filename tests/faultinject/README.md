@@ -248,8 +248,8 @@ breaking the code.
 
 ## Targets
 
-Twenty-six so far, 633 injections: edits applied to the app's real source, with
-`run.py` watching one test file go red.
+Twenty-seven so far, 661 injections: edits applied to the app's real source,
+with `run.py` watching one test file go red.
 
 Those two numbers are counted from `faults.py`, not kept by hand. They said
 "Nineteen so far, 543" until the twenty-first target was added, by which point
@@ -2512,3 +2512,104 @@ Both are stated in the test file.
 **What the run said:** 12 of 12 as expected on the second run, against a baseline
 of 16 passed. The first run was **11 of 12** — the `except ... as` fault was the
 one that came back green, and it is the reason this target exists.
+
+
+### `scheduler_api` — `tests/offline/test_scheduler_api.py`
+
+Twenty-seventh target. `get_projects_and_activities` is the scheduler's entire
+data source — it is reached only through `get_scheduler_data`, the scheduler's
+one entry point, so every project row and every activity label the scheduler
+shows comes out of this single function. It used to be raw SQL over six columns
+whose fields had been removed by `8126278`; `bench migrate` does not drop a
+column when its field goes and this app ships no patch that does, so those
+columns survived in the tables as orphans holding whatever was last written to
+them. The query therefore never raised `Unknown column` — it returned stale or
+empty values and ordered activities by a column nothing maintains.
+
+**28 faults: 22 red, 6 controls. 28 of 28 as expected, first run.** Baseline 8
+passed; 11 after the three tests added below. Whole offline suite 678 green.
+
+**The file had been green since the fix landed, and three of its claims were
+wrong.** None was visible from reading it; each came out of an injection.
+
+**1. A guard that failed on correct code — found by writing a control.**
+`ORPHANED` was a flat tuple of all six removed columns, checked against every
+recorded query whatever DocType that query asked. But `work_type` was removed
+from **Project** and is a live field on **Activity** — `activity.json`,
+`in_standard_filter: 1`, added by the same commit that removed it from Project.
+So asking Activity for its own `work_type` was reported as *"work_type is an
+orphaned column on Activity, not a field"*. Ordinary correct code, called a
+regression, for the whole life of the file. A guard that fails on correct code
+gets deleted rather than fixed, so this was worth more than a miss would have
+been. `ORPHANED` is now keyed by DocType, and `TestTheOrphanedListItself`
+checks the classification against the DocType JSONs rather than trusting it —
+including, by name, that `work_type` is still live on Activity and still gone
+from Project.
+
+Narrowing the list to its DocTypes loses no cover, and that is pinned rather
+than asserted: a fault asking **Activity** for `project_manager` is red,
+because the stand-in refuses a field the DocType JSON does not have. The named
+list is documentation of a specific regression; the stand-in is the backstop for
+every field name.
+
+**2. An ordering assertion that could not tell which field it ordered on.**
+`test_activities_are_ordered_by_the_field_that_still_exists` expected
+`[act_aardvark, g68cfomvvu]` — and those two ids sort the same way as their
+titles do, so `order_by="name"` was **measured GREEN**. The test pinned that
+the query was ordered at all, not that it was ordered on `activity_name`, which
+is the thing its name claims and the thing the old raw SQL got wrong. One
+fixture id is now `z_aardvark`, so id order and title order disagree; that
+fault is red, and a second assertion fails if the fixture ever stops
+discriminating.
+
+**3. The test the file is named for had never been able to fail.**
+`FakeFrappe.get_all` appends the query to `frappe.queries` and *then* validates
+its field names, raising `UnknownField` before the call returns — so
+`test_no_orphaned_column_is_queried` never reached its own assertions. Every
+red it appeared to produce was the stand-in's.
+
+Measured, not reasoned: **with everything below its loop deleted, all 28 faults
+still behaved exactly as expected.** The named list of six columns was
+decoration. The stand-in's check is now switched off for that one call, so the
+assertion is what judges, and the failure reads *"subject is an orphaned column
+on Activity, not a field"* instead of *"Activity has no field 'subject'"*.
+
+**And then the same measurement corrected the fix.** Re-running the neutering
+after the change still gave 28 of 28 — the stand-in's check is on in every
+*other* test in the class, so an orphan goes red there regardless. **The fix
+buys diagnosis, not cover**, and the docstring says so. No fault in this target
+is uniquely caught by that test. It would have been easy to ship the first
+version of that docstring, which claimed otherwise.
+
+**The design of the 22 red faults.** Six put one orphaned column back in the
+query of the DocType it was removed from — one per column rather than a sample,
+because the claim is about six columns and a test that notices two guards two.
+Three more put an orphan in the two quieter places the test looks, a `filter`
+and an `order_by`, including `order_by="subject"`, which is the exact regression
+the file was written for. The rest break what the function returns: the
+compatibility alias deleted, set from the wrong field, or folded into the query
+as `activity_name as subject` (the plausible tidy-up, which removes the real
+title and leaves only the key the built bundle reads); `project_lead` dropped;
+the `Archived` and `Cancelled` filters dropped; the project filter dropped, so
+every project gets every activity; the order dropped; and the division name and
+colour taken from each other.
+
+**The six controls** change real source and no behaviour: the Activity
+`work_type` query above and two more asking for live fields (`description`,
+`estimate`, `project_code`) — three rather than one, so the control is about
+DocType scoping and not about how `work_type` is spelled; a local variable
+rename and a loop variable rename; and the `if project.division:` guard made
+unconditional. That last one is green for a reason worth writing down rather
+than discovering twice: frappe's `db.get_value` with `filters=None` does **not**
+fall through to "no WHERE clause, take the first row". `database.py:614` sends
+it to `get_values_from_single`, which reads `tabSingles`, and Division is not a
+Single DocType — so a project with no division still gets no division attached.
+The edit costs a pointless query and changes no result, and the stand-in agrees
+on the outcome by a different route.
+
+**What this target does not reach.** The stand-in applies only the *first*
+clause of a multi-column `order_by`, so a test here must not assert on the
+order within a tie; and `db.get_value` is not recorded in `frappe.queries`, so
+the Division lookup's field names are covered by the stand-in's check and by
+the two assignment faults, not by `test_no_orphaned_column_is_queried`. Both
+are stated in the test file.
