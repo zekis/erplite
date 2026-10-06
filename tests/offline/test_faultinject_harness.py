@@ -40,9 +40,10 @@ def _load(name, path):
 harness = _load("fi_harness", os.path.join(FI, "harness.py"))
 
 # Offline test files that no target in faults.py drives, with why. Measured, not
-# assembled from memory: 7 of 33 on 7 Oct 2026 (8 on 6 Oct, before
-# test_shadowed_imports.py was given the `shadowed_imports` target). A file here has never been shown
-# capable of going red, so it reports a safety nothing has checked.
+# assembled from memory: 6 of 33 on 7 Oct 2026 (7 earlier the same day, before
+# test_scheduler_api.py was given the `scheduler_api` target; 8 on 6 Oct, before
+# test_shadowed_imports.py was given `shadowed_imports`). A file here has never
+# been shown capable of going red, so it reports a safety nothing has checked.
 UNDRIVEN_OFFLINE_FILES = {
     # Cannot be: it is the harness's own guard file. A target for it would be a
     # target for the thing that decides whether targets mean anything.
@@ -51,21 +52,26 @@ UNDRIVEN_OFFLINE_FILES = {
     # say. Each predates the harness and sweeps metadata or wiring rather than a
     # behaviour, so a fault for one is an edit to a JSON, a hook or a text file rather
     # than to a function body. The harness drives exactly those already: on 7 Oct 2026,
-    # 12 of the 26 targets inject into .json, hooks.py or patches.txt, and
+    # 12 of the 27 targets inject into .json, hooks.py or patches.txt, and
     # doctype_json_validation injects into nothing else -- 7 faults, 7 JSON edits, and
     # it bites. test_a_target_can_be_driven_entirely_by_non_python_edits below keeps
-    # that from going quietly stale. So these six are undriven because nobody has
+    # that from going quietly stale. So these five are undriven because nobody has
     # written them, which is the work; the file kind is not the obstacle.
-    # test_shadowed_imports.py left this list on 7 Oct 2026, and the writing of its
-    # target is the argument for the six below: it turned up a false positive in the
-    # sweep -- a guard failing on correct Python -- which nothing green could have
-    # shown, and which no amount of the file continuing to pass would have found.
+    #
+    # Two files have left this list, and both paid for the trip on the way out --
+    # which is the argument for the five below, because each left under a green suite
+    # and neither defect was visible from reading:
+    #   test_shadowed_imports.py (6 Oct): a sweep failing on correct Python, plus two
+    #     bindings it could not see, one of them named in its own docstring.
+    #   test_scheduler_api.py (7 Oct): a list of removed columns applied to every
+    #     DocType, so a query for a live Activity field was reported as a regression;
+    #     and an ordering assertion whose fixture could not tell the field it claimed
+    #     to pin from any other.
     "tests/offline/test_child_doctype_hooks.py": "no target yet",
     "tests/offline/test_client_scripts.py": "no target yet",
     "tests/offline/test_dashboard_widgets.py": "no target yet",
     "tests/offline/test_doctype_metadata.py": "no target yet",
     "tests/offline/test_schedule_entry.py": "no target yet",
-    "tests/offline/test_scheduler_api.py": "no target yet",
 }
 faults_mod = _load("fi_faults", os.path.join(FI, "faults.py"))
 TARGETS = faults_mod.TARGETS
