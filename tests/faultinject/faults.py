@@ -4576,6 +4576,12 @@ TS_LINK_FIELD = ("                        {\n"
 SCHED_PROJECT_RESOURCE = ("  const projectsResource = createListResource({\n"
                           "    doctype: 'Project',\n")
 
+SQ_DESK_URL = ("\t\thtml += '<td><a href=\"/app/supplier-quote/' + quote.name + "
+               "'\" target=\"_blank\">View</a></td>';\n")
+SCHED_TABLE_VUE = "frontend/src/components/scheduler/SchedulerTable.vue"
+VUE_DESK_URL = ("const handleEditProject = (projectId) => {\n"
+                "  window.open(`/app/project/${projectId}`, '_blank')\n")
+
 CLIENT_DOCTYPES = Target("tests/offline/test_client_doctypes.py", [
     # -- a name that exists nowhere, in each shape the app uses --
     Fault("a form script is registered under a misspelt DocType, so every "
@@ -4643,6 +4649,24 @@ CLIENT_DOCTYPES = Target("tests/offline/test_client_doctypes.py", [
             "frappe.listview_settings[cur_list.doctype] = {\n")]),
 
     # -- controls: real edits that change no behaviour --
+    # -- a desk URL, the shape that names a DocType without looking like one --
+    Fault("a link opens a desk route whose slug names no DocType", True,
+          [(SQ_JS, SQ_DESK_URL,
+            "\t\thtml += '<td><a href=\"/app/supplier-quotes/' + quote.name + "
+            "'\" target=\"_blank\">View</a></td>';\n")]),
+
+    Fault("the Vue app opens a desk route for a DocType that does not exist -- "
+          "in a .vue file, where none of the other rules here look", True,
+          [(SCHED_TABLE_VUE, VUE_DESK_URL,
+            "const handleEditProject = (projectId) => {\n"
+            "  window.open(`/app/porject/${projectId}`, '_blank')\n")]),
+
+    Fault("CONTROL a desk PAGE is linked to, which is not a DocType and must "
+          "not be judged as one", False,
+          [(SQ_JS, SQ_DESK_URL,
+            "\t\thtml += '<td><a href=\"/app/user-profile\" "
+            "target=\"_blank\">View</a></td>';\n")]),
+
     Fault("CONTROL a form script's DocType is quoted with double quotes", False,
           [(ACT_JS, ACT_FORM_ON, 'frappe.ui.form.on("Activity", {\n')]),
 

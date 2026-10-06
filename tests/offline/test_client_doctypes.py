@@ -42,8 +42,8 @@ asserted as a floor so that a site cannot leave the sweep's reach without a word
 
     form.on       22      set_route     16      doctype: key  18
     listview       6      frappe.db.*    6      new_doc        0
-    Link options   7                                        ----
-                                                       total  75
+    Link options   7      desk URL       8                 ----
+                                                       total  83
 
 All 75 name a DocType this app declares (47 of them). Not one needs frappe's own names today,
 and FRAPPE_DOCTYPES is imported from `test_endpoint_wiring.py` rather than copied, so there is
@@ -73,11 +73,17 @@ what would catch the other direction, a regex literal eating real sites.
 
 NOT COVERED HERE, so the next reader knows where to look:
 
-  * `.vue` and `.html`: swept and measured at zero DocType literals -- the Vue scheduler
-    reaches the API through `frontend/src/components/scheduler/composables/useSchedulerAPI.js`,
-    whose eight `doctype:` keys ARE judged here because that is a `.js` file. The zero is
-    asserted below rather than written down here, so if the Vue app starts naming DocTypes
-    the rule gets extended instead of silently not applying.
+  * `.vue` and `.html` carry none of the six shapes above -- the Vue scheduler reaches the
+    API through `frontend/src/components/scheduler/composables/useSchedulerAPI.js`, whose
+    eight `doctype:` keys ARE judged here because that is a `.js` file. That zero is asserted
+    below rather than written down here, so if the Vue app starts naming DocTypes in one of
+    these shapes the rule gets extended instead of silently not applying.
+
+    But `.vue` is NOT free of DocType references, and saying otherwise would be the
+    overclaim this file exists to replace. A desk URL names a DocType by its slug, and there
+    are eight: six in `.vue` (`/app/project/...`, `/app/user`) and two in `.js`
+    (`/app/supplier-quote/...`, `/app/todo`). Those are judged below, by slug, which is why
+    `_files` is swept for all three extensions for that one rule.
   * A DocType held in a variable (`frappe.set_route('Form', dt)`) or built by concatenation.
     Nothing static can judge those; the floors are what notice if a literal becomes one.
   * The built bundles under `erplite/public/frontend/assets` -- build output, not source.
@@ -517,13 +523,83 @@ class TestOptionsIsJudgedOnlyWhereItNamesADoctype(unittest.TestCase):
         self.assertEqual([], [s for s in judged if s[3] not in KNOWN])
 
 
+# A desk URL names a DocType by its slug: frappe's router lowercases the name and joins its
+# words with hyphens, so `/app/supplier-quote/SQ-0001` opens a Supplier Quote. A slug that
+# names nothing gives the user a "Not found" desk page.
+#
+# `/app/<x>` is not always a DocType, though, and that is the half that could reject correct
+# code: frappe serves desk PAGES on the same prefix. The app links to one, `/app/user-profile`.
+# So the rule flags a slug that is neither a known DocType nor a page named here, and
+# `test_every_listed_desk_page_is_still_linked_to` keeps this list from growing into a blanket.
+DESK_PAGES = {"user-profile"}
+
+DESK_URL = re.compile(r"""/app/([a-z0-9][a-z0-9-]*)""")
+
+EXPECTED_DESK_URLS = 8
+
+
+def _slug(doctype):
+    return doctype.lower().replace(" ", "-")
+
+
+def _desk_urls():
+    """[(relative path, line, slug)] for every /app/<slug> in the front end."""
+    found = []
+    for ext in (".js", ".vue", ".html"):
+        for path in _files(ext):
+            with open(path, encoding="utf-8", errors="replace", newline="") as fh:
+                code = _strip_comments(fh.read())
+            for match in DESK_URL.finditer(code):
+                found.append((os.path.relpath(path, APP_ROOT),
+                              code.count("\n", 0, match.start()) + 1, match.group(1)))
+    return found
+
+
+DESK_URLS = _desk_urls()
+KNOWN_SLUGS = {_slug(name) for name in KNOWN}
+
+
+class TestADeskUrlNamesADoctypeOrAPageWeHaveNamed(unittest.TestCase):
+    """The shape that is a DocType reference without looking like one.
+
+    This is the one found by asking what the six patterns above do NOT see, rather than by
+    imagining another typo: six of these eight sites are in `.vue` files, which the rest of
+    this file does not judge at all.
+    """
+
+    def test_the_sweep_found_desk_urls(self):
+        self.assertGreaterEqual(
+            len(DESK_URLS), EXPECTED_DESK_URLS,
+            "found %d /app/ URLs, fewer than the %d measured on 6 Oct 2026"
+            % (len(DESK_URLS), EXPECTED_DESK_URLS))
+
+    def test_every_desk_url_resolves(self):
+        bad = ["%s:%d opens /app/%s" % (rel, line, slug)
+               for rel, line, slug in DESK_URLS
+               if slug not in KNOWN_SLUGS and slug not in DESK_PAGES]
+        self.assertEqual(
+            [], sorted(bad),
+            "a link opens a desk route whose slug is neither a DocType this app or frappe "
+            "declares nor a desk page named in DESK_PAGES. If it is a page rather than a "
+            "DocType, add it there and say so:\n  " + "\n  ".join(sorted(bad)))
+
+    def test_every_listed_desk_page_is_still_linked_to(self):
+        """An allowlist longer than the links that need it is a blanket, not an exception."""
+        linked = {slug for _rel, _line, slug in DESK_URLS}
+        self.assertEqual(
+            set(), DESK_PAGES - linked,
+            "DESK_PAGES names a desk page nothing links to any more: %s. Remove it, so the "
+            "list stays the size of the problem." % sorted(DESK_PAGES - linked))
+
+
 class TestTheBlindSpotsAreStillBlind(unittest.TestCase):
     """What this rule does not reach, asserted rather than written down.
 
-    `.vue` and `.html` carry no DocType literals today, which is why the sweep is `.js` only.
-    That is a measurement, and a measurement that is only in a docstring is one nobody
-    re-takes. If the Vue app starts naming DocTypes, this goes red and the rule gets extended
-    -- rather than silently not applying to a growing part of the front end.
+    `.vue` and `.html` carry none of the SIX SHAPES above today, which is why that half of
+    the sweep is `.js` only. They do carry desk URLs, which the class above judges. This is a
+    measurement, and a measurement that is only in a docstring is one nobody re-takes: if the
+    Vue app starts naming DocTypes in one of these shapes, this goes red and the rule gets
+    extended rather than silently not applying to a growing part of the front end.
     """
 
     def test_no_doctype_literal_has_appeared_in_a_vue_or_html_file(self):
