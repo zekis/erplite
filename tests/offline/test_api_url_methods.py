@@ -34,6 +34,15 @@ WHAT FRAPPE DOES WITH THE URL, read off frappe version-15 rather than from memor
     written is judged, and `test_the_resource_sweep_finds_a_url_put_in_front_of_it` is
     what keeps that rule from passing by finding nothing.
 
+  * **The version segment is optional, and v2 spells the same things differently.** v1's
+    rule table is mounted at BOTH `/api` and `/api/v1` (`frappe/api/__init__.py:78-84`),
+    so `/api/v1/method/x` is the same endpoint as `/api/method/x`; v2 adds
+    `/api/v2/method/x`, renames `resource` to `document`, and adds
+    `/api/v2/doctype/<doctype>/meta` and `/count` (`frappe/api/v2.py:192-217`). All of
+    those are swept. The app writes only the unversioned form today, so this is a shape
+    that would otherwise arrive unjudged rather than a count that can regress -- which is
+    why the two self-tests below assert it on synthetic source instead.
+
 WHAT IS SWEPT, and the one composed shape that is followed rather than skipped.
 
 Seven URL literals in the app's own source (`walk_sources`: the installed module plus the
@@ -60,7 +69,11 @@ false positive in six is the direction that costs somebody a day.
 NOT COVERED HERE, so the next reader knows where to look:
 
   * A method path built from pieces that are not literals, or composed in a shape other
-    than the one above. The counts below are what notice if a literal becomes one.
+    than the one above -- `'/api/method/' + name`, or a base joined with `+` rather than
+    interpolated. The counts below are what notice if a literal becomes one.
+  * The method half of `/api/v2/method/<doctype>/<method>` (`frappe/api/v2.py:202`): that
+    is a method on the document, which `frappe.get_attr` never resolves, so nothing here
+    can judge it. The DocType half IS judged. The app writes none of these today.
   * Whether the arguments sent match the signature, and whether a called function has a
     positional-only parameter. Both are `test_string_references.py`
     (`test_called_arguments_are_accepted`, `test_required_arguments_are_passed`).
@@ -125,8 +138,13 @@ EXPECTED_URL_METHODS = 7          # literal /api/method/ URLs in the app's own s
 EXPECTED_COMPOSED_METHODS = 5     # methods reached through the one base URL
 EXPECTED_DOC_METHODS = 1          # /api/method/erplite.* named in the app's documentation
 
-URL_METHOD = re.compile(r"""/api/method/([A-Za-z_][\w.]*)""")
-URL_RESOURCE = re.compile(r"""/api/resource/([A-Za-z][A-Za-z0-9%+_ -]*)""")
+# Every URL frappe routes to a method or a DocType, off its own rule tables. v1's rules are
+# mounted at both `/api/...` and `/api/v1/...` (frappe/api/__init__.py:78-84), so the version
+# segment is optional; v2 renamed `resource` to `document` and added `doctype/<x>/meta`.
+URL_METHOD = re.compile(
+    r"""/api/(?:v[12]/)?method/([A-Za-z_][\w.]*(?:/[A-Za-z_]\w*)?)""")
+URL_DOCTYPE = re.compile(
+    r"""/api/(?:(?:v1/)?resource|v2/document|v2/doctype)/([A-Za-z][A-Za-z0-9%+_ -]*)""")
 
 # `${this.baseUrl}.${method}` -- the base variable and the interpolated parameter.
 COMPOSE = re.compile(r"""\$\{(?:this\.)?([A-Za-z_]\w*)\}\s*\.\s*\$\{(?:this\.)?([A-Za-z_]\w*)\}""")
@@ -164,10 +182,10 @@ def _url_methods(pairs):
 
 
 def _resource_doctypes(pairs):
-    """[(DocType, rel, line)] for every /api/resource/ URL in `pairs`."""
+    """[(DocType, rel, line)] for every DocType-naming API URL in `pairs`."""
     found = []
     for rel, text in pairs:
-        for match in URL_RESOURCE.finditer(text):
+        for match in URL_DOCTYPE.finditer(text):
             found.append((unquote(match.group(1).replace("+", " ")).strip(), rel,
                           text.count("\n", 0, match.start()) + 1))
     return found
@@ -261,6 +279,8 @@ class TestEveryMethodNamedInAUrlResolves(unittest.TestCase):
         failures = []
         for dotted, rel, line in sorted(set(_url_methods(_sources()))
                                         | set(_all_composed(_sources()))):
+            if "/" in dotted:
+                continue  # a v2 doc-method; its DocType half is judged by the rule below
             if "." not in dotted:
                 self.assertIn(
                     dotted, FRAPPE_METHODS,
@@ -378,17 +398,39 @@ class TestADoctypeNamedInAResourceUrlExists(unittest.TestCase):
         synthetic = [("synthetic.js", """
             fetch('/api/resource/Supplier%20Quote?limit_page_length=0');
             fetch("/api/resource/Activity/" + name);
-            fetch(`/api/resource/Timesheet+Entry`);
+            fetch(`/api/v1/resource/Timesheet+Entry`);
+            fetch('/api/v2/document/Project');
+            fetch('/api/v2/doctype/Trip/meta');
         """)]
         self.assertEqual(
             [("Supplier Quote", "synthetic.js", 2),
              ("Activity", "synthetic.js", 3),
-             ("Timesheet Entry", "synthetic.js", 4)],
+             ("Timesheet Entry", "synthetic.js", 4),
+             ("Project", "synthetic.js", 5),
+             ("Trip", "synthetic.js", 6)],
             _resource_doctypes(synthetic))
+
+    def test_a_v2_doc_method_url_is_split_so_its_doctype_half_is_judged(self):
+        """`/api/v2/method/<doctype>/<method>` (frappe/api/v2.py:202) names a DocType and a
+        controller method. The DocType half is judged with the rule above; the method half
+        is a method ON the document, which `frappe.get_attr` never sees, so nothing static
+        here can judge it. The app writes none of these today."""
+        self.assertEqual(
+            [("Activity/recalculate", "a.js", 1)],
+            _url_methods([("a.js", "fetch('/api/v2/method/Activity/recalculate')")]))
+
+    def test_the_version_segment_is_optional_in_a_method_url(self):
+        for url in ("/api/method/erplite.x.y", "/api/v1/method/erplite.x.y",
+                    "/api/v2/method/erplite.x.y"):
+            self.assertEqual([("erplite.x.y", "a.js", 1)],
+                             _url_methods([("a.js", "fetch('%s')" % url)]), url)
 
     def test_every_doctype_in_a_resource_url_exists(self):
         known = set(DOCTYPES) | set(FRAPPE_DOCTYPES)
-        for doctype, rel, line in sorted(_resource_doctypes(_sources())):
+        sites = list(_resource_doctypes(_sources()))
+        sites += [(dotted.split("/")[0], rel, line)
+                  for dotted, rel, line in _url_methods(_sources()) if "/" in dotted]
+        for doctype, rel, line in sorted(sites):
             self.assertIn(
                 doctype, known,
                 "%s:%d queries /api/resource/%s, and no DocType of that name is declared "
