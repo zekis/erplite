@@ -261,7 +261,24 @@
  "show_title_field_in_link": 1,
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": [],
+ "states": [
+  {
+   "color": "Gray",
+   "title": "Opportunity"
+  },
+  {
+   "color": "Yellow",
+   "title": "Estimate"
+  },
+  {
+   "color": "Green",
+   "title": "Open"
+  },
+  {
+   "color": "Gray",
+   "title": "Archived"
+  }
+ ],
  "title_field": "project_name",
  "track_changes": 1,
  "translated_doctype": 1

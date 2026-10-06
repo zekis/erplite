@@ -4810,6 +4810,8 @@ TRIP_JSON = "erplite/projects/doctype/trip/trip.json"
 KA_JSON = "erplite/erplite/doctype/knowledge_article/knowledge_article.json"
 PINV_JSON = "erplite/accounts/doctype/purchase_invoice/purchase_invoice.json"
 RESOURCE_JSON = "erplite/scheduler/doctype/resource/resource.json"
+PROJECT_JSON = "erplite/projects/doctype/project/project.json"
+ACTIVITY_JSON = "erplite/projects/doctype/activity/activity.json"
 
 TRIP_NAME_FIELD = ('  {\n'
                    '   "fieldname": "trip_name",\n'
@@ -4817,6 +4819,14 @@ TRIP_NAME_FIELD = ('  {\n'
 KA_TITLE_FIELD = ' "title_field": "title"\n'
 PINV_STATUS_DEFAULT = ('   "default": "Draft",\n'
                        '   "fieldname": "status",\n')
+PROJECT_OPEN_STATE = ('  {\n'
+                      '   "color": "Green",\n'
+                      '   "title": "Open"\n'
+                      '  },\n')
+ACTIVITY_CANCELLED_STATE = ('  {\n'
+                            '   "color": "Red",\n'
+                            '   "title": "Cancelled"\n'
+                            '  }\n')
 RESOURCE_FIRST_PERM = ('  {\n'
                        '   "create": 1,\n'
                        '   "delete": 1,\n'
@@ -4864,6 +4874,24 @@ DOCTYPE_JSON_VALIDATION = Target(
             '   "read": 1,\n'
             '   "report": 1,\n'
             '   "role": "System Manager",\n')]),
+
+    # -- a state that colours a status the field cannot hold --
+    Fault("a states entry names a status that is not one of the field's options, so "
+          "indicator.js:82 never finds it and the colour silently does nothing", True,
+          [(PROJECT_JSON, PROJECT_OPEN_STATE,
+            '  {\n'
+            '   "color": "Green",\n'
+            '   "title": "Opened"\n'
+            '  },\n')]),
+
+    # -- a state colour outside the ten DocType State offers --
+    Fault("a states entry is given a colour DocType State's Select does not offer, which "
+          "stops the Desk saving the DocType and renders a class with no CSS rule", True,
+          [(ACTIVITY_JSON, ACTIVITY_CANCELLED_STATE,
+            '  {\n'
+            '   "color": "Black",\n'
+            '   "title": "Cancelled"\n'
+            '  }\n')]),
 
     # Negative control. A field's label is user-visible text that no rule in
     # this sweep reads: every check judges fieldnames, fieldtypes, options,
