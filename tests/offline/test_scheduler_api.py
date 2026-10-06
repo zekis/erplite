@@ -8,6 +8,10 @@ fields on either DocType:
     Project   project_manager, work_type
     Activity  subject, priority, estimated_hours, progress_percent
 
+Which DocType each column belonged to matters, and this file used to ignore
+it: `work_type` went from Project and stayed on Activity, so a flat list of
+all six reported a correct Activity query as an orphaned column. See ORPHANED.
+
 All six were real fields between "installs" (d837280, 12 Jul 2025) and
 "initial commit" (8126278, 27 Oct 2025), which removed them. `bench migrate`
 does not drop a column when its field goes, and this app ships no patch that
@@ -36,15 +40,34 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 APP_ROOT = os.path.normpath(os.path.join(HERE, "..", ".."))
 sys.path.insert(0, HERE)
 
-from fake_frappe import FakeFrappe, _dict  # noqa: E402
+from fake_frappe import FakeFrappe, _dict, doctype_fields  # noqa: E402
 
 USER = "zeke@company.test"
 
-# The columns that were removed from the DocTypes and must not be queried again.
-ORPHANED = (
-    "project_manager", "work_type",
-    "subject", "priority", "estimated_hours", "progress_percent",
-)
+# The columns removed from each DocType, which must not be queried again.
+#
+# Keyed by DocType on purpose. This was a flat tuple checked against every
+# query, and `work_type` was removed from Project but is a live field on
+# Activity (activity.json, in_standard_filter, since 8126278) -- so asking
+# Activity for its own `work_type` was reported as "an orphaned column, not a
+# field". A guard that fails on correct code gets deleted rather than fixed,
+# which is worse than the miss it was protecting against. The fault-injection
+# control that found it is in tests/faultinject/faults.py.
+#
+# Narrowing this loses no cover: a query naming a column that is not a field
+# on the DocType it asks -- Activity for project_manager, say -- is refused by
+# the stand-in itself (FakeFrappe._check_fields), which is the backstop for
+# every field name, not just these six. This list adds what the stand-in
+# cannot know: that these particular names were once real and are the specific
+# regression being guarded. TestTheOrphanedListItself below checks the claim
+# against the JSONs rather than trusting it.
+ORPHANED = {
+    "Project": ("project_manager", "work_type"),
+    "Activity": ("subject", "priority", "estimated_hours", "progress_percent"),
+}
+
+# Flattened, for the one claim that is about all six regardless of DocType.
+ALL_ORPHANED = tuple(sorted(set(sum((list(v) for v in ORPHANED.values()), []))))
 
 
 def load_scheduler_api(frappe):
@@ -102,7 +125,13 @@ class SchedulerQueryTestCase(unittest.TestCase):
         self.frappe.tables["Activity"] = [
             _dict(name="g68cfomvvu", project="5gofgdoomv", status="Open",
                   activity_name="PO-0392 - CCTP Systems Engineering support"),
-            _dict(name="act_aardvark", project="5gofgdoomv", status="Open",
+            # The id deliberately sorts AFTER g68cfomvvu while its title sorts
+            # before it, so sorting by `name` and sorting by `activity_name`
+            # give different answers. With an "act_" id they agreed, and
+            # test_activities_are_ordered_by_the_field_that_still_exists passed
+            # just as well with order_by="name" -- it was pinning that the
+            # query is ordered at all, not which field it is ordered by.
+            _dict(name="z_aardvark", project="5gofgdoomv", status="Open",
                   activity_name="Aardvark, to sort before the PO"),
             _dict(name="act_cancelled", project="5gofgdoomv", status="Cancelled",
                   activity_name="Called off"),
@@ -135,26 +164,44 @@ class TestGetProjectsAndActivities(SchedulerQueryTestCase):
             self.assertEqual(activity["activity_name"], activity["subject"])
 
     def test_no_orphaned_column_is_queried(self):
+        """No query asks a DocType for a column that DocType no longer has.
+
+        Per DocType, not across all of them: see ORPHANED above. This loop is
+        not vacuous if no query is recorded -- it just passes over nothing --
+        but it cannot become so quietly: every other test in this class
+        asserts on data that only a recorded query can produce.
+        """
         self.api.get_projects_and_activities()
 
         for query in self.frappe.queries:
+            orphaned = ORPHANED.get(query.doctype, ())
             for field in query.fields:
                 self.assertNotIn(
-                    field, ORPHANED,
+                    field, orphaned,
                     "%s is an orphaned column on %s, not a field"
                     % (field, query.doctype),
                 )
             for field in query.filters:
-                self.assertNotIn(field, ORPHANED)
-            self.assertNotIn(query.order_by, ORPHANED)
+                self.assertNotIn(field, orphaned)
+            self.assertNotIn(query.order_by, orphaned)
 
     def test_activities_are_ordered_by_the_field_that_still_exists(self):
         # The old query ordered by t.subject, which nothing maintains, so the
         # order the scheduler showed was whatever was in the orphaned column.
+        #
+        # The two ids sort the opposite way to their titles (see setUp), so this
+        # is an assertion about activity_name and not merely about there being
+        # an order_by at all.
         activities = self.projects_by_name()["5gofgdoomv"]["activities"]
 
         self.assertEqual(
-            ["act_aardvark", "g68cfomvvu"], [a["name"] for a in activities]
+            ["z_aardvark", "g68cfomvvu"], [a["name"] for a in activities]
+        )
+        self.assertNotEqual(
+            sorted(a["name"] for a in activities),
+            [a["name"] for a in activities],
+            "the fixture no longer distinguishes name order from title order, "
+            "so this test has stopped testing which field is ordered on",
         )
 
     def test_the_project_lead_is_returned_not_the_orphaned_project_manager(self):
@@ -186,6 +233,55 @@ class TestGetProjectsAndActivities(SchedulerQueryTestCase):
         self.assertEqual("Engineering", projects["5gofgdoomv"]["division_name"])
         self.assertEqual("#3b82f6", projects["5gofgdoomv"]["division_color"])
         self.assertNotIn("division_name", projects["other01"])
+
+
+class TestTheOrphanedListItself(unittest.TestCase):
+    """ORPHANED is a claim about the DocType JSONs. Check it, do not trust it.
+
+    The defect this guards is not "a column crept back into a query" -- it is
+    "the list of columns is wrong", which makes every test above either blind
+    or wrong about correct code, and says nothing when it happens. The flat
+    version of this list spent its whole life calling a live Activity field an
+    orphan, and passed throughout.
+    """
+
+    DOCTYPE_JSON = {"Project": ("projects", "project"),
+                    "Activity": ("projects", "activity")}
+
+    def test_every_orphaned_column_is_absent_from_its_own_doctype(self):
+        for doctype, columns in ORPHANED.items():
+            fields = doctype_fields(*self.DOCTYPE_JSON[doctype])
+            for column in columns:
+                self.assertNotIn(
+                    column, fields,
+                    "%s is listed as removed from %s but is a field on it today, "
+                    "so every query for it is being called a regression"
+                    % (column, doctype),
+                )
+
+    def test_each_orphaned_column_is_listed_against_one_doctype_only(self):
+        """Two entries for one name is how the flat list went wrong."""
+        seen = {}
+        for doctype, columns in ORPHANED.items():
+            for column in columns:
+                self.assertNotIn(
+                    column, seen,
+                    "%s is listed against both %s and %s"
+                    % (column, seen.get(column), doctype),
+                )
+                seen[column] = doctype
+        self.assertEqual(len(ALL_ORPHANED), 6)
+
+    def test_work_type_is_still_a_live_field_on_activity(self):
+        """The specific false positive, named, so it cannot come back quietly.
+
+        work_type was removed from Project by 8126278 and kept on Activity. If
+        it is ever removed from Activity as well, this fails and it belongs in
+        ORPHANED["Activity"] -- which is the point: that is a decision somebody
+        makes, not a tuple that drifts.
+        """
+        self.assertIn("work_type", doctype_fields("projects", "activity"))
+        self.assertNotIn("work_type", doctype_fields("projects", "project"))
 
 
 if __name__ == "__main__":

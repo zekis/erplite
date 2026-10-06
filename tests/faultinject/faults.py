@@ -5182,6 +5182,214 @@ SHADOWED_IMPORTS = Target(
     ],
 )
 
+# --- the scheduler's project and activity query ---------------------------
+# tests/offline/test_scheduler_api.py.
+# `get_projects_and_activities` is reached only through `get_scheduler_data`,
+# the scheduler's one entry point, so every project row and activity label the
+# scheduler shows comes out of this single function. It used to be raw SQL over
+# six columns whose fields were removed by 8126278; `bench migrate` does not
+# drop a column when its field goes and this app ships no patch that does, so
+# the columns survived as orphans and the query returned stale or empty values
+# instead of raising `Unknown column`. The replacement uses `frappe.get_all` on
+# the real fields.
+#
+# Which DocType each orphan belonged to is the whole difficulty: `work_type`
+# went from Project and is still a live field on Activity, so a flat list of all
+# six -- which is what the test file had -- calls a correct Activity query a
+# regression. The first control below is what found that.
+
+SAPI = "erplite/scheduler/api.py"
+
+# The six anchors, each matching exactly once in a CRLF file.
+SA_PROJ_FIELDS = '        fields=["name", "project_name", "status", "project_lead", "division"],\n'
+SA_PROJ_FILTERS = '        filters={"status": ["!=", "Archived"]},\n'
+SA_PROJ_ORDER = '        order_by="project_name"\n'
+SA_ACT_FIELDS = '            fields=["name", "activity_name", "status"],\n'
+SA_ACT_FILTERS = '            filters={"project": project.name, "status": ["!=", "Cancelled"]},\n'
+SA_ACT_ORDER = '            order_by="activity_name"\n'
+
+SA_ALIAS = "            activity['subject'] = activity.activity_name\n"
+SA_DIV_NAME = "                project['division_name'] = division_data.division_name\n"
+SA_DIV_COLOR = "                project['division_color'] = division_data.color\n"
+
+# Whole blocks, for the two renaming controls. Note the trailing space after
+# `project.division,` -- it is in the source and the pattern must carry it.
+SA_DIV_BLOCK = (
+    '        if project.division:\n'
+    '            division_data = frappe.db.get_value("Division", project.division, \n'
+    '                ["division_name", "color"], as_dict=True)\n'
+    '            if division_data:\n'
+    "                project['division_name'] = division_data.division_name\n"
+    "                project['division_color'] = division_data.color\n"
+)
+SA_ALIAS_BLOCK = (
+    '        for activity in activities:\n'
+    '            # Compatibility alias: the built scheduler bundle under\n'
+    '            # erplite/public/frontend/assets/ still reads `subject`. Remove this\n'
+    '            # once the frontend has been rebuilt from frontend/src.\n'
+    "            activity['subject'] = activity.activity_name\n"
+)
+
+
+SCHEDULER_API = Target(
+    test="tests/offline/test_scheduler_api.py",
+    faults=[
+        # --- each orphaned column back, at the DocType it was removed from ---
+        # One fault per column rather than one sample: the file's claim is about
+        # six columns, and a test that notices two of them guards two. Each is
+        # caught twice over -- by name, as the specific regression, and by the
+        # stand-in refusing a field the DocType JSON does not have -- which is
+        # deliberate: the named list is documentation that rots loudly, the
+        # stand-in is the backstop that covers every other field name too.
+        Fault("orphan back in the Project query: project_manager", True, [
+            (SAPI, SA_PROJ_FIELDS,
+             '        fields=["name", "project_name", "status", "project_manager", "division"],\n')]),
+        Fault("orphan back in the Project query: work_type", True, [
+            (SAPI, SA_PROJ_FIELDS,
+             '        fields=["name", "project_name", "status", "project_lead", "division", "work_type"],\n')]),
+        Fault("orphan back in the Activity query: subject", True, [
+            (SAPI, SA_ACT_FIELDS,
+             '            fields=["name", "activity_name", "status", "subject"],\n')]),
+        Fault("orphan back in the Activity query: priority", True, [
+            (SAPI, SA_ACT_FIELDS,
+             '            fields=["name", "activity_name", "status", "priority"],\n')]),
+        Fault("orphan back in the Activity query: estimated_hours", True, [
+            (SAPI, SA_ACT_FIELDS,
+             '            fields=["name", "activity_name", "status", "estimated_hours"],\n')]),
+        Fault("orphan back in the Activity query: progress_percent", True, [
+            (SAPI, SA_ACT_FIELDS,
+             '            fields=["name", "activity_name", "status", "progress_percent"],\n')]),
+
+        # The other two places the test looks. `fields` is the obvious one; a
+        # filter or an order_by on a column nothing maintains is the quieter
+        # regression, because it changes which rows come back rather than
+        # adding a key nobody reads.
+        Fault("orphan in a filter, not in fields (Project.project_manager)", True, [
+            (SAPI, SA_PROJ_FILTERS,
+             '        filters={"status": ["!=", "Archived"], "project_manager": "zeke@company.test"},\n')]),
+        Fault("orphan in order_by: Activity ordered by subject again, which is "
+              "the regression this file was written for", True, [
+                  (SAPI, SA_ACT_ORDER, '            order_by="subject"\n')]),
+        Fault("orphan in order_by: Project ordered by project_manager", True, [
+            (SAPI, SA_PROJ_ORDER, '        order_by="project_manager"\n')]),
+
+        # Across DocTypes. ORPHANED is keyed by DocType, so this one is NOT
+        # caught by the named list -- it is caught by the stand-in refusing a
+        # field Activity does not have. The fault exists to pin that narrowing
+        # the list to its DocTypes left this covered rather than uncovered.
+        Fault("an orphan asked of the wrong DocType (Activity.project_manager) "
+              "-- the stand-in's catch, not the named list's", True, [
+                  (SAPI, SA_ACT_FIELDS,
+                   '            fields=["name", "activity_name", "status", "project_manager"],\n')]),
+
+        # --- the title and its compatibility alias ---------------------------
+        Fault("the subject alias deleted (the built bundle calls "
+              ".toLowerCase() on it with no guard)", True, [
+                  (SAPI, SA_ALIAS, "")]),
+        Fault("the alias set from the wrong field", True, [
+            (SAPI, SA_ALIAS, "            activity['subject'] = activity.status\n")]),
+        # The plausible wrong fix: do the aliasing in the query instead of the
+        # loop. It looks tidier and leaves activity_name absent from every row,
+        # so the real title is gone and only the compatibility key survives.
+        Fault("activity_name aliased in the query, so the real field is gone", True, [
+            (SAPI, SA_ACT_FIELDS,
+             '            fields=["name", "activity_name as subject", "status"],\n')]),
+
+        # --- project_lead, which is what replaced project_manager -----------
+        # Not the same fault as the orphan above: that one asks whether the
+        # removed column is queried, this one asks whether the live field
+        # reaches the caller under its own name.
+        Fault("project_lead dropped from the Project query", True, [
+            (SAPI, SA_PROJ_FIELDS,
+             '        fields=["name", "project_name", "status", "division"],\n')]),
+
+        # --- which rows come back -------------------------------------------
+        Fault("Archived projects no longer filtered out", True, [
+            (SAPI, SA_PROJ_FILTERS, '        filters={},\n')]),
+        Fault("Cancelled activities no longer filtered out", True, [
+            (SAPI, SA_ACT_FILTERS,
+             '            filters={"project": project.name},\n')]),
+        Fault("the project filter dropped, so every project gets every "
+              "activity", True, [
+                  (SAPI, SA_ACT_FILTERS,
+                   '            filters={"status": ["!=", "Cancelled"]},\n')]),
+
+        # --- the order -------------------------------------------------------
+        # These two are the pair that pins the ordering claim. Ordering by
+        # `name` used to be GREEN: the fixture's ids happened to sort the same
+        # way as their titles, so the assertion could not tell "ordered by
+        # activity_name" from "ordered at all". One fixture id was renamed so
+        # the two orderings disagree; without that, this fault passes.
+        Fault("ordered by name rather than activity_name (green until the "
+              "fixture was made to discriminate)", True, [
+                  (SAPI, SA_ACT_ORDER, '            order_by="name"\n')]),
+        Fault("not ordered at all", True, [
+            (SAPI, SA_ACT_ORDER, '            order_by=None\n')]),
+
+        # --- the division lookup ---------------------------------------------
+        Fault("division_name taken from the colour field", True, [
+            (SAPI, SA_DIV_NAME,
+             "                project['division_name'] = division_data.color\n")]),
+        Fault("division_color taken from the name field", True, [
+            (SAPI, SA_DIV_COLOR,
+             "                project['division_color'] = division_data.division_name\n")]),
+        Fault("the division lookup dropped entirely", True, [
+            (SAPI, SA_DIV_NAME + SA_DIV_COLOR, "                pass\n")]),
+
+        # --- controls: real edits, no behaviour changed, must stay green ------
+        # THIS is the one that earned its keep. work_type is a live field on
+        # Activity (activity.json, in_standard_filter, added by the same commit
+        # that removed it from Project), so asking Activity for it is ordinary
+        # correct code. The test reported it as "an orphaned column on Activity,
+        # not a field", because its ORPHANED list was flat and checked against
+        # every query regardless of DocType. A guard that fails on correct code
+        # gets deleted rather than fixed, so this was worth more than a miss.
+        Fault("the Activity query asks for work_type, which IS an Activity "
+              "field", False, [
+                  (SAPI, SA_ACT_FIELDS,
+                   '            fields=["name", "activity_name", "status", "work_type"],\n')]),
+        # Two more live fields, to pin that the control above is about DocType
+        # scoping and not about work_type's spelling.
+        Fault("the Activity query asks for description and estimate, both live "
+              "fields", False, [
+                  (SAPI, SA_ACT_FIELDS,
+                   '            fields=["name", "activity_name", "status", "description", "estimate"],\n')]),
+        Fault("the Project query asks for project_code, a live field", False, [
+            (SAPI, SA_PROJ_FIELDS,
+             '        fields=["name", "project_name", "status", "project_lead", "division", "project_code"],\n')]),
+
+        # Renames: the source changes, nothing observable does. If either goes
+        # red the test is pinning the function's internals rather than what it
+        # returns, which is a finding about the test.
+        Fault("a local variable renamed (division_data -> division_row)", False, [
+            (SAPI, SA_DIV_BLOCK,
+             '        if project.division:\n'
+             '            division_row = frappe.db.get_value("Division", project.division, \n'
+             '                ["division_name", "color"], as_dict=True)\n'
+             '            if division_row:\n'
+             "                project['division_name'] = division_row.division_name\n"
+             "                project['division_color'] = division_row.color\n")]),
+        Fault("the loop variable renamed (activity -> row)", False, [
+            (SAPI, SA_ALIAS_BLOCK,
+             '        for row in activities:\n'
+             '            # Compatibility alias: the built scheduler bundle under\n'
+             '            # erplite/public/frontend/assets/ still reads `subject`. Remove this\n'
+             '            # once the frontend has been rebuilt from frontend/src.\n'
+             "            row['subject'] = row.activity_name\n")]),
+        # The `if project.division:` guard removed. Green, and the reason is
+        # worth writing down rather than discovering twice: frappe's
+        # db.get_value with `filters=None` does NOT fall through to "no WHERE
+        # clause, take the first row" -- database.py:614 sends it to
+        # get_values_from_single, which reads tabSingles, and Division is not a
+        # Single DocType. So a project with no division still gets no division
+        # attached; the edit costs a pointless query and changes no result. The
+        # stand-in returns None by a different route and agrees on the outcome.
+        Fault("the `if project.division:` guard made unconditional", False, [
+            (SAPI, "        if project.division:\n", "        if True:\n")]),
+    ],
+)
+
+
 
 TARGETS = {
     "xero_gate": XERO_GATE,
@@ -5210,4 +5418,5 @@ TARGETS = {
     "doctype_json_validation": DOCTYPE_JSON_VALIDATION,
     "status_literals": STATUS_LITERALS,
     "shadowed_imports": SHADOWED_IMPORTS,
+    "scheduler_api": SCHEDULER_API,
 }
