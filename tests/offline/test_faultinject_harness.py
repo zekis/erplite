@@ -46,8 +46,15 @@ UNDRIVEN_OFFLINE_FILES = {
     # Cannot be: it is the harness's own guard file. A target for it would be a
     # target for the thing that decides whether targets mean anything.
     "tests/offline/test_faultinject_harness.py": "drives the harness; nothing drives it",
-    # Not yet. Each predates the harness and sweeps metadata or wiring rather than a
-    # behaviour, so a fault for it is an edit to a JSON or a hook, not to a function.
+    # Not yet -- and not because of the file kind, which is what this comment used to
+    # say. Each predates the harness and sweeps metadata or wiring rather than a
+    # behaviour, so a fault for one is an edit to a JSON, a hook or a text file rather
+    # than to a function body. The harness drives exactly those already: on 6 Oct 2026,
+    # 12 of the 25 targets inject into .json, hooks.py or patches.txt, and
+    # doctype_json_validation injects into nothing else -- 7 faults, 7 JSON edits, and
+    # it bites. test_a_target_can_be_driven_entirely_by_non_python_edits below keeps
+    # that from going quietly stale. So these seven are undriven because nobody has
+    # written them, which is the work; the file kind is not the obstacle.
     "tests/offline/test_child_doctype_hooks.py": "no target yet",
     "tests/offline/test_client_scripts.py": "no target yet",
     "tests/offline/test_dashboard_widgets.py": "no target yet",
@@ -202,6 +209,27 @@ class TestEveryTargetIsWorthTrusting(unittest.TestCase):
             "or add it with a reason): %s"
             % (sorted(set(UNDRIVEN_OFFLINE_FILES) - undriven),
                sorted(undriven - set(UNDRIVEN_OFFLINE_FILES))))
+
+    def test_a_target_can_be_driven_entirely_by_non_python_edits(self):
+        """The reason UNDRIVEN_OFFLINE_FILES used to give for leaving seven files
+        undriven was that a fault for them would edit a JSON or a hook rather than a
+        function. That is true of the files and false as an obstacle, and this pins the
+        half that is checkable: at least one target injects into no .py file at all and
+        still bites. While that holds, "it would only edit metadata" cannot be read as
+        a reason not to write the remaining targets.
+        """
+        wholly_non_python = {}
+        for key, target in sorted(TARGETS.items()):
+            suffixes = {os.path.splitext(path)[1] for fault in target.faults
+                        for path, _old, _new in fault.edits}
+            if suffixes and ".py" not in suffixes:
+                wholly_non_python[key] = sorted(suffixes)
+        self.assertTrue(
+            wholly_non_python,
+            "no target is driven entirely by non-Python edits any more. If that is "
+            "deliberate, the rationale in UNDRIVEN_OFFLINE_FILES needs rewriting: it "
+            "tells the next person that editing a JSON or a hook is a workable way to "
+            "drive a test file, and cites this as the proof.")
 
     def test_each_target_has_at_least_one_negative_control(self):
         """Without a control, "every fault went red" can mean the test file is
