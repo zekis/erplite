@@ -20,6 +20,7 @@ Runs without a bench.
 import importlib.util
 import os
 import py_compile
+import re
 import subprocess
 import sys
 import unittest
@@ -76,6 +77,25 @@ def committed(relpath):
     raw = _blobs[relpath]
     text = raw.decode("utf-8")
     return text, ("\r\n" if "\r\n" in text else "\n")
+
+
+_UNITS = ("zero", "one", "two", "three", "four", "five", "six", "seven",
+          "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen",
+          "fifteen", "sixteen", "seventeen", "eighteen", "nineteen")
+_TENS = {20: "twenty", 30: "thirty", 40: "forty", 50: "fifty", 60: "sixty"}
+
+
+def _spelled(n):
+    """`21` -> "twenty-one". The README writes its target count as a word, and a
+    count nothing checks is the count that goes stale -- which is what happened.
+    """
+    if n < 20:
+        return _UNITS[n]
+    ten, unit = divmod(n, 10)
+    word = _TENS.get(ten * 10)
+    if word is None:
+        return str(n)
+    return word if unit == 0 else "%s-%s" % (word, _UNITS[unit])
 
 
 class TestEveryFaultStillMatchesItsOneSpot(unittest.TestCase):
@@ -163,6 +183,77 @@ class TestEveryTargetIsWorthTrusting(unittest.TestCase):
                     sorted(names), sorted(set(names)),
                     "target %s has duplicate fault names" % key)
 
+
+class TestTheREADMEStillDescribesEveryTarget(unittest.TestCase):
+    """A target with no section is a target whose result nobody can read.
+
+    The README's own rule is that its two counts are "counted from `faults.py`,
+    not kept by hand" -- but nothing counted them, so they went two targets
+    stale, and `endpoint_wiring` sat in `faults.py` for two more targets with no
+    section at all. Both were noticed by a person remembering, twice, which is
+    the thing this file exists to replace everywhere else.
+
+    These tests do not check the prose. They check the three facts a reader uses
+    to find out whether a claim about a target has been written down: that it
+    has a section, that the section names the file the target drives, and that
+    the counts at the top are today's.
+    """
+
+    README = os.path.join(FI, "README.md")
+
+    def _readme(self):
+        with open(self.README, encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_every_target_has_a_section_naming_its_test_file(self):
+        text = self._readme()
+        headings = {}
+        for line in text.splitlines():
+            match = re.match(r"^### `([a-z_]+)`(.*)$", line)
+            if match:
+                headings[match.group(1)] = match.group(2)
+        for key, target in sorted(TARGETS.items()):
+            with self.subTest(target=key):
+                self.assertIn(
+                    key, headings,
+                    "`%s` is a target in faults.py with no `### \x60%s\x60` "
+                    "section in tests/faultinject/README.md. Drive it and write "
+                    "what the run said; do not write the section from the file."
+                    % (key, key))
+                self.assertIn(
+                    target.test, headings[key],
+                    "the `%s` section does not name %s, the file that target "
+                    "drives" % (key, target.test))
+
+    def test_no_section_describes_a_target_that_is_gone(self):
+        text = self._readme()
+        for line in text.splitlines():
+            match = re.match(r"^### `([a-z_]+)`", line)
+            if match:
+                with self.subTest(section=match.group(1)):
+                    self.assertIn(
+                        match.group(1), TARGETS,
+                        "the README has a section for `%s`, which faults.py no "
+                        "longer defines" % match.group(1))
+
+    def test_the_counts_at_the_top_of_targets_are_todays(self):
+        """The sentence a reader believes without checking anything else."""
+        text = self._readme()
+        match = re.search(r"^([A-Z][a-z]+(?:-[a-z]+)?) so far, (\d+) injections",
+                          text, re.M)
+        self.assertIsNotNone(
+            match, "the `## Targets` section no longer opens with "
+                   "'<Number> so far, <n> injections', so nothing here can "
+                   "check those two numbers")
+        spelled, injections = match.group(1), int(match.group(2))
+        self.assertEqual(
+            injections, sum(len(t.faults) for t in TARGETS.values()),
+            "the README says %d injections; faults.py has %d"
+            % (injections, sum(len(t.faults) for t in TARGETS.values())))
+        self.assertEqual(
+            spelled.lower(), _spelled(len(TARGETS)),
+            "the README says %s targets; faults.py has %d (%s)"
+            % (spelled, len(TARGETS), _spelled(len(TARGETS))))
 
 class TestTheLineEndingGuard(unittest.TestCase):
     """`nl` is the guard that six real faults needed and did not have.

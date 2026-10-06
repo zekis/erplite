@@ -239,9 +239,18 @@ Twenty-one so far, 569 injections: edits applied to the app's real source, with
 Those two numbers are counted from `faults.py`, not kept by hand. They said
 "Nineteen so far, 543" until the twenty-first target was added, by which point
 there were twenty and 557 -- `endpoint_wiring` arrived without a section here
-and `raw_sql`'s own paragraph already called itself the eighteenth. **There is
-still no section below for `endpoint_wiring`**, and it is not written here from
-memory: driving that target is a job of its own.
+and `raw_sql`'s own paragraph already called itself the eighteenth. **Every
+target now has a section.** `endpoint_wiring`'s was the one missing, and it was
+left missing on purpose rather than written from the file: it is below now
+because that target has been driven, and it says what the run said.
+
+Both staleness above was found by somebody remembering, twice, which is the
+failure this whole directory exists to stop. So it is a test now:
+`test_faultinject_harness.TestTheREADMEStillDescribesEveryTarget` asserts that
+every key in `TARGETS` has a `###` section here naming the file it drives, that
+no section names a target that is gone, and that the two numbers in the sentence
+above -- the spelled-out count as well as the digits -- are today's. It does not
+read the prose. Writing that is still a job for whoever drives the target.
 
 **That list of files doing fault injection of their own is now empty.**
 `test_projects_api.py` was the last of them — it planted shapes in its own
@@ -338,6 +347,91 @@ eighteen — it is the test that fails if any of them changes shape or goes away
 The child-table faults do cover every instance: both the app's own
 (`Supplier Quote Item`) and frappe's (`Has Role`), because those two are read
 through different methods and the rule has to hold for both.
+
+### `endpoint_wiring` — `tests/offline/test_endpoint_wiring.py`
+
+The twentieth target, and the section this README said for two targets was
+missing. It is written from a run rather than from the file: `run.py
+endpoint_wiring`, baseline 13 passed, **14 injections, 14 as expected, exit 0**.
+
+What it judges is wiring resolved by name at runtime and by nothing before it:
+a `frappe.call` in a client script naming a server method, and a DocType
+literal naming a DocType. Both fail on the click or the request, and neither a
+build nor a migrate nor the rest of the suite says a word first.
+
+Eleven injections red, three controls: a read's DocType made a plural that
+exists nowhere, the same mistake in `new_doc` in another file, a wrong DocType
+arriving as a `doctype=` keyword with no positional argument to read, a third
+function starting to read the missing `Resource Role`, one of the two
+known-broken reads quietly dropped, the read moved behind a `frappe.db` alias,
+`new_doc` called through `from frappe import new_doc`, the app's only read of
+frappe's `File` DocType removed while the excuse for it stays behind, a
+whitelisted endpoint renamed with the button left on the old name, a button
+pointed at a module the function was never moved to, and the
+`progress_percent` handler the owner decided against coming back. The three
+controls are real edits that change no behaviour: an extra column, keyword
+arguments swapped, the result variable renamed.
+
+**All fourteen went as expected on the first run.** As with `read_shapes`, that
+measures the author's imagination rather than the file, so the regressions it
+*might* miss were written as probes, applied to real source and restored:
+
+| regression | noticed | by |
+| --- | --- | --- |
+| a client-called method loses `@frappe.whitelist()` | yes | **`string_refs`**, and `whitelist_write_gate` twice |
+| the one live `hooks.py` dotted path stops resolving | yes | **`string_refs`** |
+| a client script reads a DocType that exists nowhere | **no** | - |
+
+**Two guesses at a gap; the neighbouring file had both.** `_resolve` here
+checks only that a module-level function of that name exists, so a button
+pointing at a real function that is *not* whitelisted resolves fine and returns
+a permission error on the click. Removing `@frappe.whitelist()` from
+`clear_old_logs` — the one endpoint this file already injects a rename into —
+turns the suite red in three places, led by
+`test_string_references.DottedMethodPathsResolve.test_every_method_called_from_the_front_end_is_whitelisted`.
+All 22 of the app's client-called methods carry the decorator today. `hooks.py`
+is the other half: it hands frappe dotted paths to resolve by name exactly as a
+button does, and breaking the one live path (`erplite.check_app_permission`,
+`hooks.py:20`) turns `test_every_called_method_exists_at_module_level` red.
+**Run a probe against the whole suite, not just the target** — "this file does
+not check it" and "nothing checks it" are different claims, and only the second
+is worth a rule.
+
+**My own probe over `hooks.py` was wrong in both directions at once, which is
+why that sweep belongs where it already is.** It reported 24 paths that resolve
+to nothing, and every one is a commented-out line of frappe's app scaffold
+(`# after_install = ...`, `# erplite.tasks.daily`). It also missed the only live
+path, because the pattern wanted two dots and `erplite.check_app_permission`
+has one. Twenty-four false positives and one false negative, from a sweep that
+took ten minutes and read plausibly. `test_string_references.py` strips
+comments with the real tokenizer, says so in its docstring — *a sweep that
+cannot tell code from a comment is a sweep that gets ignored* — and `string_refs`
+carries a control for it by name: "a dotted path that resolves to nothing, in a
+Python comment". The trap I fell into is already pinned as somebody's control.
+
+**The one real gap came from reading the walker's file filter, not from
+guessing at shapes.** `_walk(".py")` is the whole of it: a DocType literal
+written in a client script is outside this rule by construction. There are six,
+and nothing in the suite judges the name in any of them —
+
+```
+erplite/accounts/doctype/supplier_quote/supplier_quote.js:32        Supplier
+erplite/scheduler/doctype/schedule_entry/schedule_entry.js:68       Activity
+erplite/projects/doctype/timesheet_entry/timesheet_entry.js:45      Project
+erplite/projects/doctype/timesheet_entry/timesheet_entry.js:130     Activity
+erplite/projects/doctype/timesheet_entry/timesheet_entry.js:143     Activity
+erplite/projects/doctype/timesheet_entry/timesheet_entry_list.js:34 Project
+```
+
+— and all six name a DocType this app declares, so the rule would be
+non-vacuous and green today. `test_client_scripts.py` is the near neighbour, and
+its own docstring says it keys a script to the DocType of the folder it sits in,
+"which is exactly right for `frm.set_value` and no use at all for a script that
+queries a *different* DocType by name"; it pins one removed *field* across those
+sites instead. So the field half of a client-side read is covered and the
+DocType half is not. That is the next rule, named here rather than claimed as
+done. **The question that found it is the one worth keeping: not "what shape
+might this rule miss?" but "what does this walker's own file filter exclude?"**
 
 ### `raw_sql` — `tests/offline/test_raw_sql.py`
 
