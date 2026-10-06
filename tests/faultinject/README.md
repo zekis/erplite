@@ -203,16 +203,31 @@ Three habits earn their keep:
   it.
 
 * **When the thing under test is a *detector*, the faults are the bug it was
-  written to find — and the question changes shape.** Eight of the nine targets
-  here ask of a behavioural rule: would this test notice if the rule broke? The
-  ninth (`post_save_writes`) asks it of a whole-app sweep, and there the useful
-  question is not "is the rule pinned" but **"what can real code do that this
-  detector cannot see?"** You cannot answer it from the detector's own unit
-  tests, because those are synthetic fixtures the author wrote: they pin the
-  shapes the author thought of, and are silent by construction about the ones
-  they did not. The answer only comes from planting real ones in real source.
-  Eight of eleven exceptions in that target's first run were shapes nobody had
-  thought of — including `self.set("status", x)`, frappe's own setter.
+  written to find — and the question changes shape.** Most targets here ask of a
+  behavioural rule: would this test notice if the rule broke? A few ask it of a
+  whole-app sweep instead, and there the useful question is not "is the rule
+  pinned" but **"what can real code do that this detector cannot see?"** You
+  cannot answer it from the detector's own unit tests, because those are
+  synthetic fixtures the author wrote: they pin the shapes the author thought of,
+  and are silent by construction about the ones they did not. The answer only
+  comes from planting real ones in real source. Eight of eleven exceptions in
+  `post_save_writes`'s first run were shapes nobody had thought of — including
+  `self.set("status", x)`, frappe's own setter.
+
+* **Which targets are detectors is worth counting, and the two markers for it
+  disagree.** Three carry live `KNOWN BLIND SPOT` faults: `post_save_writes`
+  (four), `string_refs` (three) and `select_values` (four). Five test files carry
+  a "What this cannot see" section: those of `post_save_writes`, `select_values`,
+  `raw_sql`, `read_shapes` and `todo_status_patch`. **The two sets are not the
+  same**, and each difference says something. `string_refs` has three deliberate
+  blind spots and no section telling its reader so. `todo_status_patch` has the
+  section and no live blind spots left, because it **closed all five** it once
+  had — they survive as comments naming the test that closed each. So a blind
+  spot is not a fixed property of a detector: it is a position, and it can be
+  given up later. Count from the fault list
+  (`grep 'KNOWN BLIND SPOT' faults.py`), which is current by construction,
+  rather than from the prose here — the sentence this paragraph replaced read
+  "eight of the nine targets here" long after there were twenty-five.
 * **A detector needs a third verdict, and conflating it with a control is a
   reporting bug.** `run.py` has two: red-expected and green-expected, and
   green-expected reads as "equivalent edit, no bug here". For a detector some
@@ -233,7 +248,7 @@ breaking the code.
 
 ## Targets
 
-Twenty-four so far, 606 injections: edits applied to the app's real source, with
+Twenty-five so far, 621 injections: edits applied to the app's real source, with
 `run.py` watching one test file go red.
 
 Those two numbers are counted from `faults.py`, not kept by hand. They said
