@@ -233,7 +233,7 @@ breaking the code.
 
 ## Targets
 
-Twenty-three so far, 599 injections: edits applied to the app's real source, with
+Twenty-four so far, 604 injections: edits applied to the app's real source, with
 `run.py` watching one test file go red.
 
 Those two numbers are counted from `faults.py`, not kept by hand. They said
@@ -2251,3 +2251,63 @@ is `get_attr` and `is_whitelisted` that actually run needs a bench; the claims
 here are read off frappe version-15 with the file and line beside each one. And
 whether the arguments sent match the signature is `test_string_references.py`'s
 (`test_called_arguments_are_accepted`), deliberately not duplicated here.
+
+### `doctype_json_validation` — `tests/offline/test_doctype_json_validation.py`
+
+Twenty-fourth target, and the first whose subject is a file frappe reads rather
+than code anybody wrote. Frappe already has twenty-three checks for these
+files, in `validate_fields` and `validate_permissions`
+(`frappe/core/doctype/doctype/doctype.py`). **Deploying runs none of them**,
+and that is two separate mechanisms, both read off frappe 15.52.0 — the version
+on the live site, not the version-15 branch:
+
+* `bench migrate` imports each `<doctype>.json` through `frappe/model/sync.py:111`,
+  which leaves `data_import` at `False`, so `frappe/modules/import_file.py:235`
+  sets `doc.flags.ignore_validate = True` before `doc.insert()`. Then
+  `frappe/model/document.py:1099` is `if self.flags.ignore_validate: return` —
+  **before** `run_method("validate")`. `DocType.validate` never runs, so neither
+  does the `validate_fields(self)` on `doctype.py:203`. That is nine checks.
+* The other fourteen are skipped a second time and on purpose: `validate_fields`
+  guards them with `if not frappe.flags.in_migrate` (`doctype.py:1646`, `:1659`).
+
+So these checks only ever fire when a **human saves the DocType in the Desk in
+developer mode**. That is how most of these JSONs were written, which is why the
+app is clean. It is also why the exposure is real: every one of these files is
+ordinary JSON in git, and a rename or a merge resolution that touches one passes
+no check of any kind between the editor and production.
+
+The four faults are chosen for four different symptoms, because the checks look
+interchangeable and are not:
+
+* **`flags` as a fieldname** shadows an attribute `Document` sets on every
+  instance (`frappe/model/base_document.py:114`).
+* **`title_field` pointing at a field that no longer exists** reaches the
+  link-search query as a column name — a page that used to work.
+* **a `Select` default outside its own `options`** is the silent one: every new
+  document starts holding a value the field cannot have, and nothing comparing
+  against the options will ever match it. The same class as
+  `test_status_literals.py`, arriving through metadata instead of JavaScript.
+* **a permission row with `cancel` and no `submit`** is the one that matters
+  most, because it does not fail at all. It grants or withholds access, quietly,
+  in production.
+
+**What this target found when it was written.** One real exception, and it is a
+decision rather than a mistake: `Currency.exchange_rate` is a Float with
+`"precision": "9"`, where `check_precision` (`doctype.py:1356`) allows 1 to 6. It
+works — `get_field_precision` (`frappe/model/meta.py:800`) is
+`if df.precision: precision = cint(df.precision)` with no clamp, and a Float
+column is `decimal(21,9)` (`frappe/database/mariadb/database.py:170`), so nine
+decimals is exactly the width the column already has. What it costs is that the
+Desk can no longer save that DocType: opening Currency in developer mode and
+pressing Update throws on a field the person did not touch. Nine decimal places
+on an exchange rate is a reasonable thing to want, so it is pinned as an exact
+exception and raised for the owner rather than corrected.
+
+**What this target does not reach.** Checks needing the live database
+(`check_unique_and_text`'s scan for existing non-unique values) or another app's
+field list (`check_table_multiselect_option` beyond this app). The ones that
+mutate or `msgprint` rather than throw are not failures and are listed in the
+test file instead of implemented. And frappe's full DocType list is not in this
+repository, so a `Link` whose options names something outside the app is judged
+by the set of such names being exactly the six measured ones — a seventh is
+either a real new dependency or the typo the check is for.

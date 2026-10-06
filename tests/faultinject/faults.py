@@ -4796,6 +4796,86 @@ API_URL_METHODS = Target("tests/offline/test_api_url_methods.py", [
 ])
 
 
+# --- the DocType JSON itself, which deploying never validates --------------
+# tests/offline/test_doctype_json_validation.py. Frappe has twenty-three checks
+# for these files and runs none of them on deploy: `sync.py:111` imports each
+# JSON with `data_import` false, `import_file.py:235` sets `ignore_validate`,
+# and `document.py:1099` returns before `validate`. Fourteen more are gated on
+# `not frappe.flags.in_migrate` (`doctype.py:1646`) and so are skipped twice
+# over. Verified against frappe 15.52.0, the live version. So the faults below
+# are not caught by a build, a migrate, or any test but this one -- and three
+# of the four reach the user as a page that used to work and now does not.
+
+TRIP_JSON = "erplite/projects/doctype/trip/trip.json"
+KA_JSON = "erplite/erplite/doctype/knowledge_article/knowledge_article.json"
+PINV_JSON = "erplite/accounts/doctype/purchase_invoice/purchase_invoice.json"
+RESOURCE_JSON = "erplite/scheduler/doctype/resource/resource.json"
+
+TRIP_NAME_FIELD = ('  {\n'
+                   '   "fieldname": "trip_name",\n'
+                   '   "fieldtype": "Data",\n')
+KA_TITLE_FIELD = ' "title_field": "title"\n'
+PINV_STATUS_DEFAULT = ('   "default": "Draft",\n'
+                       '   "fieldname": "status",\n')
+RESOURCE_FIRST_PERM = ('  {\n'
+                       '   "create": 1,\n'
+                       '   "delete": 1,\n'
+                       '   "email": 1,\n'
+                       '   "export": 1,\n'
+                       '   "print": 1,\n'
+                       '   "read": 1,\n'
+                       '   "report": 1,\n'
+                       '   "role": "System Manager",\n')
+
+DOCTYPE_JSON_VALIDATION = Target(
+    "tests/offline/test_doctype_json_validation.py", [
+
+    # -- a fieldname that shadows Document's own attribute --
+    Fault("a fieldname is renamed to one of Document's reserved attributes, so "
+          "every instance of the DocType overwrites it on load", True,
+          [(TRIP_JSON, TRIP_NAME_FIELD,
+            '  {\n'
+            '   "fieldname": "flags",\n'
+            '   "fieldtype": "Data",\n')]),
+
+    # -- a DocType-level field reference that stops resolving --
+    Fault("title_field names a field that no longer exists, so the name reaches "
+          "the link-search query as a column", True,
+          [(KA_JSON, KA_TITLE_FIELD, ' "title_field": "article_title"\n')]),
+
+    # -- the silent one: a default a Select cannot hold --
+    Fault("a Select field's default is not one of its options, so every new "
+          "document starts holding a value the field cannot have", True,
+          [(PINV_JSON, PINV_STATUS_DEFAULT,
+            '   "default": "Drafted",\n'
+            '   "fieldname": "status",\n')]),
+
+    # -- a permission row frappe would have refused --
+    Fault("a permission row grants cancel without submit, which frappe rejects "
+          "on save and nothing checks on deploy", True,
+          [(RESOURCE_JSON, RESOURCE_FIRST_PERM,
+            '  {\n'
+            '   "cancel": 1,\n'
+            '   "create": 1,\n'
+            '   "delete": 1,\n'
+            '   "email": 1,\n'
+            '   "export": 1,\n'
+            '   "print": 1,\n'
+            '   "read": 1,\n'
+            '   "report": 1,\n'
+            '   "role": "System Manager",\n')]),
+
+    # Negative control. A field's label is user-visible text that no rule in
+    # this sweep reads: every check judges fieldnames, fieldtypes, options,
+    # defaults and permission flags. If this goes red, the sweep has started
+    # pinning the wording of the form rather than the validity of the DocType,
+    # and the sweep is what needs fixing.
+    Fault("CONTROL: a field's label reworded (must stay green)", False,
+          [(TRIP_JSON, '   "label": "Trip Name",\n',
+            '   "label": "Name of Trip",\n')]),
+])
+
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -4820,4 +4900,5 @@ TARGETS = {
     "read_shapes": READ_SHAPES,
     "client_doctypes": CLIENT_DOCTYPES,
     "api_url_methods": API_URL_METHODS,
+    "doctype_json_validation": DOCTYPE_JSON_VALIDATION,
 }
