@@ -5945,6 +5945,16 @@ SII_CLASS = "class SalesInvoiceItem(Document):\n    pass\n"
 HOL_CLASS = "class Holiday(Document):\n    pass\n"
 PCON_CLASS = "class ProjectContacts(Document):\n\tpass\n"
 
+SI_PY = "erplite/accounts/doctype/sales_invoice/sales_invoice.py"
+PI_PY = "erplite/accounts/doctype/purchase_invoice/purchase_invoice.py"
+
+# Identical text in both files, by design: they are the same controller written
+# twice, which is the contrast the test file is about.
+SI_LINE_AMOUNT = ("            item.amount = item.qty * item.rate\n"
+                  "            self.total += item.amount\n")
+SI_TAX = ("                item.tax_amount = item.amount * "
+          "(item.tax_rate / 100)\n")
+
 SQ_LINE_AMOUNT = ("\t\t\titem.amount = flt(item.qty) * flt(item.rate)\n"
                   "\t\t\tself.total += item.amount\n")
 
@@ -6108,6 +6118,54 @@ CHILD_DOCTYPE_HOOKS = Target(
     Fault("CONTROL: a field's label is reworded", False,
           [(SQI_JSON, '   "label": "Lead Time (Days)"\n',
             '   "label": "Lead Time (days)"\n')]),
+    # -- the two sibling parents the docstring names ----------------------
+    # The faults that found the hole. The docstring's reason for removing the
+    # dead hooks from Sales Invoice Item and Purchase Invoice Item is that both
+    # parents already derive amount and tax_amount themselves. Reinstating the
+    # Supplier Quote bug in both left this file's 21 tests and the whole
+    # offline suite's 687 green on 7 Oct 2026: the sentence the removal rested
+    # on was checked by nothing. Each fault below is applied to both parents in
+    # one go, because a claim made about the pair is not pinned by half of it.
+    Fault("the Supplier Quote bug in both invoice parents: read item.amount "
+          "instead of deriving it, which is what the docstring says cannot "
+          "happen here", True,
+          [(SI_PY, SI_LINE_AMOUNT,
+            "            item.amount = item.amount or 0\n"
+            "            self.total += item.amount\n"),
+           (PI_PY, SI_LINE_AMOUNT,
+            "            item.amount = item.amount or 0\n"
+            "            self.total += item.amount\n")]),
+    Fault("tax is taken from the rate rather than the line amount, so it "
+          "ignores the quantity", True,
+          [(SI_PY, SI_TAX,
+            "                item.tax_amount = item.rate * "
+            "(item.tax_rate / 100)\n"),
+           (PI_PY, SI_TAX,
+            "                item.tax_amount = item.rate * "
+            "(item.tax_rate / 100)\n")]),
+    # The guard is what makes an untaxed line ordinary data rather than a
+    # crash: tax_rate is None on a row that did not supply one, and None / 100
+    # raises. Same missing-cast family as the rate.
+    Fault("the tax_rate guard is dropped, so a line with no tax rate raises", True,
+          [(SI_PY, "            if item.tax_rate:\n",
+            "            if True:\n"),
+           (PI_PY, "            if item.tax_rate:\n",
+            "            if True:\n")]),
+    Fault("rounded_total is not rounded", True,
+          [(SI_PY, "        self.rounded_total = round(self.grand_total)\n",
+            "        self.rounded_total = self.grand_total\n"),
+           (PI_PY, "        self.rounded_total = round(self.grand_total)\n",
+            "        self.rounded_total = self.grand_total\n")]),
+    Fault("CONTROL: the invoice line amount goes through a local, same "
+          "arithmetic, in both parents", False,
+          [(SI_PY, SI_LINE_AMOUNT,
+            "            line_amount = item.qty * item.rate\n"
+            "            item.amount = line_amount\n"
+            "            self.total += line_amount\n"),
+           (PI_PY, SI_LINE_AMOUNT,
+            "            line_amount = item.qty * item.rate\n"
+            "            item.amount = line_amount\n"
+            "            self.total += line_amount\n")]),
 ])
 
 

@@ -304,7 +304,13 @@ def load_controller(frappe, module_dir, doctype_dir):
     utils.flt = flt
     utils.nowdate = lambda: "2026-10-06"
     utils.cint = lambda value: int(flt(value))
+    utils.now_datetime = lambda: "2026-10-06 09:00:00"
     frappe_pkg.utils = utils
+    # frappe._ is the translation function and is a no-op here. Both
+    # invoice controllers import it at module level, so without it they
+    # fail to load and the tests below would report the import as the
+    # defect rather than whatever they were asking about.
+    frappe_pkg._ = lambda text, *args, **kwargs: text
 
     sys.modules["frappe"] = frappe_pkg
     sys.modules["frappe.model"] = model
@@ -390,6 +396,139 @@ class SupplierQuoteTotals(unittest.TestCase):
         doc = self.quote([])
         doc.calculate_totals()
         self.assertEqual(doc.grand_total, 0)
+
+
+class SiblingParentsDeriveTheirOwnLineAmounts(unittest.TestCase):
+    """The claim this file's reasoning rests on, which nothing was holding.
+
+    Sales Invoice Item and Purchase Invoice Item had the same dead
+    `validate()`/`calculate_amount()` pair removed from their controllers, and
+    the reason recorded in the module docstring above is that "Both parents
+    already derive `amount` and `tax_amount` themselves, so these were harmless
+    duplicates and removing them changed no behaviour."
+
+    That is the sentence that made removing them safe, and on 7 Oct 2026
+    nothing in the repository was checking it. Reinstating the exact Supplier
+    Quote bug in both parents -- `item.amount = item.amount or 0` in place of
+    the derivation -- left this file's 21 tests green and the whole offline
+    suite's 687 green. The two sibling parents are named in the docstring as
+    the contrast that makes the bug legible, so an unchecked claim about them
+    is an unchecked claim about why this file exists.
+
+    Note what these tests do *not* say. `supplier_quote.py` casts both operands
+    with `flt()`; these two multiply the raw attributes, so a line with no rate
+    raises TypeError here where a Supplier Quote line totals zero. That is
+    today's behaviour, characterised below rather than quietly fixed: changing
+    it is a change to the invoice totals, which is the owner's call, not a
+    test's.
+    """
+
+    PARENTS = (
+        ("sales_invoice", "SalesInvoice", "Sales Invoice", "customer",
+         "sales_invoice_item", "Sales Invoice Item"),
+        ("purchase_invoice", "PurchaseInvoice", "Purchase Invoice", "supplier",
+         "purchase_invoice_item", "Purchase Invoice Item"),
+    )
+
+    LINES = [
+        {"item_name": "Senior systems engineer hours", "qty": 100, "rate": 154.0},
+        {"item_name": "Travel", "qty": 2, "rate": 250.0},
+    ]
+
+    class _ChildRow(FakeDocumentBase):
+        """Stands in for the item controller, which is now hook-free."""
+
+    def invoice(self, parent_dir, class_name, doctype, party_field,
+                child_dir, child_doctype, rows):
+        frappe = FakeFrappe(session_user="pat@company.test",
+                            roles=["System Manager"])
+        frappe.tables["Company"] = [_dict(name="Tierney Morris Pty Ltd")]
+        module = load_controller(frappe, "accounts", parent_dir)
+        doc = make_doc(getattr(module, class_name), doctype,
+                       "accounts", parent_dir,
+                       {party_field: "PARTY-0001", "status": "Draft"})
+        doc.items = [
+            make_doc(self._ChildRow, child_doctype, "accounts", child_dir, row)
+            for row in rows
+        ]
+        return doc
+
+    def test_the_total_comes_from_qty_and_rate_alone(self):
+        """No `amount` supplied, as for any server-side or REST creation."""
+        for args in self.PARENTS:
+            with self.subTest(doctype=args[2]):
+                doc = self.invoice(*args, self.LINES)
+                doc.calculate_totals()
+                self.assertEqual(doc.total, 15900.0)
+                self.assertEqual(doc.grand_total, 15900.0)
+
+    def test_line_amounts_are_filled_in(self):
+        for args in self.PARENTS:
+            with self.subTest(doctype=args[2]):
+                doc = self.invoice(*args, self.LINES)
+                doc.calculate_totals()
+                self.assertEqual([item.amount for item in doc.items],
+                                 [15400.0, 500.0])
+
+    def test_tax_is_derived_from_the_derived_line_amount(self):
+        """tax_amount reads item.amount, so it inherits whatever that is."""
+        rows = [dict(self.LINES[0], tax_rate=10)]
+        for args in self.PARENTS:
+            with self.subTest(doctype=args[2]):
+                doc = self.invoice(*args, rows)
+                doc.calculate_totals()
+                self.assertEqual(doc.items[0].tax_amount, 1540.0)
+                self.assertEqual(doc.total_tax, 1540.0)
+                self.assertEqual(doc.grand_total, 16940.0)
+
+    def test_no_tax_rate_leaves_the_tax_total_at_nought(self):
+        for args in self.PARENTS:
+            with self.subTest(doctype=args[2]):
+                doc = self.invoice(*args, self.LINES)
+                doc.calculate_totals()
+                self.assertEqual(doc.total_tax, 0)
+
+    def test_a_line_with_no_rate_raises_here_but_not_on_a_supplier_quote(self):
+        """Characterising today's behaviour, not endorsing it.
+
+        The operands are not cast, so an unsupplied rate is None and the
+        multiplication raises. The same line on a Supplier Quote totals zero,
+        because `calculate_totals()` there casts with flt(). Both documents are
+        reachable over the REST API with a line that has no rate yet.
+        """
+        for args in self.PARENTS:
+            with self.subTest(doctype=args[2]):
+                doc = self.invoice(*args, [{"item_name": "To be quoted",
+                                            "qty": 3}])
+                with self.assertRaises(TypeError):
+                    doc.calculate_totals()
+
+    def test_a_string_rate_is_concatenated_onto_the_row_then_raises(self):
+        """The other half of the same missing cast, and where it surfaces.
+
+        REST and the import tool both send numbers as strings. `2 * "250.0"`
+        is not an error in Python, it is the string "250.0250.0", so the wrong
+        value is written to the row first and the raise comes one line later
+        from `self.total += item.amount`. The row is what a reader checks, so
+        this pins both: the bad value lands, and the accumulation stops it
+        reaching the database.
+        """
+        for args in self.PARENTS:
+            with self.subTest(doctype=args[2]):
+                doc = self.invoice(*args, [{"item_name": "Travel", "qty": 2,
+                                            "rate": "250.0"}])
+                with self.assertRaises(TypeError):
+                    doc.calculate_totals()
+                self.assertEqual(doc.items[0].amount, "250.0250.0")
+
+    def test_rounded_total_is_the_grand_total_rounded(self):
+        rows = [{"item_name": "Part hour", "qty": 1, "rate": 154.49}]
+        for args in self.PARENTS:
+            with self.subTest(doctype=args[2]):
+                doc = self.invoice(*args, rows)
+                doc.calculate_totals()
+                self.assertEqual(doc.grand_total, 154.49)
+                self.assertEqual(doc.rounded_total, 154)
 
 
 class Premises(unittest.TestCase):
