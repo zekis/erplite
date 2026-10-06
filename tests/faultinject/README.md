@@ -248,7 +248,7 @@ breaking the code.
 
 ## Targets
 
-Twenty-five so far, 621 injections: edits applied to the app's real source, with
+Twenty-six so far, 633 injections: edits applied to the app's real source, with
 `run.py` watching one test file go red.
 
 Those two numbers are counted from `faults.py`, not kept by hand. They said
@@ -2431,3 +2431,84 @@ a helper the sweep does not follow, is not judged at all.
 
 **What the run said:** 15 of 15 as expected, first run, against a baseline of
 4 passed.
+
+### `shadowed_imports` — `tests/offline/test_shadowed_imports.py`
+
+Twenty-sixth target, and **the clearest case yet for why a passing sweep is not
+evidence**. The two real instances this file was written for — both in
+`erplite/everything_search/api.py` — were fixed, and then the whole feature was
+removed in `#9`. So on the day this target was written both passes swept 134
+files and found nothing. That is the correct answer. It is also exactly what a
+walker that could not find anything would print.
+
+**Three defects, and the file was green through all of them.** One was found by
+reading, two by injection, and the order matters: the first was found while
+writing a *control*, which is the fault class most easily left out.
+
+* **A comprehension's loop target was reported as a shadow, and it is not one.**
+  Python 3 binds it in the comprehension's own scope, so `sum(1 for _ in rows)`
+  in a function that calls `_()` is ordinary Python with no `UnboundLocalError`
+  anywhere — running it says so. The file walked into comprehensions on purpose,
+  on reasoning that is still correct and is still why it walks into them (a
+  *free* name inside one resolves outward to the enclosing local). The reasoning
+  simply does not carry to the target. **A guard that fails on correct code gets
+  deleted rather than fixed**, so a false positive on an idiom this common was
+  worth more than a missed case. The control that found it is
+  `a comprehension target named \`_\`` — it went red before the fix existed.
+* **`except Exception as _` was not caught, and the file's own docstring listed
+  `except ... as` as handled.** Written as a fault expecting red; came back
+  **GREEN**. `ast` carries that name as a plain string on the `ExceptHandler`,
+  not as a `Name` in `Store` context, so a walk over `Name` nodes cannot see it.
+  The interpreter deletes the name at the end of the handler, which does not
+  help — the binding still makes it local for the whole body, so the `_()` above
+  the `try` has nothing to read.
+* **A function's own `import` was invisible for the same reason.** `import
+  frappe` or `from frappe import _` inside a function — a deferred import, which
+  is ordinary in a frappe app to break a cycle — binds for the whole body. The
+  app has 23 of them; none is used before its import today, and the two that also
+  shadow a module-level name are latent, so closing this added no failure. It is
+  one edit from a live one.
+
+Reading the grammar after the `except` miss turned up the rest of the family, so
+the fix collects the class rather than the instance that happened to be caught:
+`ExceptHandler.name`, the import aliases, and the three `match` captures
+(`MatchAs.name`, `MatchStar.name`, `MatchMapping.rest`). **`_` is the wildcard in
+a pattern and binds nothing** — `case _`, `case [*_]` — so a `match` statement is
+the one place in the language where `_` cannot shadow the translation function.
+Any other name there can.
+
+**The design of the twelve faults.** Eight of them hold the use site, the file
+and the line distance constant — all at `handle_callback()` in
+`erplite/xero/api.py`, under the same three `_()` guards — and vary **only the
+form of the binding**: discarded tuple element, `for` target, `with ... as`,
+`except ... as`, walrus, the function's own `from frappe import _`. The one
+thing that differs between them is whether the walker recognises that form, which
+is why the `except` miss was unambiguous rather than a thing to go and
+investigate. Two faults are **the same edit at two positions**: a local alias
+`now_datetime = frappe.utils.now_datetime` is behaviourally identical to the
+module-level import, so above the first use it is latent and must stay green, and
+below it the same line is an `UnboundLocalError` and must go red. That pair is
+what pins pass A's stated limit — live only, for names other than `_` — as a
+decision rather than a drift.
+
+**The four controls** change real source and no behaviour: the comprehension
+target above, a nested `def` whose parameter is named `_` (which also pins that a
+nested scope's binding is not attributed to its enclosing function), a local
+tuple unpack of names that are not module-level imports, and the latent half of
+the alias pair.
+
+**Pass B is the only thing that fails one fault**, by design: a `_` bound in
+`get_connection_status()`, which never calls `_()`. Pass A is right to stay quiet
+there. Delete pass B and that fault goes green — which is what "stricter" has to
+mean to be worth keeping, and now it is checked rather than asserted in prose.
+
+**What this target does not reach:** the sweep compares line numbers, not control
+flow, so a use that is textually below the binding but reached first at runtime
+is outside it; and a nested `def _()` or `class _` binds `_` locally and is
+deliberately not collected, because `_own_scope` skips the whole nested statement
+and calling its name a binding without sweeping its body would be half an answer.
+Both are stated in the test file.
+
+**What the run said:** 12 of 12 as expected on the second run, against a baseline
+of 16 passed. The first run was **11 of 12** — the `except ... as` fault was the
+one that came back green, and it is the reason this target exists.

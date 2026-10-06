@@ -49,8 +49,9 @@ KNOWN BLIND SPOTS, stated so they are places to look rather than places to stop:
     assignment on a later iteration) is not flagged. Line order is sound for the "definitely
     unbound on first reach" case, which is what pass A claims; it is not a proof of safety.
   * A name bound by a parameter, a `global`/`nonlocal` declaration, a `for` target, a `with ...
-    as`, an `except ... as` or a walrus is handled, but a name bound only by `exec`/`locals()`
-    tricks is invisible -- as it is to the interpreter's own analysis.
+    as`, an `except ... as`, a walrus, the function's own `import`, or a `match` capture is
+    handled, but a name bound only by `exec`/`locals()` tricks is invisible -- as it is to the
+    interpreter's own analysis.
   * Only module-level `import`/`from ... import` names are considered. A name shadowing a
     module-level *assignment* (a constant) has the same failure, and is not swept here because
     the app has none; the pass would extend to it by collecting module-level Assign targets.
@@ -58,12 +59,49 @@ KNOWN BLIND SPOTS, stated so they are places to look rather than places to stop:
     shadows a name from the *enclosing function* rather than from module level is not covered.
   * A nested `def _()` or `class _` inside a function also binds that name locally, and the name
     binding itself is skipped along with the nested scope, so that (absurd but legal) spelling of
-    the same bug is not flagged. Only assignments, loop targets, `with`/`except ... as` and
-    walrus bindings are.
+    the same bug is not flagged. Only assignments, loop targets, `with`/`except ... as`, walrus
+    bindings and the function's own `import` statements are.
+  * A name bound only on one branch of an `if`/`else` is still local for the whole body, so the
+    sweep is right to flag it, but it cannot tell you whether that branch is reachable.
+  * `global _` or `nonlocal _` followed by an assignment is not flagged, correctly -- the binding
+    is not local -- but it does clobber the module's translation function for every later caller.
+    That is a different bug and no pass here looks for it.
+
+CORRECTIONS, 6 Oct 2026, both found while writing this file's fault-injection target and both
+measured against the interpreter rather than reasoned about:
+
+  * **A comprehension's own loop target is not a local of the enclosing function.** This file
+    used to walk into a comprehension and collect its `for` target as a function-level binding,
+    on the reasoning (still correct, and still why comprehensions are walked) that a *free* name
+    inside one resolves to the enclosing function's local. That reasoning does not carry to the
+    target, which Python 3 binds in the comprehension's own scope. The effect was a false
+    positive on ordinary Python: `sum(1 for _ in rows)` in a function that calls `_()` was
+    reported as a live UnboundLocalError, and running it shows there is none. A guard that fails
+    on correct code gets deleted, so this mattered more than a missed case would have.
+    `_comprehension_scoped` is the fix; a walrus inside a comprehension still binds in the
+    enclosing scope (PEP 572) and is still a finding, which is what tells the two apart.
+  * **Four of the bindings this file claimed to handle were invisible to it, including one it
+    named.** The list above used to say `except ... as` was handled. It was not: `ast` carries
+    that name as a plain string on the `ExceptHandler`, not as a `Name` in `Store` context, so
+    the walk over Name nodes never saw it -- and `except Exception as _` after an `_()` call
+    raises UnboundLocalError, which running it confirms. The same is true of `import`, of `from
+    ... import`, and of the three `match` captures. This was found by its own fault-injection
+    target: the fault was written expecting red and came back GREEN, which is the one thing a
+    passing test file can never tell you about itself. `_string_bound_names` collects the family
+    rather than the instance that happened to be caught.
+  * **A function's own `import` is a binding like any other, and was invisible here.** `import
+    frappe` or `from frappe import _` inside a function makes that name local for the whole body,
+    so a use above it raises exactly the UnboundLocalError this file is about -- but `ast` reports
+    it as an `Import` node, not as a `Name` in `Store` context, so the walk never saw it. The app
+    has 23 function-local imports today; none is used before its import, and the two that also
+    shadow a module-level name (`datetime` and `timedelta` in `erplite/www/todo/index.py:
+    get_guest_context()`) are latent, so closing this added no failure. It is one edit from a
+    live one.
 """
 
 import ast
 import os
+import sys
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -120,7 +158,8 @@ def _own_scope(fn):
 
     A comprehension IS walked into on purpose. Its body is a separate scope in Python 3, but a
     free name in it still resolves to the enclosing function's local, so the same
-    UnboundLocalError applies.
+    UnboundLocalError applies. Its own loop target does not: see `_comprehension_scoped`, which
+    takes those names back out again.
     """
     for stmt in fn.body:
         if isinstance(stmt, SEPARATE_SCOPE):
@@ -141,6 +180,107 @@ def _functions(tree):
             yield node
 
 
+COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+
+def _names_under(node):
+    return [n for n in ast.walk(node) if isinstance(n, ast.Name)]
+
+
+def _comprehension_scoped(fn):
+    """The Name nodes inside fn that belong to a comprehension's scope, not to fn's.
+
+    `_own_scope` walks into comprehensions deliberately, because a free name in one resolves
+    outward to the enclosing function's local. A comprehension's *own* loop target is the
+    exception: Python 3 binds it in the comprehension, so `[x for _ in rows]` leaves `_` alone
+    in the function around it. Collecting it as a function-level store reported correct code as
+    an UnboundLocalError.
+
+    Identified by node identity rather than by name, because the same spelling can be the
+    comprehension's variable in one place and the function's in another, and only one of them is
+    the comprehension's.
+
+    Two things are deliberately NOT taken out:
+
+      * the outermost iterable, which Python evaluates in the enclosing scope before the
+        comprehension exists -- so `[x for _ in _]` really does read the function's `_`;
+      * a walrus target anywhere in the comprehension, which PEP 572 binds in the enclosing
+        scope on purpose. That is a real shadow and stays a finding. It is also the case that
+        distinguishes this fix from simply not walking comprehensions at all.
+    """
+    scoped = set()
+    for node in _own_scope(fn):
+        if not isinstance(node, COMPREHENSIONS):
+            continue
+        bound = set()
+        for generator in node.generators:
+            bound.update(n.id for n in _names_under(generator.target))
+        if not bound:
+            continue
+        evaluated_outside = {id(n) for n in _names_under(node.generators[0].iter)}
+        for name_node in _names_under(node):
+            if name_node.id in bound and id(name_node) not in evaluated_outside:
+                scoped.add(id(name_node))
+    return scoped
+
+
+def _string_bound_names(fn):
+    """Names fn binds that `ast` reports as a plain string rather than as a Name node.
+
+    Walking Name nodes in Store context finds assignments, loop targets, `with ... as` and
+    walrus bindings, and nothing else -- because for the rest the grammar carries the name as an
+    attribute of the statement, typed `identifier`, with no Name node anywhere. Every one of
+    them binds for the whole function body exactly as an assignment does, so a use above it is
+    the same UnboundLocalError, and every one of them was invisible here.
+
+    This was not reasoned out. `except ... as _` was written as a fault for this file's own
+    injection target expecting red, came back GREEN, and reading the grammar to find out why
+    turned up the rest of the family. The docstring at the top of this file claimed `except ...
+    as` was handled; it was not.
+
+      * `except E as name`      -- ExceptHandler.name. The interpreter deletes the name at the
+                                   end of the handler, which does not help: the binding still
+                                   makes it local for the whole body, so a use ABOVE the try
+                                   raises, and a use after the handler raises too.
+      * `import x`/`from m import x` -- alias.asname or alias.name. A deferred import, ordinary
+                                   in a frappe app to break an import cycle.
+      * `case {..., **rest}`, `case [*rest]`, `case name` -- MatchMapping.rest, MatchStar.name,
+                                   MatchAs.name. The app has no `match` statement today; these
+                                   are here because they are the same grammar shape and finding
+                                   out the hard way once was enough.
+
+    A nested `def name` / `class name` also binds a string here and is deliberately NOT
+    collected: `_own_scope` skips the whole nested statement, and treating its name as a binding
+    of the enclosing function without sweeping its body would be half an answer. It stays a
+    stated blind spot above.
+
+    Spelled to match `_module_level_imports` exactly for the import case: a dotted `import a.b`
+    binds `a`, and `from m import x` binds `x`.
+    """
+    out = {}
+
+    def note(name, lineno):
+        if name:
+            out.setdefault(name, []).append(lineno)
+
+    for node in _own_scope(fn):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                note(alias.asname or alias.name.split(".")[0], node.lineno)
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name != "*":
+                    note(alias.asname or alias.name, node.lineno)
+        elif isinstance(node, ast.ExceptHandler):
+            note(node.name, node.lineno)
+        elif isinstance(node, getattr(ast, "MatchAs", ())) or isinstance(
+                node, getattr(ast, "MatchStar", ())):
+            note(node.name, node.lineno)
+        elif isinstance(node, getattr(ast, "MatchMapping", ())):
+            note(node.rest, node.lineno)
+    return out
+
+
 def _shadowing(path, rel, tree):
     """Every (function, name) where a module-level import is also assigned locally."""
     imports = _module_level_imports(tree)
@@ -148,13 +288,16 @@ def _shadowing(path, rel, tree):
     for fn in _functions(tree):
         bound = _bound_names(fn)
         declared_global = set()
+        comprehension_scoped = _comprehension_scoped(fn)
         stores, loads = {}, {}
         for node in _own_scope(fn):
             if isinstance(node, (ast.Global, ast.Nonlocal)):
                 declared_global.update(node.names)
-            elif isinstance(node, ast.Name):
+            elif isinstance(node, ast.Name) and id(node) not in comprehension_scoped:
                 where = stores if isinstance(node.ctx, ast.Store) else loads
                 where.setdefault(node.id, []).append(node.lineno)
+        for name, lines in _string_bound_names(fn).items():
+            stores.setdefault(name, []).extend(lines)
         for name, store_lines in sorted(stores.items()):
             if name not in imports or name in bound or name in declared_global:
                 continue
@@ -194,8 +337,9 @@ class TestNoUnboundLocalFromShadowedImport(unittest.TestCase):
             "the name is local for the whole function body and the earlier use raises "
             "UnboundLocalError:\n"
             + "\n".join(
-                "  {rel}:{function}() uses '{name}' at line(s) {used_before_at} but assigns it "
-                "at {assigned_at} -- rename the assigned name (e.g. '_encoding')".format(**f)
+                "  {rel}:{function}() uses '{name}' at line(s) {used_before_at} but binds it "
+                "locally at {assigned_at} -- rename the bound name (e.g. '_encoding'), or move "
+                "a local import above the use".format(**f)
                 for f in live
             ),
         )
@@ -209,12 +353,13 @@ class TestTranslationFunctionIsNeverShadowed(unittest.TestCase):
         self.assertEqual(
             shadowed,
             [],
-            "A function assigns to '_', which in a Frappe module is the translation function "
+            "A function binds '_' locally -- by assignment, loop target, with/except as, walrus "
+            "or an import of its own -- and in a Frappe module '_' is the translation function "
             "imported as `from frappe import _`. Any use of _() in that function -- now or "
             "after a later edit -- raises UnboundLocalError. Name the discarded value instead "
             "(e.g. '_encoding'):\n"
             + "\n".join(
-                "  {rel}:{function}() assigns '_' at line(s) {assigned_at}".format(**f)
+                "  {rel}:{function}() binds '_' at line(s) {assigned_at}".format(**f)
                 for f in shadowed
             ),
         )
@@ -276,6 +421,203 @@ class TestTheSweepItselfWorks(unittest.TestCase):
                 "def handler():\n"
                 "    mime, _ = (1, 2)\n"
                 "    return mime\n"
+            ),
+            [],
+        )
+
+    def test_a_comprehension_target_is_not_a_finding(self):
+        # Python 3 binds a comprehension's loop variable in the comprehension's own scope, so
+        # this function never binds `_` and its `_()` call is fine. Running it proves it: the
+        # sweep used to report this as a live UnboundLocalError, which is a guard failing on
+        # correct code. `sum(1 for _ in xs)` is ordinary Python and appears everywhere.
+        source = (
+            "from frappe import _\n"
+            "def count(rows):\n"
+            "    msg = _('counting')\n"
+            "    n = sum(1 for _ in rows)\n"
+            "    return msg, n\n"
+        )
+        namespace = {"_": lambda s: s}
+        exec(compile(source.replace("from frappe import _\n", ""), "<memory>", "exec"), namespace)
+        self.assertEqual(namespace["count"]([1, 2, 3]), ("counting", 3))
+        self.assertEqual(self._findings(source), [])
+
+    def test_a_comprehension_that_reads_its_own_target_is_not_a_finding(self):
+        # The Load of `_` inside the comprehension reads the comprehension's variable, not the
+        # function's, so it is not a use of the name bound on the line below it.
+        found = self._findings(
+            "from frappe import _\n"
+            "def pick(rows):\n"
+            "    kept = [_ for _ in rows if _]\n"
+            "    mime, _ = (1, 2)\n"
+            "    return kept, mime\n"
+        )
+        self.assertEqual(len(found), 1, found)
+        self.assertEqual(found[0]["name"], "_")
+        self.assertFalse(found[0]["live"], found)
+        self.assertEqual(found[0]["assigned_at"], [4])
+
+    def test_the_outermost_iterable_is_evaluated_outside_the_comprehension(self):
+        """Both halves, because the difference between them is the whole of the fix.
+
+        Python evaluates a comprehension's *outermost* iterable in the enclosing scope, before
+        the comprehension's own scope exists. So the same text means two different things
+        depending on whether the function binds the name anywhere else, and both readings are
+        checked against the interpreter below rather than argued from the language reference.
+        """
+        shared = ("def pick():\n"
+                  "    kept = [x for rows in rows for x in (rows,)]\n")
+
+        # A. The comprehension's target is the only binding, so it is not a binding of the
+        #    function at all and the outer `rows` reads the module-level import. No finding.
+        namespace = {"rows": [1, 2]}
+        exec(compile(shared + "    return kept\n", "<memory>", "exec"), namespace)
+        self.assertEqual(namespace["pick"](), [1, 2])
+        self.assertEqual(self._findings("import rows\n" + shared + "    return kept\n"), [])
+
+        # B. The function binds `rows` as well, so the outer `rows` reads that local -- which is
+        #    not yet assigned. Taking the comprehension's names out must not take this one.
+        tail = "    rows = []\n    return kept, rows\n"
+        namespace = {"rows": [1, 2]}
+        exec(compile(shared + tail, "<memory>", "exec"), namespace)
+        with self.assertRaises(UnboundLocalError):
+            namespace["pick"]()
+        found = self._findings("import rows\n" + shared + tail)
+        self.assertEqual([(f["name"], f["live"]) for f in found], [("rows", True)])
+        self.assertEqual(found[0]["used_before_at"], [3])   # the outer iterable
+        self.assertEqual(found[0]["assigned_at"], [4])      # `rows = []`
+
+    def test_a_walrus_inside_a_comprehension_is_still_a_finding(self):
+        # PEP 572: a walrus inside a comprehension binds in the ENCLOSING scope, so unlike the
+        # loop target it really does shadow. This is the case that stops the fix above from
+        # being "do not walk comprehensions".
+        source = (
+            "from frappe import _\n"
+            "def pick(rows):\n"
+            "    msg = _('picking')\n"
+            "    kept = [(_ := r) for r in rows]\n"
+            "    return msg, kept\n"
+        )
+        found = self._findings(source)
+        self.assertEqual(len(found), 1, found)
+        self.assertEqual(found[0]["name"], "_")
+        self.assertTrue(found[0]["live"], found)
+        namespace = {"_": lambda s: s}
+        exec(compile(source.replace("from frappe import _\n", ""), "<memory>", "exec"), namespace)
+        with self.assertRaises(UnboundLocalError):
+            namespace["pick"]([1, 2])
+
+    def test_an_except_as_binding_is_a_finding(self):
+        """The one the file's own docstring claimed was handled and was not.
+
+        Found by injection, not by reading: the fault was written expecting red and came back
+        green. The interpreter deletes the name at the end of the handler, which is why this
+        looks safe and is not -- the binding still makes `_` local for the whole body, so the
+        `_()` above the try has nothing to read.
+        """
+        source = (
+            "from frappe import _\n"
+            "def run(bad):\n"
+            "    msg = _('start')\n"
+            "    try:\n"
+            "        if bad:\n"
+            "            raise ValueError('x')\n"
+            "    except Exception as _:\n"
+            "        pass\n"
+            "    return msg\n"
+        )
+        found = self._findings(source)
+        self.assertEqual(len(found), 1, found)
+        self.assertEqual(found[0]["name"], "_")
+        self.assertTrue(found[0]["live"], found)
+        self.assertEqual(found[0]["used_before_at"], [3])
+        self.assertEqual(found[0]["assigned_at"], [7])
+        namespace = {"_": lambda s: s}
+        exec(compile(source.replace("from frappe import _\n", ""), "<memory>", "exec"), namespace)
+        with self.assertRaises(UnboundLocalError):
+            namespace["run"](False)
+
+    @unittest.skipIf(sys.version_info < (3, 10), "match statements need Python 3.10")
+    def test_a_match_capture_is_a_finding_but_the_wildcard_is_not(self):
+        """Same grammar shape as `except ... as`: the name is a string on the node.
+
+        The app has no `match` statement today, which is why this is pinned now rather than
+        waited for. The halves differ for a reason worth writing down: in a pattern, `_` is the
+        wildcard and binds nothing at all -- `case _`, `case [*_]`, `case {**_}` -- so a match
+        statement is the one place in the language where `_` cannot shadow the translation
+        function. Any other name there can.
+        """
+        source = (
+            "import frappe\n"
+            "def run(value):\n"
+            "    user = frappe.session.user\n"
+            "    match value:\n"
+            "        case frappe:\n"
+            "            return frappe, user\n"
+        )
+        found = self._findings(source)
+        self.assertEqual([(f["name"], f["live"]) for f in found], [("frappe", True)])
+        self.assertEqual(found[0]["used_before_at"], [3])
+        self.assertEqual(found[0]["assigned_at"], [5])
+
+        class _Frappe(object):
+            session = type("s", (), {"user": "x"})
+        namespace = {"frappe": _Frappe()}
+        exec(compile(source.replace("import frappe\n", ""), "<memory>", "exec"), namespace)
+        with self.assertRaises(UnboundLocalError):
+            namespace["run"](1)
+
+        # The wildcard binds nothing, so `_()` above it is fine and there is no finding.
+        self.assertEqual(
+            self._findings(
+                "from frappe import _\n"
+                "def run(value):\n"
+                "    msg = _('start')\n"
+                "    match value:\n"
+                "        case [*_]:\n"
+                "            return msg\n"
+                "        case _:\n"
+                "            return None\n"
+            ),
+            [],
+        )
+
+    def test_a_function_local_import_after_a_use_is_a_finding(self):
+        # A deferred import -- common in Frappe apps, to break an import cycle -- binds the name
+        # for the whole body, so the module-level `frappe` is unreachable above it.
+        found = self._findings(
+            "import frappe\n"
+            "def run():\n"
+            "    frappe.msgprint('x')\n"
+            "    import frappe\n"
+            "    return frappe.session.user\n"
+        )
+        self.assertEqual(len(found), 1, found)
+        self.assertEqual(found[0]["name"], "frappe")
+        self.assertTrue(found[0]["live"], found)
+        self.assertEqual(found[0]["used_before_at"], [3])
+        self.assertEqual(found[0]["assigned_at"], [4])
+
+    def test_a_function_local_from_import_of_the_translation_function_is_a_finding(self):
+        found = self._findings(
+            "from frappe import _\n"
+            "def run():\n"
+            "    from frappe import _\n"
+            "    return _('x')\n"
+        )
+        self.assertEqual([(f["name"], f["live"]) for f in found], [("_", False)])
+        self.assertEqual(found[0]["assigned_at"], [3])
+
+    def test_an_aliased_local_import_binds_the_alias_not_the_module(self):
+        # `import frappe as f` binds `f`; the module-level `frappe` is untouched, so the earlier
+        # frappe.msgprint() is fine and there is nothing to report.
+        self.assertEqual(
+            self._findings(
+                "import frappe\n"
+                "def run():\n"
+                "    frappe.msgprint('x')\n"
+                "    import frappe as f\n"
+                "    return f\n"
             ),
             [],
         )

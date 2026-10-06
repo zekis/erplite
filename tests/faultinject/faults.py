@@ -5019,6 +5019,170 @@ STATUS_LITERALS = Target(
     ])
 
 
+# --- a function shadowing a module-level import -------------------------------
+# tests/offline/test_shadowed_imports.py. Python's own scoping rule, not
+# frappe's: a name assigned anywhere in a function body is local for the whole
+# body, so a module-level import used above that binding raises
+# UnboundLocalError. It compiles, it imports, and it resolves under a linter.
+#
+# The two real instances this guard was written for -- in
+# erplite/everything_search/api.py -- were fixed and then the whole feature was
+# removed (#9), so both passes now sweep 134 files and find nothing. That is the
+# right answer and it is also why this target matters more than most: with no
+# live instance left, the only thing keeping the walker honest against real
+# source was that it was green, and green is what a walker that found nothing at
+# all would also be.
+#
+# Nearly every fault below is the SAME use site under the SAME three `_()`
+# guards, varying only the form of the binding. That is deliberate: the use, the
+# file and the line distance are held constant so the one thing that differs is
+# the thing being tested -- whether the walker recognises that form as a binding.
+
+XAPI = "erplite/xero/api.py"
+
+# handle_callback() calls _() at three guards before this point, so any binding
+# of `_` introduced here is live: all three raise UnboundLocalError.
+EXCHANGE = (
+    '    # Exchange code for tokens\n'
+    '    if auth.get_tokens(code):\n')
+EXCHANGE_BODY = (
+    EXCHANGE
+    + '        frappe.msgprint(_("Successfully connected to Xero"))\n'
+    '        return True\n')
+
+# sync_all() first uses now_datetime() inside the frappe.get_doc({...}) below.
+SYNC_LOG_OPEN = (
+    '        # Create sync log\n'
+    '        sync_log = frappe.get_doc({\n')
+SYNC_LOG_SAVED = (
+    '        sync_log.insert()\n'
+    '        frappe.db.commit()\n')
+
+# A local alias for a module-level import. Behaviourally identical -- same
+# object, same call -- which is what makes the pair below an experiment rather
+# than two edits: above the first use it is harmless and must stay green; below
+# it, the same line is an UnboundLocalError and must go red.
+ALIAS = '        now_datetime = frappe.utils.now_datetime\n'
+
+SHADOWED_IMPORTS = Target(
+    test="tests/offline/test_shadowed_imports.py",
+    faults=[
+        # --- pass A: a module-level import used before it is bound locally ----
+        # The original bug, restored in its original shape: a returned pair with
+        # the second element thrown away into `_`.
+        Fault("`_` bound by a discarded tuple element (the shape the guard was "
+              "written for)", True, [
+                  (XAPI, EXCHANGE,
+                   '    # Exchange code for tokens\n'
+                   '    tokens, _ = auth.get_tokens(code)\n'
+                   '    if tokens:\n'),
+              ]),
+        Fault("`_` bound by a for-loop target", True, [
+            (XAPI, EXCHANGE_BODY,
+             '    # Exchange code for tokens, retrying a transient failure\n'
+             '    for _ in range(3):\n'
+             '        if auth.get_tokens(code):\n'
+             '            frappe.msgprint(_("Successfully connected to Xero"))\n'
+             '            return True\n'),
+        ]),
+        Fault("`_` bound by a `with ... as`", True, [
+            (XAPI, EXCHANGE,
+             '    # Exchange code for tokens\n'
+             '    with frappe.db.savepoint("xero_tokens") as _:\n'
+             '        tokens = auth.get_tokens(code)\n'
+             '    if tokens:\n'),
+        ]),
+        Fault("`_` bound by an `except ... as`", True, [
+            (XAPI, EXCHANGE,
+             '    # Exchange code for tokens\n'
+             '    try:\n'
+             '        tokens = auth.get_tokens(code)\n'
+             '    except Exception as _:\n'
+             '        tokens = None\n'
+             '    if tokens:\n'),
+        ]),
+        Fault("`_` bound by a walrus", True, [
+            (XAPI, EXCHANGE,
+             '    # Exchange code for tokens\n'
+             '    if (_ := auth.get_tokens(code)):\n'),
+        ]),
+        # The binding ast reports as an Import node rather than a Name in Store
+        # context, so a walk over Name nodes alone cannot see it. A deferred
+        # import is ordinary in a frappe app, which is what makes it reachable.
+        Fault("`_` bound by the function's own `from frappe import _`", True, [
+            (XAPI, EXCHANGE,
+             '    # Exchange code for tokens\n'
+             '    from frappe import _\n'
+             '    if auth.get_tokens(code):\n'),
+        ]),
+        # Pass A must not be about `_`. Same edit as the control below it, moved
+        # from above the first use of now_datetime() to below it.
+        Fault("a module import other than `_` used before it is bound "
+              "(now_datetime)", True, [
+                  (XAPI, SYNC_LOG_SAVED,
+                   '        sync_log.insert()\n' + ALIAS
+                   + '        frappe.db.commit()\n'),
+              ]),
+
+        # --- pass B: stricter, and only about `_` -----------------------------
+        # get_connection_status() never calls _(), so there is no use before the
+        # binding and pass A is right to stay quiet. Pass B is the only thing
+        # that fails here -- delete it and this fault goes green, which is what
+        # "stricter" has to mean to be worth having. get_value with a list
+        # fieldname returns a tuple, so the unpack is the real frappe idiom.
+        Fault("`_` bound with nothing calling _() in that function yet "
+              "(latent: pass B only)", True, [
+                  (XAPI, '    last_sync = frappe.db.get_value("Xero Sync Log", ',
+                   '    last_sync, _ = frappe.db.get_value("Xero Sync Log", '),
+                  (XAPI, 'fieldname="creation",',
+                   'fieldname=["creation", "status"],'),
+              ]),
+
+        # --- controls: real edits, no behaviour changed, must stay green ------
+        # A comprehension's loop target is bound in the comprehension's own
+        # scope, so this function never binds `_` at all and its three _() calls
+        # are fine. `[... for _ in ...]` is ordinary Python; a guard that fails
+        # on it gets deleted rather than fixed. This control is what found the
+        # false positive -- it went red before _comprehension_scoped existed.
+        Fault("a comprehension target named `_` (not a binding of the enclosing "
+              "function)", False, [
+                  (XAPI, EXCHANGE,
+                   '    # Exchange code for tokens\n'
+                   '    retry_slots = [None for _ in range(3)]\n'
+                   '    if auth.get_tokens(code):\n'),
+              ]),
+        # Two claims in one: a parameter is bound on entry so it has no unbound
+        # window, and a nested def is its own scope so its binding must not be
+        # attributed to handle_callback -- which would report the outer _()
+        # calls as the bug.
+        Fault("a nested function whose parameter is named `_`", False, [
+            (XAPI, EXCHANGE,
+             '    # Exchange code for tokens\n'
+             '    def _unchanged(_):\n'
+             '        return _\n'
+             '    if auth.get_tokens(code):\n'),
+        ]),
+        Fault("a local tuple unpack of names that are not module-level imports",
+              False, [
+                  (XAPI, EXCHANGE,
+                   '    # Exchange code for tokens\n'
+                   '    mime, token_kind = (None, None)\n'
+                   '    if auth.get_tokens(code):\n'),
+              ]),
+        # The documented limit of pass A, held as a control so that widening it
+        # to latent non-`_` names is a decision somebody makes rather than a
+        # drift nobody notices. Identical text to the red fault above; only its
+        # position relative to the first use differs.
+        Fault("a module import other than `_` bound ABOVE its first use "
+              "(latent: pass A's stated limit)", False, [
+                  (XAPI, SYNC_LOG_OPEN,
+                   '        # Create sync log\n' + ALIAS
+                   + '        sync_log = frappe.get_doc({\n'),
+              ]),
+    ],
+)
+
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -5045,4 +5209,5 @@ TARGETS = {
     "api_url_methods": API_URL_METHODS,
     "doctype_json_validation": DOCTYPE_JSON_VALIDATION,
     "status_literals": STATUS_LITERALS,
+    "shadowed_imports": SHADOWED_IMPORTS,
 }
