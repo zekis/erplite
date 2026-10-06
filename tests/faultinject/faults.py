@@ -3438,6 +3438,203 @@ UNDECLARED_ATTRS = Target(
     ],
 )
 
+
+
+# --- mandatory fields at insert ------------------------------------------
+# rev_f9dce41f7f: a `frappe.get_doc({...}).insert()` must supply the DocType's
+# mandatory fields. The sweep reads the dict literals statically and compares
+# their keys against every `reqd` field in the app's 47 DocType JSONs.
+#
+# The sixteenth target, and the second of the two files the README listed as
+# doing fault injection of their own. What that proved was narrower than it
+# looked: both of its self-injections remove a *key* from a dict it has already
+# parsed, so the only shape it ever tested is the one its author planted.
+# Every fault below that goes green is a shape frappe raises on and the sweep
+# calls supplied.
+#
+# Each fault's expectation is traced through frappe-version-15, not recalled.
+# The one line that decides all of it is base_document.py:761-762:
+#
+#     for df in self.meta.get("fields", {"reqd": ("=", 1)}):
+#         if self.get(df.fieldname) in (None, []) or not has_content(df):
+#
+# Note the second clause. The test file's own docstring describes only the
+# first ("counts any reqd field whose value is in (None, [])"), and that
+# omission is why "the key is present" reads as sufficient: `has_content`
+# cstr()s the value and strips HTML and whitespace off it, so "", "   " and
+# "<p></p>" are all missing too. Presence of a key is not content.
+
+MFI_ACC = "erplite/xero/accounts.py"
+MFI_XAPI = "erplite/xero/api.py"
+MFI_CUST_JSON = "erplite/crm/doctype/customer/customer.json"
+MFI_XSL_JSON = "erplite/setup/doctype/xero_sync_log/xero_sync_log.json"
+
+# The anchor for an edit to the customer_type field, stopping short of the
+# "options" line on purpose: that line holds JSON-escaped \\n, which is a
+# backslash and an n in the file and would be read as a newline in a pattern.
+MFI_CT_ANCHOR = ('   "fieldname": "customer_type",\n'
+                 '   "fieldtype": "Select",\n')
+MFI_CN_ANCHOR = ('   "fieldname": "customer_name",\n'
+                 '   "fieldtype": "Data",\n')
+MFI_COMPANY_ANCHOR = ('   "fieldname": "company",\n'
+                      '   "fieldtype": "Link",\n')
+
+MFI_SYNC_LOG_CALL = ('        sync_log = frappe.get_doc({\n'
+                     '            "doctype": "Xero Sync Log",\n')
+
+MANDATORY_FIELDS = Target(
+    test="tests/offline/test_mandatory_fields_on_insert.py",
+    faults=[
+        # --- the bug it was written for, at both call sites ---------------
+        Fault("the original bug: Customer built without customer_type", True, [
+            (MFI_ACC,
+             '                    "customer_type": "Company",\n', '')]),
+        Fault("the original bug: Supplier built without supplier_type", True, [
+            (MFI_ACC,
+             '                    "supplier_type": "Company",\n', '')]),
+        # The rule is about every reqd field, not the two that were found.
+        Fault("Customer built without customer_name, the other reqd field",
+              True, [
+                  (MFI_ACC,
+                   '                    "customer_name": contact["Name"],\n',
+                   '')]),
+        Fault("Supplier built without supplier_name", True, [
+            (MFI_ACC,
+             '                    "supplier_name": contact["Name"],\n', '')]),
+
+        # --- the key is there and cannot satisfy frappe -------------------
+        # base_document.py:762, first clause: None is missing.
+        Fault("customer_type supplied as None -- the key is present and "
+              "insert() still raises MandatoryError", True, [
+                  (MFI_ACC,
+                   '"customer_type": "Company",',
+                   '"customer_type": None,')]),
+        # Second clause, and worse than it looks: update_if_missing only fills
+        # a field whose value `is None` (base_document.py:197), so passing ""
+        # also defeats any default the DocType might have had.
+        Fault("customer_type supplied as the empty string", True, [
+            (MFI_ACC,
+             '"customer_type": "Company",',
+             '"customer_type": "",')]),
+        Fault("customer_name supplied as whitespace -- has_content strips it",
+              True, [
+                  (MFI_ACC,
+                   '"customer_name": contact["Name"],',
+                   '"customer_name": "   ",')]),
+        # The realistic one: every optional field in this dict is already
+        # written `.get(key, "")`. Writing a reqd field that way is a one-word
+        # edit, reads as more careful than the original, and reintroduces the
+        # exact production failure for any Xero contact with no Name.
+        Fault("customer_name supplied as contact.get(\"Name\", \"\") -- the "
+              "shape every optional field in the same dict already uses",
+              True, [
+                  (MFI_ACC,
+                   '"customer_name": contact["Name"],',
+                   '"customer_name": contact.get("Name", ""),')]),
+
+        # --- the two DocType-side exemptions frappe does not honour -------
+        # The sweep skips a reqd field with a default. frappe applies a static
+        # default only `if df.get("default")` (model/create_new.py:101) -- a
+        # truthiness test, where the sweep's is `is not None`. An empty-string
+        # default is therefore skipped by the sweep and never applied by
+        # frappe, so insert() raises with nothing to point at.
+        Fault("reqd customer_type given an empty-string default, and the key "
+              "removed: a falsy default is never applied", True, [
+                  (MFI_CUST_JSON, MFI_CT_ANCHOR,
+                   MFI_CT_ANCHOR + '   "default": "",\n'),
+                  (MFI_ACC,
+                   '                    "customer_type": "Company",\n', '')]),
+        # The sweep skips a reqd field that is read_only, reasoning that it
+        # "cannot be passed in anyway". _get_missing_mandatory_fields does not
+        # exempt read_only, and a server-side dict can set it, so the premise
+        # is wrong in both directions: the insert fails, and the caller is the
+        # one who could have fixed it.
+        Fault("reqd customer_type made read_only, and the key removed: "
+              "read_only is not exempt from mandatory validation", True, [
+                  (MFI_CUST_JSON, MFI_CT_ANCHOR,
+                   MFI_CT_ANCHOR + '   "read_only": 1,\n'),
+                  (MFI_ACC,
+                   '                    "customer_type": "Company",\n', '')]),
+
+        # Isolating the two exemptions. The pair above remove a key from a
+        # dict that this file's own self-injection asserts is passed, so their
+        # RED may be that assertion rather than the sweep. Xero Sync Log is in
+        # no self-test, so here only the sweep can speak.
+        Fault("ISOLATED: company made reqd on Xero Sync Log with an "
+              "empty-string default -- skipped by the sweep, never applied by "
+              "frappe", True, [
+                  (MFI_XSL_JSON, MFI_COMPANY_ANCHOR,
+                   MFI_COMPANY_ANCHOR + '   "reqd": 1,\n   "default": "",\n')]),
+        Fault("ISOLATED: company made reqd and read_only on Xero Sync Log -- "
+              "skipped by the sweep, not exempt from mandatory validation",
+              True, [
+                  (MFI_XSL_JSON, MFI_COMPANY_ANCHOR,
+                   MFI_COMPANY_ANCHOR + '   "reqd": 1,\n   "read_only": 1,\n')]),
+        # --- a reqd field appearing on a DocType an insert site misses ----
+        # The rule's stated value is that it "goes red the day somebody adds a
+        # reqd field to a DocType that an existing insert site does not pass".
+        # This is that day, on a second DocType and a second file, and it is
+        # the control for the three call-site shapes below it.
+        Fault("company made reqd on Xero Sync Log, which xero/api.py's sync "
+              "log does not supply", True, [
+                  (MFI_XSL_JSON, MFI_COMPANY_ANCHOR,
+                   MFI_COMPANY_ANCHOR + '   "reqd": 1,\n')]),
+
+        # --- call-site shapes the AST walker cannot see --------------------
+        # Same regression as the fault above, with the call rewritten three
+        # ways that change nothing about what frappe does.
+        Fault("the same regression, with the call written "
+              "frappe.get_doc(dict(...)) -- args[0] is a Call, not a Dict",
+              True, [
+                  (MFI_XSL_JSON, MFI_COMPANY_ANCHOR,
+                   MFI_COMPANY_ANCHOR + '   "reqd": 1,\n'),
+                  (MFI_XAPI,
+                   MFI_SYNC_LOG_CALL +
+                   '            "start_time": now_datetime(),\n'
+                   '            "status": "In Progress"\n'
+                   '        })\n',
+                   '        sync_log = frappe.get_doc(dict(\n'
+                   '            doctype="Xero Sync Log",\n'
+                   '            start_time=now_datetime(),\n'
+                   '            status="In Progress",\n'
+                   '        ))\n')]),
+        Fault("the same regression, with get_doc reached through a local name "
+              "-- node.func is an ast.Name, not an ast.Attribute", True, [
+                  (MFI_XSL_JSON, MFI_COMPANY_ANCHOR,
+                   MFI_COMPANY_ANCHOR + '   "reqd": 1,\n'),
+                  (MFI_XAPI,
+                   '        sync_log = frappe.get_doc({\n',
+                   '        _new = frappe.get_doc\n'
+                   '        sync_log = _new({\n')]),
+        # This one also asks what the "found something to check" guard is
+        # worth. It asserts >= 5 sites and there are 6, so exactly one site
+        # can disappear without the guard noticing.
+        Fault("the same regression, with the doctype read from a local "
+              "variable -- the site is dropped, and the >= 5 sites guard has "
+              "6 to spend", True, [
+                  (MFI_XSL_JSON, MFI_COMPANY_ANCHOR,
+                   MFI_COMPANY_ANCHOR + '   "reqd": 1,\n'),
+                  (MFI_XAPI, MFI_SYNC_LOG_CALL,
+                   '        _dt = "Xero Sync Log"\n'
+                   '        sync_log = frappe.get_doc({\n'
+                   '            "doctype": _dt,\n')]),
+
+        # --- negative controls --------------------------------------------
+        # Real edits that change no behaviour. If either goes red the sweep is
+        # pinning source text rather than the rule.
+        Fault("CONTROL: the sync log call broken across lines, same dict",
+              False, [
+                  (MFI_XAPI,
+                   '        sync_log = frappe.get_doc({\n',
+                   '        sync_log = frappe.get_doc(\n'
+                   '            {\n')]),
+        Fault("CONTROL: customer_name marked bold in the DocType JSON, which "
+              "is presentation and nothing to do with the rule", False, [
+                  (MFI_CUST_JSON, MFI_CN_ANCHOR,
+                   MFI_CN_ANCHOR + '   "bold": 1,\n')]),
+    ],
+)
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -3454,4 +3651,5 @@ TARGETS = {
     "afterz_workflow": AFTERZ_WORKFLOW,
     "query_fields": QUERY_FIELDS,
     "undeclared_attrs": UNDECLARED_ATTRS,
+    "mandatory_fields": MANDATORY_FIELDS,
 }
