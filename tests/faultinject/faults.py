@@ -4837,6 +4837,8 @@ RESOURCE_FIRST_PERM = ('  {\n'
                        '   "report": 1,\n'
                        '   "role": "System Manager",\n')
 
+PCONTACTS_JSON = "erplite/erplite/doctype/project_contacts/project_contacts.json"
+
 DOCTYPE_JSON_VALIDATION = Target(
     "tests/offline/test_doctype_json_validation.py", [
 
@@ -4892,6 +4894,19 @@ DOCTYPE_JSON_VALIDATION = Target(
             '   "color": "Black",\n'
             '   "title": "Cancelled"\n'
             '  }\n')]),
+
+    # -- the typo the pinned set of outside DocTypes exists for --
+    # LINK_TARGETS_OUTSIDE_THIS_APP's own comment says "`Contacts` for `Contact`
+    # would change this set and fail, which is the typo the sweep is for". That
+    # claim had no fault behind it until this one: the set was pinned, and
+    # whether the pin fires was unmeasured. Found while driving
+    # doctype_metadata, which deliberately does not check Link targets because
+    # this file does.
+    Fault("a Link field's options gains a plural, so it points at a DocType "
+          "that exists nowhere -- the typo LINK_TARGETS_OUTSIDE_THIS_APP is for",
+          True,
+          [(PCONTACTS_JSON, '   "options": "Contact"\n',
+            '   "options": "Contacts"\n')]),
 
     # Negative control. A field's label is user-visible text that no rule in
     # this sweep reads: every check judges fieldnames, fieldtypes, options,

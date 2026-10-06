@@ -248,7 +248,7 @@ breaking the code.
 
 ## Targets
 
-Twenty-eight so far, 700 injections: edits applied to the app's real source,
+Twenty-nine so far, 724 injections: edits applied to the app's real source,
 with `run.py` watching one test file go red.
 
 Those two numbers are counted from `faults.py`, not kept by hand. They said
@@ -2705,3 +2705,76 @@ file is pinning what the controller decides rather than how it is written.
 sweep. Making an app `.py` untokenizable turns the whole file red for the
 obvious reason, so the fault would prove nothing about that branch. It is
 covered by `TaskCallDetectorTest` reading the detector directly instead.
+
+### `doctype_metadata` — `tests/offline/test_doctype_metadata.py`
+
+The twenty-ninth target, the second driven entirely by edits to DocType JSONs,
+and the best-behaved file driven so far: **22 of 23 as expected on the first
+run**, and every one of the 23 colours was written down before the run. The one
+miss was not a test that had been written carelessly. It was the thing the file
+had already identified, written into its own docstring, and then not held
+itself to.
+
+**The miss: a blind spot that was described instead of bounded.** Four
+`fetch_from` references point into frappe core DocTypes (`Communication`,
+`Contact`), whose field lists are not in this repository, so the sweep skipped
+them with a `continue`. That much is unavoidable. The docstring then said the
+four "were checked by hand against frappe/frappe version-15 on 5 Oct 2026 and
+all resolve", and listed them — which reads as settled, and was the most
+believable sentence in the file.
+
+Nothing held it to that. Editing `email.sender` to `email.sendr` left all five
+tests green, and it is the same class of defect the file exists for: on a Data
+target, `set_fetch_from_value` throws, so every save of a document with that
+link set fails. The fix is the one the sibling file had already worked out for
+the other half of the same problem — `LINK_TARGETS_OUTSIDE_THIS_APP` in
+`test_doctype_json_validation.py` pins *which* DocTypes this app points at and
+does not declare, as an exact set, so a typo changes the set and fails.
+`FETCH_FROM_OUTSIDE_THIS_APP` now does the same for the references reaching into
+one, keyed by the field that carries each and carrying the date it was read.
+
+> **A blind spot you can enumerate is a check, not an exemption.** The part that
+> cannot be resolved offline is "does `Communication.sender` exist" — not "which
+> references reach into `Communication`", which is right there in the JSONs. The
+> second question was answerable all along, and answering it is what makes a
+> fifth reference, or a changed fourth, fail.
+
+**What the other 22 confirmed**, since a file this clean is worth saying plainly:
+all four ways a `fetch_from` stops resolving (including the live scheduler bug
+replanted — `activity.subject` after `subject` left Activity); `istable` lost
+from a child DocType; `sort_field`, `search_fields` and `title_field` each
+naming a missing field; both halves of the `field_order`/`fields[]` comparison;
+and `depends_on` on both of its live instances.
+
+**Three claims had no live instance in the app, so faults are the only thing
+driving them.** `sort_field`'s "fieldname desc" form (no DocType uses a
+direction), `search_fields` as a comma-separated list (the one DocType that has
+the key names a single field), and `mandatory_depends_on` / `read_only_depends_on`
+(no instance anywhere). All four went red when planted. Each also got a control
+where one was possible — `"creation desc"` and `"estimate, status"` must stay
+green — because a code path with no live instance can as easily be wrong in the
+accepting direction, and nothing in the app would say so.
+
+**The controls, and the false positives they rule out.** Five, and two matter:
+`fetch_from` reaching a frappe standard column (`project.owner`) and
+`depends_on` reaching one (`doc.owner`). Standard columns are on every table and
+in no DocType JSON, so both are correct metadata that a naive sweep flags — and
+a guard that fails on correct metadata gets deleted rather than fixed. Both
+stayed green.
+
+**One test was renamed rather than widened.**
+`test_link_and_table_options_name_a_real_doctype` checked only the `istable`
+half; whether the options name a DocType that exists at all is pinned next door.
+It is `test_table_fields_point_at_a_child_table` now. **A test name is a claim
+too**, and this one claimed both halves while checking one — which is how the
+same check gets written twice in two files.
+
+**And a hole found in the sibling target while establishing that boundary.**
+Before deciding this file should not check Link targets, the question was whether
+anything did. `LINK_TARGETS_OUTSIDE_THIS_APP` is pinned, and its comment says
+"`Contacts` for `Contact` would change this set and fail, which is the typo the
+sweep is for" — but the `doctype_json_validation` target had no fault for it,
+so the pin had never been shown to fire. It has one now, which is why that
+target is eight faults rather than seven. **Checking whether a neighbour already
+covers something is worth doing for the answer; it was also worth doing for what
+it turned up about the neighbour.**

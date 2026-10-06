@@ -26,12 +26,22 @@ throws `Unknown column` first. It fails either way, and the correct field is the
 The passes below are mechanical and exact -- a DocType JSON's references resolve against that
 same JSON, so there is no name matching and no scope guessing, unlike a grep.
 
-KNOWN BLIND SPOT, stated so it is a place to look rather than a place to stop: a reference whose
-target DocType this app does not define is skipped, because a Frappe core DocType's field list is
-not in this repo. There are 18 such references (User, Country, Communication, Contact, Letter
-Head, ToDo). The four `fetch_from` ones among them were checked by hand against frappe/frappe
-version-15 on 5 Oct 2026 and all resolve: Contact.email_id, Contact.phone, Communication.sender,
-Communication.subject. Re-check them when the Frappe version moves.
+KNOWN BLIND SPOT, and what bounds it. A reference whose target DocType this app does not define
+cannot be resolved here, because a Frappe core DocType's field list is not in this repository.
+That is unavoidable; leaving it open was not. Both halves are now pinned as exact sets, so the
+blind spot cannot grow without a test failing:
+
+  * WHICH DocTypes this app points at and does not declare -- `LINK_TARGETS_OUTSIDE_THIS_APP`
+    in `test_doctype_json_validation.py`. A typo in a Link target (`Contacts` for `Contact`)
+    fails there, which is why this file does not check it again.
+  * WHICH `fetch_from` references reach into one -- `FETCH_FROM_OUTSIDE_THIS_APP` below, with
+    the source field each was read against. A fifth reference, or a change to one of the four,
+    fails here.
+
+Until this was pinned, the four were a sentence in this docstring saying they had been checked
+by hand -- and `email.sender` could be edited to `email.sendr` with all five tests still green.
+Re-check the four against frappe when the Frappe version moves; the pin says when each was last
+read, so it is a dated claim rather than a settled one.
 """
 
 import json
@@ -55,6 +65,24 @@ STANDARD_FIELDS = {
 
 LINK_FIELDTYPES = {"Link", "Table", "Table MultiSelect"}
 CHILD_FIELDTYPES = {"Table", "Table MultiSelect"}
+
+# The `fetch_from` references whose target DocType this app does not declare, keyed by the field
+# that carries them. Pinned as an exact map rather than skipped, the way
+# `LINK_TARGETS_OUTSIDE_THIS_APP` is pinned in `test_doctype_json_validation.py`: that is what
+# turns an exemption into a bounded check. Each value was read by hand against frappe/frappe
+# version-15 and resolves to a real field on the target.
+#
+# A new entry is either a real new dependency on a frappe DocType -- read the source field off
+# frappe first, then add it with the date -- or the typo this pin is for. A *changed* value is
+# the same question, and it is the one this file could not see before: nothing else in the suite
+# would notice `email.sender` becoming `email.sendr`.
+FETCH_FROM_OUTSIDE_THIS_APP = {
+    # (DocType, fieldname): fetch_from expression          # read on
+    ("Project Communications", "from"): "email.sender",      # 5 Oct 2026
+    ("Project Communications", "subject"): "email.subject",  # 5 Oct 2026
+    ("Project Contacts", "email"): "contact.email_id",       # 5 Oct 2026
+    ("Project Contacts", "phone"): "contact.phone",          # 5 Oct 2026
+}
 
 
 def _load_doctypes():
@@ -106,6 +134,7 @@ class TestDoctypeJsonIsSane(unittest.TestCase):
     def test_every_fetch_from_resolves(self):
         """`fetch_from` must name a Link field on this DocType and a real field on its target."""
         bad = []
+        outside = {}
         for dt, (path, d) in sorted(DOCTYPES.items()):
             fields = FIELDS[dt]
             for f in d.get("fields", []):
@@ -133,7 +162,10 @@ class TestDoctypeJsonIsSane(unittest.TestCase):
                 else:
                     options = (target.get("options") or "").strip()
                     if options not in DOCTYPES:
-                        continue  # the documented blind spot; see the module docstring
+                        # Not resolvable here -- frappe's field lists are not in this repo --
+                        # so it is pinned by name instead, below. Bounded, not skipped.
+                        outside[(dt, f.get("fieldname"))] = expr
+                        continue
                     if not _has_field(options, source):
                         bad.append(
                             "{}: fetch_from {!r} -- {} has no field {!r}".format(
@@ -147,9 +179,26 @@ class TestDoctypeJsonIsSane(unittest.TestCase):
             "makes frappe.throw('Wrong Fetch From value') fire on every save where the link is "
             "set:\n  " + "\n  ".join(sorted(set(bad))),
         )
+        self.assertEqual(
+            outside,
+            FETCH_FROM_OUTSIDE_THIS_APP,
+            "the set of fetch_from references reaching into a DocType this app does not declare "
+            "has changed. Frappe's field lists are not in this repository, so these are judged "
+            "by being exactly the expected references and no other way -- a new one is either a "
+            "real new dependency to add to FETCH_FROM_OUTSIDE_THIS_APP (having read the source "
+            "field off frappe), or the typo this pin is for.\n  expected: %s\n  found:    %s"
+            % (sorted(FETCH_FROM_OUTSIDE_THIS_APP.items()), sorted(outside.items())),
+        )
 
-    def test_link_and_table_options_name_a_real_doctype(self):
-        """A Table field must point at a DocType this app defines and marks `istable`."""
+    def test_table_fields_point_at_a_child_table(self):
+        """A Table field must point at a DocType this app declares and marks `istable`.
+
+        Only the `istable` half is here. Whether a Link's or Table's `options` names a DocType
+        that exists at all is pinned by `LINK_TARGETS_OUTSIDE_THIS_APP` in
+        `test_doctype_json_validation.py`; this file asks the next question, whether the field
+        a reference reaches for exists. The old name of this test claimed both halves and
+        checked one, which is why it has been renamed rather than widened.
+        """
         bad = []
         for dt, (path, d) in sorted(DOCTYPES.items()):
             for f in d.get("fields", []):
