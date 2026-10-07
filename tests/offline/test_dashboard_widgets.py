@@ -94,14 +94,16 @@ class WidgetTestCase(unittest.TestCase):
                   project_lead=USER, timesheet_approver=USER),
         ]
         self.frappe.tables["Timesheet Entry"] = [
-            _dict(name="ts_open", employee=USER, is_active=1, status="Draft",
-                  project="5gofgdoomv", activity="g68cfomvvu",
-                  location="Site", check_in_time="2026-10-05 09:00:00",
-                  duration_hours=0, modified="2026-10-05 09:00:00"),
+            # Deliberately first: without the is_active filter, the stand-in
+            # returns this submitted row and the active-timesheet test goes red.
             _dict(name="ts_done", employee=USER, is_active=0, status="Submitted",
                   project="5gofgdoomv", activity="g68cfomvvu",
                   location="Site", check_in_time="2026-10-02 08:30:00",
                   duration_hours=7.5, modified="2026-10-02 17:00:00"),
+            _dict(name="ts_open", employee=USER, is_active=1, status="Draft",
+                  project="5gofgdoomv", activity="g68cfomvvu",
+                  location="Site", check_in_time="2026-10-05 09:00:00",
+                  duration_hours=0, modified="2026-10-05 09:00:00"),
             _dict(name="ts_someone_else", employee=OTHER, is_active=1,
                   status="Submitted", project="5gofgdoomv",
                   activity="g68cfomvvu", location="Site",
