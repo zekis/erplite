@@ -248,7 +248,7 @@ breaking the code.
 
 ## Targets
 
-Thirty-one so far, 773 injections: edits applied to the app's real source,
+Thirty-two so far, 784 injections: edits applied to the app's real source,
 with `run.py` watching one test file go red.
 
 Those two numbers are counted from `faults.py`, not kept by hand. They said
@@ -2911,3 +2911,24 @@ being a dialog. Both live instances happen to be a `frappe.ui.Dialog`, whose
 fields are declared in the dialog's own `fields` array and so correctly out of
 scope — but assign a real `frm` to a short name and this sweep still says
 nothing.
+
+### `dashboard_widgets` — `tests/offline/test_dashboard_widgets.py`
+
+The thirty-second target and the last ordinary offline test file to be driven.
+11 faults cover the three removed-field regressions, the active/recent ownership
+and ordering rules, the approval status/scope/order rules, and one behaviour-
+preserving local rename.
+
+On the file as it stood, **10 behaved and one did not**: deleting the
+`is_active` filter from the active-timesheet query left all 14 tests green.
+The stand-in returned rows in fixture order, and the active Draft row happened
+to be first, so the filter could disappear without changing the answer. The
+fixture now deliberately puts a submitted row first. With the filter present
+the result is unchanged; without it the active-timesheet assertion goes red.
+
+That is the useful distinction: the test already asserted that the returned row
+was active, but its data did not offer the query a plausible wrong answer.
+Assertions only distinguish states the fixture makes distinguishable.
+
+After that correction, all 11 injections behave: ten regressions turn the file
+red and the local-variable control stays green.

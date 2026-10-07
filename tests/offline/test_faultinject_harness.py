@@ -40,7 +40,7 @@ def _load(name, path):
 harness = _load("fi_harness", os.path.join(FI, "harness.py"))
 
 # Offline test files that no target in faults.py drives, with why. Measured, not
-# assembled from memory: 2 of 33 on 7 Oct 2026 (3 earlier the same day, before
+# assembled from memory: 1 of 33 on 7 Oct 2026 (3 earlier the same day, before
 # test_client_scripts.py was given the `client_scripts` target; 5 before
 # test_child_doctype_hooks.py and test_doctype_metadata.py were given theirs;
 # 8 on 6 Oct, before test_shadowed_imports.py was given `shadowed_imports`). A
@@ -62,7 +62,7 @@ UNDRIVEN_OFFLINE_FILES = {
     # written it, which is the work; the file kind is not the obstacle.
     #
     # Six files have left this list, and all six paid for the trip on the way out --
-    # which is the argument for the one below, because each left under a green suite
+    # which is the argument for driving the last one, because each left under a green suite
     # and none of the defects was visible from reading:
     #   test_shadowed_imports.py (6 Oct): a sweep failing on correct Python, plus two
     #     bindings it could not see, one of them named in its own docstring.
@@ -101,7 +101,6 @@ UNDRIVEN_OFFLINE_FILES = {
     #     removal (activity.js explains its own in prose). A guard that refuses
     #     correct work and a guard that cannot see the regression are the same
     #     defect seen from two sides, and one file had both.
-    "tests/offline/test_dashboard_widgets.py": "no target yet",
 }
 faults_mod = _load("fi_faults", os.path.join(FI, "faults.py"))
 TARGETS = faults_mod.TARGETS

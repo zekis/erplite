@@ -6380,6 +6380,70 @@ CLIENT_SCRIPTS = Target(
     ])
 
 
+# --- timesheet dashboard widget --------------------------------------------
+# The widget is a browser-facing query bundle: active work, recent work and
+# approvals. These faults break each filter/field contract independently.
+DASHBOARD_WIDGET = "erplite/projects/dashboard_widgets.py"
+
+DASHBOARD_WIDGETS = Target(
+    test="tests/offline/test_dashboard_widgets.py",
+    faults=[
+        Fault("active query uses the removed task field", True, [
+            (DASHBOARD_WIDGET,
+             'fields=["name", "project", "activity", "check_in_time", "location"],',
+             'fields=["name", "project", "task", "check_in_time", "location"],')]),
+        Fault("recent query uses the removed date field", True, [
+            (DASHBOARD_WIDGET,
+             '"activity", "check_in_time as date", "duration_hours", "status"],',
+             '"activity", "date", "duration_hours", "status"],')]),
+        Fault("approval project query returns to removed project_manager", True, [
+            (DASHBOARD_WIDGET,
+             '"timesheet_approver": user',
+             '"project_manager": user')]),
+        Fault("active query stops requiring an active row", True, [
+            (DASHBOARD_WIDGET,
+             '            "employee": user,\n            "is_active": 1',
+             '            "employee": user')]),
+        Fault("active query stops belonging to the current user", True, [
+            (DASHBOARD_WIDGET,
+             '            "employee": user,\n            "is_active": 1',
+             '            "is_active": 1')]),
+        Fault("recent query includes everybody's timesheets", True, [
+            (DASHBOARD_WIDGET,
+             '        filters={\n            "employee": user\n        },\n        fields=["name", "project", "activity", "check_in_time as date"',
+             '        filters={},\n        fields=["name", "project", "activity", "check_in_time as date"')]),
+        Fault("recent query sorts oldest first", True, [
+            (DASHBOARD_WIDGET,
+             '        order_by="modified desc",\n        limit=5',
+             '        order_by="modified asc",\n        limit=5')]),
+        Fault("approval queue includes drafts", True, [
+            (DASHBOARD_WIDGET,
+             '                "status": "Submitted"',
+             '                "status": ["in", ["Draft", "Submitted"]]')]),
+        Fault("approval queue is restricted to the approver's own entries", True, [
+            (DASHBOARD_WIDGET,
+             '                "project": ["in", project_names],\n                "status": "Submitted"',
+             '                "project": ["in", project_names],\n                "employee": user,\n                "status": "Submitted"')]),
+        Fault("approval queue sorts oldest first", True, [
+            (DASHBOARD_WIDGET,
+             '            order_by="modified desc",\n            limit=10',
+             '            order_by="modified asc",\n            limit=10')]),
+        Fault("CONTROL: local user variable renamed (must stay green)", False, [
+            (DASHBOARD_WIDGET,
+             '    user = frappe.session.user\n',
+             '    current_user = frappe.session.user\n'),
+            (DASHBOARD_WIDGET,
+             '            "employee": user,\n            "is_active": 1',
+             '            "employee": current_user,\n            "is_active": 1'),
+            (DASHBOARD_WIDGET,
+             '        filters={\n            "employee": user\n        },',
+             '        filters={\n            "employee": current_user\n        },'),
+            (DASHBOARD_WIDGET,
+             '            "timesheet_approver": user',
+             '            "timesheet_approver": current_user')]),
+    ])
+
+
 TARGETS = {
     "xero_gate": XERO_GATE,
     "timesheet_ownership": TIMESHEET_OWNERSHIP,
@@ -6412,4 +6476,5 @@ TARGETS = {
     "doctype_metadata": DOCTYPE_METADATA,
     "child_doctype_hooks": CHILD_DOCTYPE_HOOKS,
     "client_scripts": CLIENT_SCRIPTS,
+    "dashboard_widgets": DASHBOARD_WIDGETS,
 }
