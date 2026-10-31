@@ -7,6 +7,7 @@ Afterz source code. Mapping keys are <doctype>:<source id>.
 """
 
 import argparse
+import copy
 import hashlib
 import json
 from collections import defaultdict
@@ -274,7 +275,9 @@ def import_manifest(path, apply=False):
             identity = key(r)
             if identity in mapping:
                 continue
-            fields = dict(r["fields"])
+            # Frappe normalizes child dictionaries in place. Keep target child
+            # metadata out of the archived source and its idempotency hash.
+            fields = copy.deepcopy(r["fields"])
             links = dict(LINKS.get(r["doctype"], {}))
             if r["doctype"] == "ToDo" and fields.get("reference_name"):
                 links["reference_name"] = fields["reference_type"]
