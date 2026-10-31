@@ -46,7 +46,7 @@ const Sidebar: React.FC<SidebarProps> = ({ expanded, onToggle }) => {
 
   const navItems: NavItem[] = [
     { path: "/", icon: MdDashboard, label: "Dashboard" },
-    { path: "/todos", icon: MdChecklist, label: "Todos" },
+    { path: "/projects", icon: MdChecklist, label: "Projects" },
     { path: "/planning", icon: MdCalendarToday, label: "Planning" },
     {
       path: "/timesheet",
