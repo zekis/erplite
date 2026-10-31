@@ -1,10 +1,32 @@
 import copy, json, tempfile, unittest
 from pathlib import Path
+from unittest.mock import patch
 from fake_site import Site
 from erplite.workz.migration import import_manifest
 
 
 class Import(unittest.TestCase):
+    def test_child_normalization_does_not_change_source_archive_or_repeat_hash(self):
+        project = self.manifest["records"][2]
+        project["fields"]["contacts"] = [{"contact": "Original contact"}]
+        original_get_doc = self.s.f.get_doc
+
+        def normalize_children(payload, *args, **kwargs):
+            if isinstance(payload, dict) and payload.get("doctype") == "Project":
+                for child in payload.get("contacts", []):
+                    child["doctype"] = "Project Contacts"
+                    child["parenttype"] = "Project"
+            return original_get_doc(payload, *args, **kwargs)
+
+        with patch.object(self.s.f, "get_doc", side_effect=normalize_children):
+            self.assertTrue(self.run_import(True).get("applied"))
+            archived = self.s.get_all("Workz Import Map", {"target_type": "Project"})[0]
+            self.assertEqual(json.loads(archived.source_record)["fields"], project["fields"])
+            before = copy.deepcopy(self.s.data)
+            result = self.run_import(True)
+            self.assertTrue(result.get("applied"), result)
+            self.assertEqual(before, self.s.data)
+
     def test_processed_history_import_preserves_status_and_existing_approval(self):
         self.manifest["records"][-1]["fields"]["status"] = "Processed"
         result = self.run_import(True)
