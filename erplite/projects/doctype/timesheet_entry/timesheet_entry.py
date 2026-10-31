@@ -84,6 +84,11 @@ class TimesheetEntry(Document):
             return
         if self.employee == frappe.session.user:
             return
+        if getattr(getattr(self, "flags", None), "workz_scoped_booking", False):
+            from erplite.workz.policy import approves, require
+            require(approves(self.project))
+            self.set("owner", self.employee)
+            return
         if not frappe.has_permission(self.doctype, "write"):
             frappe.throw(_(
                 "You can only book time against your own name. "
@@ -104,8 +109,17 @@ class TimesheetEntry(Document):
             self.is_active = 0
             self.duration_hours = 0
     
+        # Preserve elapsed time through DST folds; local storage alone cannot
+        # distinguish the two occurrences of a repeated clock time.
+        if getattr(self, "workz_start_utc", None) and getattr(self, "workz_end_utc", None):
+            self.duration_hours = time_diff_in_hours(self.workz_end_utc, self.workz_start_utc)
+
     def validate_times(self):
         """Validate check-in and check-out times"""
+        if getattr(self, "workz_start_utc", None) and getattr(self, "workz_end_utc", None):
+            if get_datetime(self.workz_start_utc) >= get_datetime(self.workz_end_utc):
+                frappe.throw(_("Check Out Time must be after Check In Time"))
+            return
         if self.check_in_time and self.check_out_time:
             if get_datetime(self.check_in_time) >= get_datetime(self.check_out_time):
                 frappe.throw(_("Check Out Time must be after Check In Time"))

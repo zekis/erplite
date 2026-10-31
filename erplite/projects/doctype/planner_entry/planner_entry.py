@@ -32,8 +32,8 @@ class PlannerEntry(Document):
         if has_end:
             # Calculate duration_hours from start/end
             try:
-                start = get_datetime(self.plan_start)
-                end = get_datetime(self.plan_end)
+                start = get_datetime(getattr(self, "workz_start_utc", None) or self.plan_start)
+                end = get_datetime(getattr(self, "workz_end_utc", None) or self.plan_end)
             except Exception:
                 frappe.throw("Invalid datetime for plan_start or plan_end")
 

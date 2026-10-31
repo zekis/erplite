@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 252 98" width="252" height="98" role="img" aria-label="Tierney Morris">
+  <title>Tierney Morris</title>
+  <!--
+    Tierney Morris wordmark: <tm/>, deliberately read as an HTML tag.
+
+    Drawn as geometry, not type. No font is referenced, so it renders
+    identically on every machine instead of picking up whatever the
+    local "sans-serif" happens to be.
+
+    Monoline geometric construction on a 220 x 66 drawing:
+      brand navy   #1b3a4b
+      letters      stroke 10
+      brackets, /  stroke 8  (lighter, so the letters lead)
+      x-height     40        baseline y 61, x-height top y 21
+      ascender     56        t rises to y 5
+
+    This file has no background, so it sits on whatever surface uses it.
+    The off-white ground from the brand concept is #f5f3ee - see
+    tm-mark.svg, the square tile version.
+  -->
+  <g transform="translate(16,16)" fill="none" stroke="#1b3a4b"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M24 11 4 35 24 59" stroke-width="8"/>
+    <path d="M50 5V61M38 21h24" stroke-width="10"/>
+    <path d="M80 61V35c0-7.7 6.3-14 14-14s14 6.3 14 14v26M108 35c0-7.7 6.3-14 14-14s14 6.3 14 14v26" stroke-width="10"/>
+    <path d="M160 61 178 9" stroke-width="8"/>
+    <path d="M196 11 216 35 196 59" stroke-width="8"/>
+  </g>
+</svg>

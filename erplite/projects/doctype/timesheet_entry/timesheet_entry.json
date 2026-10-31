@@ -30,7 +30,9 @@
   "approved_by",
   "approval_date",
   "column_break_22",
-  "approval_notes"
+  "approval_notes",
+  "workz_start_utc",
+  "workz_end_utc"
  ],
  "fields": [
   {
@@ -169,6 +171,20 @@
    "fieldname": "approval_notes",
    "fieldtype": "Text",
    "label": "Approval Notes"
+  },
+  {
+   "fieldname": "workz_start_utc",
+   "label": "UTC start",
+   "fieldtype": "Datetime",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "workz_end_utc",
+   "label": "UTC end",
+   "fieldtype": "Datetime",
+   "read_only": 1,
+   "hidden": 1
   }
  ],
  "links": [],

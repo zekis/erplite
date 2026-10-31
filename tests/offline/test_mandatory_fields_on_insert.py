@@ -78,13 +78,14 @@ SKIP_DIRS = ("__pycache__", "node_modules", "public", "dist")
 
 # DocTypes this app inserts but does not own. Each is frappe's, so its JSON is
 # not in this tree and the rule cannot be evaluated against it.
-FOREIGN_DOCTYPES = {"ToDo"}
+# Leave Application belongs to optional HRMS; Workz checks its DocType before use.
+FOREIGN_DOCTYPES = {"ToDo", "Leave Application"}
 
 # The insert sites in the app today. An exact count, not a floor: a floor set
 # below the real number is slack, and one site can disappear from the walker's
 # reach -- which is how a widened shape used to go unnoticed -- without a word
 # being said. Changing this number is a deliberate act; dropping it is not.
-EXPECTED_INSERT_SITES = 6
+EXPECTED_INSERT_SITES = 12
 
 
 def _walk(ext):

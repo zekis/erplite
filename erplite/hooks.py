@@ -14,9 +14,9 @@ app_license = "mit"
 add_to_apps_screen = [
 	{
 		"name": "erplite",
-		"logo": "/assets/erplite/images/toolbox.png",
-		"title": "Desk",
-		"route": "/app",
+		"logo": "/assets/erplite/tm-logo.svg",
+		"title": "Workz",
+		"route": "/workz",
 		"has_permission": "erplite.check_app_permission"
 	}
 ]
@@ -256,3 +256,27 @@ fixtures = [
 # default_log_clearing_doctypes = {
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
+
+# Consolidated Workz app; the legacy scheduler stays available during cutover.
+website_route_rules.append({"from_route": "/workz/<path:app_path>", "to_route": "workz"})
+
+has_permission = {
+    "Timesheet Entry": "erplite.workz.guards.time_permission",
+    "Planner Entry": "erplite.workz.guards.plan_permission",
+}
+permission_query_conditions = {
+    "Timesheet Entry": "erplite.workz.guards.time_query",
+    "Planner Entry": "erplite.workz.guards.plan_query",
+}
+doc_events = {
+    "Timesheet Entry": {"validate": "erplite.workz.guards.validate_time", "on_trash": "erplite.workz.guards.delete_time"},
+    "Planner Entry": {"validate": "erplite.workz.guards.validate_plan", "on_trash": "erplite.workz.guards.delete_plan"},
+}
+for _doctype in ("Project", "Activity", "ToDo"):
+    doc_events[_doctype] = {"validate": "erplite.workz.guards.validate_setup"}
+
+for _doctype in ("Workz Rate", "Workz Decision", "Workz Audit", "Workz Import Map"):
+    doc_events[_doctype] = {"validate": "erplite.workz.guards.immutable", "on_trash": "erplite.workz.guards.immutable"}
+
+for _doctype in ("Project", "Activity"):
+    doc_events[_doctype]["on_trash"] = "erplite.workz.guards.preserve_setup"

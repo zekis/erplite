@@ -1900,7 +1900,7 @@ APP_INIT = "erplite/__init__.py"
 # hooks.py's one live dotted path and its one live asset path sit in the same
 # dict, which makes it the single file where both of pass A and pass B can be
 # reached without touching a feature.
-HOOKS_LOGO = '\t\t"logo": "/assets/erplite/images/toolbox.png",\n'
+HOOKS_LOGO = '\t\t"logo": "/assets/erplite/tm-logo.svg",\n'
 HOOKS_PERM = '\t\t"has_permission": "erplite.check_app_permission"\n'
 
 # The one real patch in the app. frappe resolves `<first token>.execute`
