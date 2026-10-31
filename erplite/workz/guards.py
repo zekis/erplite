@@ -98,10 +98,10 @@ def validate_time(doc, method=None):
         "workz_end_utc",
     )
     changed = not old or any(not same_value(doc, old, k) for k in booking)
-    if old and old.status in ("Submitted", "Approved"):
+    if old and old.status in ("Submitted", "Approved", "Processed"):
         p.require(
             not changed and old.description == doc.description,
-            "Submitted/approved actual history is locked",
+            "Submitted/approved/processed actual history is locked",
         )
     if changed:
         p.eligible(doc.employee, doc.project, doc.activity)
