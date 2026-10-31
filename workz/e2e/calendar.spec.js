@@ -158,6 +158,79 @@ test("palette creation, pointer move/resize, persistence, cancellation and appro
       fullPage: true,
     });
   }
+  // Grabbing the second day moves by the grabbed day, not by the original start.
+  const allDay = await call("save_plan", {
+    user: "alice",
+    title: "Multi-day availability",
+    kind: "Availability",
+    timezone: "UTC",
+    all_day: true,
+    plan_start: "2030-03-04T00:00:00Z",
+    plan_end: "2030-03-06T00:00:00Z",
+  });
+  await page.goto("/workz/planning");
+  await page.getByLabel("Date", { exact: true }).fill("2030-03-04");
+  await drag(
+    page
+      .locator(".all-day-cell")
+      .nth(1)
+      .getByRole("button", {
+        name: "Move Multi-day availability",
+        exact: true,
+      }),
+    page.locator('[data-slot="2030-03-07 09:00"]'),
+  );
+  await expect(page.locator(".all-day-cell").nth(2)).toContainText(
+    "Multi-day availability",
+  );
+  const changed = (
+    await call("plans", {
+      start: "2030-03-01T00:00:00Z",
+      end: "2030-03-15T00:00:00Z",
+    })
+  ).find((r) => r.name === allDay.name);
+  expect(new Date(changed.plan_start).toISOString()).toBe(
+    "2030-03-06T00:00:00.000Z",
+  );
+  expect(new Date(changed.plan_end).toISOString()).toBe(
+    "2030-03-08T00:00:00.000Z",
+  );
+  const overnight = await call("save_plan", {
+    user: "alice",
+    title: "Overnight availability",
+    kind: "Availability",
+    timezone: "UTC",
+    plan_start: "2030-03-10T23:00:00Z",
+    plan_end: "2030-03-11T02:00:00Z",
+  });
+  await page.getByLabel("Date", { exact: true }).fill("2030-03-11");
+  await page
+    .getByRole("checkbox", { name: "Full day (00:00–24:00)", exact: true })
+    .check();
+  await drag(
+    page
+      .locator('[data-day="2030-03-11"]')
+      .getByRole("button", {
+        name: "Move Overnight availability",
+        exact: true,
+      }),
+    page.locator('[data-slot="2030-03-12 01:00"]'),
+  );
+  await expect(
+    page.locator('[data-day="2030-03-12"]').locator("article.time-entry"),
+  ).toHaveCount(1);
+  const movedOvernight = (
+    await call("plans", {
+      start: "2030-03-09T00:00:00Z",
+      end: "2030-03-15T00:00:00Z",
+    })
+  ).find((r) => r.name === overnight.name);
+  expect(new Date(movedOvernight.plan_start).toISOString()).toBe(
+    "2030-03-12T00:00:00.000Z",
+  );
+  expect(new Date(movedOvernight.plan_end).toISOString()).toBe(
+    "2030-03-12T03:00:00.000Z",
+  );
   await page.goto("/workz/todos");
   await expect(
     page.getByRole("heading", { name: "Projects & assignments", exact: true }),
