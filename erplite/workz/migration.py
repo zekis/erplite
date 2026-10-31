@@ -154,6 +154,7 @@ def validate(manifest):
                     "Submitted",
                     "Approved",
                     "Rejected",
+                    "Processed",
                 ):
                     errors.append(k + ": unknown status")
                 if not f.get("check_out_time"):
