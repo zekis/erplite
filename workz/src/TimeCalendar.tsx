@@ -12,6 +12,7 @@ import {
   pointerWithin,
   rectIntersection,
 } from "@dnd-kit/core";
+import { Icon, IconButton, Drawer } from "./ui";
 import type { DragEndEvent } from "@dnd-kit/core";
 import {
   inDay,
@@ -42,6 +43,10 @@ export interface PaletteItem {
   row: any;
 }
 interface Props {
+  railContent?: React.ReactNode;
+  summary?: React.ReactNode;
+  onNavigateDate: (date: string) => void;
+  detailActions?: (event: CalendarEvent) => React.ReactNode;
   events: CalendarEvent[];
   palette: PaletteItem[];
   days: string[];
@@ -117,7 +122,7 @@ function Slot({
   return (
     <div
       ref={drop.setNodeRef}
-      className={`${minute === null ? "month-cell" : "time-slot"} ${drop.isOver ? "drop-target" : ""}`}
+      className={`${day === localDate(new Date()) ? "is-today" : ""} ${[0, 6].includes(new Date(day + "T12:00").getDay()) ? "weekend" : ""} ${minute === null ? "month-cell" : "time-slot"} ${drop.isOver ? "drop-target" : ""}`}
       data-slot={`${day} ${minute === null ? "day" : timeLabel(minute)}`}
     >
       <button
@@ -143,7 +148,9 @@ function Entry({
   onEdit,
   onChange,
   onError,
+  scale = 1,
 }: {
+  scale?: number;
   event: CalendarEvent;
   instanceId: string;
   anchorStart?: string;
@@ -202,7 +209,8 @@ function Entry({
       }}
       onPointerMove={(e) => {
         if (!resize.current) return;
-        const minutes = Math.round((e.clientY - resize.current.y) / 15) * 15;
+        const minutes =
+          Math.round((e.clientY - resize.current.y) / (15 * scale)) * 15;
         try {
           setPreview(
             resizeInterval(event.start, event.end, edge, minutes) as [
@@ -218,7 +226,7 @@ function Entry({
         resize.current = null;
         setResizing(false);
         if (!current || cancelled.current) return;
-        const minutes = Math.round((e.clientY - current.y) / 15) * 15;
+        const minutes = Math.round((e.clientY - current.y) / (15 * scale)) * 15;
         if (!minutes) {
           setPreview(null);
           return;
@@ -252,7 +260,7 @@ function Entry({
         }
       }}
     >
-      {edge === "end" ? "═" : "─"}
+      <span aria-hidden="true">—</span>
     </button>
   );
   const [start, end] = preview || [event.start, event.end];
@@ -260,10 +268,10 @@ function Entry({
   if (preview && style?.height !== undefined) {
     const deltaStart = (+new Date(start) - +new Date(event.start)) / 60000;
     const deltaEnd = (+new Date(end) - +new Date(event.end)) / 60000;
-    visualStyle.top = Number(style.top) + deltaStart;
+    visualStyle.top = Number(style.top) + deltaStart * scale;
     visualStyle.height = Math.max(
       24,
-      Number(style.height) + deltaEnd - deltaStart,
+      Number(style.height) + (deltaEnd - deltaStart) * scale,
     );
   }
   return (
@@ -272,7 +280,7 @@ function Entry({
       className={`time-entry ${event.kind.toLowerCase()} ${!event.editable ? "locked" : ""}`}
       style={visualStyle}
       data-entry={event.id}
-      title={`${event.title}: ${new Date(start).toString()} – ${new Date(end).toString()}`}
+      title={`${event.title}: ${new Date(start).toLocaleString()} – ${new Date(end).toLocaleString()}`}
     >
       {editable && (
         <button
@@ -282,10 +290,10 @@ function Entry({
           aria-label={`Move ${event.title}`}
           title="Drag to another time"
         >
-          ⠿
+          <Icon name="grip" />
         </button>
       )}
-      <button className="event-title" onClick={onEdit} disabled={!editable}>
+      <button className="event-title" onClick={onEdit}>
         {event.title}
       </button>
       <small>
@@ -324,6 +332,49 @@ export default function TimeCalendar(props: Props) {
   const [fullDay, setFullDay] = useState(false),
     [search, setSearch] = useState(""),
     [active, setActive] = useState("");
+  const [railOpen, setRailOpen] = useState(innerWidth >= 1280);
+  const [selected, setSelected] = useState<CalendarEvent | null>(null),
+    [agenda, setAgenda] = useState("");
+  const workspace = useRef<HTMLElement>(null);
+  const [available, setAvailable] = useState(500);
+  useEffect(() => {
+    const observer = new ResizeObserver(([e]) =>
+      setAvailable(e.contentRect.height),
+    );
+    if (workspace.current) observer.observe(workspace.current);
+    return () => observer.disconnect();
+  }, []);
+  const [clockHeight, setClockHeight] = useState(400);
+  useEffect(() => {
+    const root = workspace.current;
+    if (!root) return;
+    const scroll = root.querySelector(".time-grid-scroll") as HTMLElement;
+    const heading = root.querySelector(".time-heading") as HTMLElement;
+    const allDay = root.querySelector(".all-day-cell") as HTMLElement;
+    if (scroll)
+      setClockHeight(
+        scroll.clientHeight -
+          (heading?.offsetHeight || 0) -
+          (allDay?.offsetHeight || 0) -
+          2,
+      );
+  }, [available, view, events, fullDay]);
+  const scale = fullDay ? 1 : Math.min(1, Math.max(0.25, clockHeight / 720));
+  const monthRows = Math.ceil(
+    (((new Date(days[0] + "T12:00").getDay() + 6) % 7) + days.length) / 7,
+  );
+  const monthLimit = Math.max(
+    1,
+    Math.floor(((available - 60) / monthRows - 50) / 26),
+  );
+  const outside = events.filter(
+    (e) =>
+      !e.allDay &&
+      days.some((day) => inDay(e.start, e.end, day)) &&
+      (new Date(e.start).getHours() < 6 ||
+        new Date(e.end).getHours() >= 18 ||
+        localDate(new Date(e.start)) !== localDate(new Date(e.end))),
+  );
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
@@ -343,7 +394,10 @@ export default function TimeCalendar(props: Props) {
   };
   async function dropped({ active, over }: DragEndEvent) {
     setActive("");
-    if (!over || busy) return;
+    if (!over || busy) {
+      if (!over) onError("Drop cancelled: choose a calendar time slot.");
+      return;
+    }
     const target = over.data.current;
     if (!target?.day) return;
     try {
@@ -384,6 +438,12 @@ export default function TimeCalendar(props: Props) {
       onError((e as Error).message);
     }
   }
+  useEffect(() => {
+    if (selected) {
+      const updated = events.find((e) => e.id === selected.id);
+      setSelected(updated || null);
+    }
+  }, [events]);
   const entry = (
     event: CalendarEvent,
     style?: React.CSSProperties,
@@ -394,12 +454,13 @@ export default function TimeCalendar(props: Props) {
     <Entry
       key={key}
       event={event}
+      scale={scale}
       instanceId={key}
       anchorStart={anchorStart}
       disabled={busy}
       style={style}
       handles={handles}
-      onEdit={() => onEdit(event)}
+      onEdit={() => setSelected(event)}
       onChange={(a, b) => onChange(event, a, b)}
       onError={onError}
     />
@@ -422,13 +483,21 @@ export default function TimeCalendar(props: Props) {
       onDragEnd={dropped}
       onDragCancel={() => setActive("")}
     >
-      <div className="scheduling-workspace">
-        <aside className="activity-palette" aria-label="Activities to schedule">
-          <h2>Drag onto the calendar</h2>
-          <p>
-            Activities and calendar blocks. Click for the same form without
-            dragging.
-          </p>
+      <div
+        className={`scheduling-workspace ${railOpen ? "rail-open" : "rail-closed"}`}
+      >
+        <aside
+          hidden={!railOpen}
+          className="activity-palette"
+          aria-label="Activities to schedule"
+        >
+          <IconButton
+            icon="close"
+            label="Close activity rail"
+            onClick={() => setRailOpen(false)}
+          />
+          {props.railContent}
+          <h2>Activities</h2>
           <label>
             Find activity
             <input
@@ -474,15 +543,19 @@ export default function TimeCalendar(props: Props) {
           )}
         </aside>
         <section
+          ref={workspace}
           className="calendar-workspace"
           aria-label={`${mode} interactive calendar`}
         >
           <div className="calendar-options">
-            <strong>
-              {mode === "Planning"
-                ? "Plan work and availability"
-                : "Book actual time"}
-            </strong>
+            <button
+              aria-expanded={railOpen}
+              onClick={() => setRailOpen(!railOpen)}
+            >
+              <Icon name="projects" /> Activities{" "}
+              {props.railContent ? "& suggestions" : ""}
+            </button>
+            <button onClick={() => setAgenda(days[0])}>Day agenda</button>
             {view !== "month" && (
               <label>
                 <input
@@ -494,22 +567,44 @@ export default function TimeCalendar(props: Props) {
               </label>
             )}
           </div>
-          <p className="help">
-            Drag an activity to book one hour. Move with the grip; resize either
-            edge in 15-minute steps. Click a time to use a form. Escape cancels
-            a drag. Submitted and approved time stays locked.
-          </p>
+          {!fullDay && view !== "month" && outside.length > 0 && (
+            <button className="outside-hours" onClick={() => setFullDay(true)}>
+              {outside.length} outside working hours · Show full day
+            </button>
+          )}
           {view === "month" ? (
             <div
               className="month-time-grid"
+              style={{
+                gridTemplateRows: `28px repeat(${monthRows}, minmax(0, 1fr))`,
+              }}
               role="region"
               aria-label="month calendar"
             >
+              {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+                <div className="weekday" key={d}>
+                  {d}
+                </div>
+              ))}
               {Array.from(
                 { length: (new Date(days[0] + "T12:00").getDay() + 6) % 7 },
-                (_, i) => (
-                  <div key={"pad" + i} />
-                ),
+                (_, i) => {
+                  const d = new Date(days[0] + "T12:00");
+                  d.setDate(d.getDate() - ((d.getDay() + 6) % 7) + i);
+                  const day = localDate(d);
+                  return (
+                    <button
+                      className="adjacent-day"
+                      key={day}
+                      onClick={() => props.onNavigateDate(day)}
+                    >
+                      {d.toLocaleDateString([], {
+                        month: "short",
+                        day: "numeric",
+                      })}
+                    </button>
+                  );
+                },
               )}
               {days.map((day) => (
                 <Slot
@@ -522,9 +617,48 @@ export default function TimeCalendar(props: Props) {
                 >
                   {events
                     .filter((e) => inDay(e.start, e.end, day))
+                    .slice(0, monthLimit)
                     .map((e) => entry(e, undefined, false, day + e.id))}
+                  {events.filter((e) => inDay(e.start, e.end, day)).length >
+                    monthLimit && (
+                    <button
+                      className="more-events"
+                      onClick={() => setAgenda(day)}
+                    >
+                      +
+                      {events.filter((e) => inDay(e.start, e.end, day)).length -
+                        monthLimit}{" "}
+                      more
+                    </button>
+                  )}
                 </Slot>
               ))}
+              {Array.from(
+                {
+                  length:
+                    (7 -
+                      (new Date(days[days.length - 1] + "T12:00").getDay() ||
+                        7)) %
+                    7,
+                },
+                (_, i) => {
+                  const d = new Date(days[days.length - 1] + "T12:00");
+                  d.setDate(d.getDate() + i + 1);
+                  const day = localDate(d);
+                  return (
+                    <button
+                      className="adjacent-day"
+                      key={day}
+                      onClick={() => props.onNavigateDate(day)}
+                    >
+                      {d.toLocaleDateString([], {
+                        month: "short",
+                        day: "numeric",
+                      })}
+                    </button>
+                  );
+                },
+              )}
             </div>
           ) : (
             <div
@@ -535,7 +669,7 @@ export default function TimeCalendar(props: Props) {
               <div
                 className="time-grid"
                 style={{
-                  gridTemplateColumns: `58px repeat(${days.length}, minmax(125px, 1fr))`,
+                  gridTemplateColumns: `48px repeat(${days.length}, minmax(0, 1fr))`,
                 }}
               >
                 <div className="time-heading">Time</div>
@@ -558,12 +692,15 @@ export default function TimeCalendar(props: Props) {
                 ))}
                 <div
                   className="time-ruler"
-                  style={{ height: (endHour - startHour) * 60 }}
+                  style={{ height: (endHour - startHour) * 60 * scale }}
                 >
                   {minutes
                     .filter((m) => m % 60 === 0)
                     .map((m) => (
-                      <span key={m} style={{ top: m - startHour * 60 }}>
+                      <span
+                        key={m}
+                        style={{ top: (m - startHour * 60) * scale }}
+                      >
                         {timeLabel(m)}
                       </span>
                     ))}
@@ -573,26 +710,35 @@ export default function TimeCalendar(props: Props) {
                     className="time-day-column"
                     key={day}
                     data-day={day}
-                    style={{ height: (endHour - startHour) * 60 }}
+                    style={{ height: (endHour - startHour) * 60 * scale }}
                   >
-                    {minutes.map((minute) => (
-                      <Slot
-                        key={minute}
-                        day={day}
-                        minute={minute}
-                        mode={mode}
-                        disabled={busy}
-                        onClick={() => select(day, minute)}
-                      />
-                    ))}
+                    <div
+                      className="time-slots"
+                      style={{
+                        height: "100%",
+                        display: "grid",
+                        gridTemplateRows: `repeat(${minutes.length}, minmax(0,1fr))`,
+                      }}
+                    >
+                      {minutes.map((minute) => (
+                        <Slot
+                          key={minute}
+                          day={day}
+                          minute={minute}
+                          mode={mode}
+                          disabled={busy}
+                          onClick={() => select(day, minute)}
+                        />
+                      ))}
+                    </div>
                     {timeSegments(events, day, startHour, endHour).map(
                       (s: any) =>
                         entry(
                           s.event,
                           {
                             position: "absolute",
-                            top: s.top,
-                            height: s.height,
+                            top: s.top * scale,
+                            height: Math.max(18, s.height * scale),
                             left: `${(s.lane * 100) / s.lanes}%`,
                             width: `${100 / s.lanes}%`,
                           },
@@ -606,8 +752,94 @@ export default function TimeCalendar(props: Props) {
               </div>
             </div>
           )}
+          <footer className="summary-strip">{props.summary}</footer>
         </section>
       </div>
+      {selected && (
+        <Drawer title={selected.title} onClose={() => setSelected(null)}>
+          <p>{selected.subtitle}</p>
+          <p>
+            {new Date(selected.start).toLocaleString()} –{" "}
+            {new Date(selected.end).toLocaleString()}
+          </p>
+          <p>
+            {(
+              (+new Date(selected.end) - +new Date(selected.start)) /
+              3600000
+            ).toLocaleString()}{" "}
+            hours · {selected.kind}
+          </p>
+          <p>
+            {selected.row.description ||
+              selected.row.notes ||
+              selected.row.approval_notes}
+          </p>
+          {props.detailActions?.(selected)}
+          {!selected.editable && (
+            <p>
+              <Icon name="lock" /> Locked history
+            </p>
+          )}
+          {selected.editable && (
+            <button
+              className="primary"
+              onClick={() => {
+                const event = selected;
+                setSelected(null);
+                onEdit(event);
+              }}
+            >
+              Edit
+            </button>
+          )}
+        </Drawer>
+      )}
+      {agenda && (
+        <Drawer title={`Agenda · ${agenda}`} onClose={() => setAgenda("")}>
+          <label>
+            Day
+            <input
+              type="date"
+              value={agenda}
+              onChange={(e) => {
+                if (e.target.value) {
+                  setAgenda(e.target.value);
+                  if (!days.includes(e.target.value))
+                    props.onNavigateDate(e.target.value);
+                }
+              }}
+            />
+          </label>
+          {events
+            .filter((e) => inDay(e.start, e.end, agenda))
+            .map((e) => (
+              <button
+                className="agenda-item"
+                key={e.id}
+                onClick={() => {
+                  setAgenda("");
+                  setSelected(e);
+                }}
+              >
+                <strong>{e.title}</strong>
+                <span>
+                  {clock(e.start)}–{clock(e.end)} · {e.kind}
+                </span>
+              </button>
+            ))}
+          {!events.some((e) => inDay(e.start, e.end, agenda)) && (
+            <p>No entries for this day.</p>
+          )}
+          <button
+            onClick={() => {
+              select(agenda, 540);
+              setAgenda("");
+            }}
+          >
+            New {mode === "Planning" ? "plan" : "entry"}
+          </button>
+        </Drawer>
+      )}
       <DragOverlay>
         {active ? <div className="calendar-drag-preview">{active}</div> : null}
       </DragOverlay>

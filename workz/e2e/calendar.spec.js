@@ -4,7 +4,8 @@ test("palette creation, pointer move/resize, persistence, cancellation and appro
   page,
   context,
 }) => {
-  await page.setViewportSize({ width: 1600, height: 1600 });
+  test.setTimeout(60000);
+  await page.setViewportSize({ width: 1366, height: 768 });
   await page.clock.install({ time: new Date("2030-02-04T12:00:00Z") });
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -57,6 +58,7 @@ test("palette creation, pointer move/resize, persistence, cancellation and appro
   async function resize(handle, dy) {
     await handle.scrollIntoViewIfNeeded();
     const box = await handle.boundingBox();
+    dy *= (await page.locator(".time-slot").first().boundingBox()).height / 15;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + dy, {
@@ -66,6 +68,11 @@ test("palette creation, pointer move/resize, persistence, cancellation and appro
   }
   for (const mode of ["planning", "timesheet"]) {
     await page.goto("/workz/" + mode);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.getByRole("button", { name: /^Activities/ }).click();
+    await page.getByRole("button", { name: /^Activities/ }).click();
+    await page.getByRole("button", { name: /sidebar$/ }).click();
+    await page.setViewportSize({ width: 1366, height: 768 });
     const palette = page.getByRole("button", {
       name: "Schedule " + title,
       exact: true,
@@ -169,15 +176,14 @@ test("palette creation, pointer move/resize, persistence, cancellation and appro
     plan_end: "2030-03-06T00:00:00Z",
   });
   await page.goto("/workz/planning");
+  await page.locator(".period-picker summary").click();
   await page.getByLabel("Date", { exact: true }).fill("2030-03-04");
+  await page.locator(".period-picker summary").click();
   await drag(
-    page
-      .locator(".all-day-cell")
-      .nth(1)
-      .getByRole("button", {
-        name: "Move Multi-day availability",
-        exact: true,
-      }),
+    page.locator(".all-day-cell").nth(1).getByRole("button", {
+      name: "Move Multi-day availability",
+      exact: true,
+    }),
     page.locator('[data-slot="2030-03-07 09:00"]'),
   );
   await expect(page.locator(".all-day-cell").nth(2)).toContainText(
@@ -203,17 +209,17 @@ test("palette creation, pointer move/resize, persistence, cancellation and appro
     plan_start: "2030-03-10T23:00:00Z",
     plan_end: "2030-03-11T02:00:00Z",
   });
+  await page.locator(".period-picker summary").click();
   await page.getByLabel("Date", { exact: true }).fill("2030-03-11");
+  await page.locator(".period-picker summary").click();
   await page
     .getByRole("checkbox", { name: "Full day (00:00–24:00)", exact: true })
     .check();
   await drag(
-    page
-      .locator('[data-day="2030-03-11"]')
-      .getByRole("button", {
-        name: "Move Overnight availability",
-        exact: true,
-      }),
+    page.locator('[data-day="2030-03-11"]').getByRole("button", {
+      name: "Move Overnight availability",
+      exact: true,
+    }),
     page.locator('[data-slot="2030-03-12 01:00"]'),
   );
   await expect(
@@ -233,7 +239,7 @@ test("palette creation, pointer move/resize, persistence, cancellation and appro
   );
   await page.goto("/workz/todos");
   await expect(
-    page.getByRole("heading", { name: "Projects & assignments", exact: true }),
+    page.getByRole("heading", { name: "Projects", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "Todos", exact: true }),

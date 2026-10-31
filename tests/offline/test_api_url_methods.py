@@ -111,7 +111,6 @@ CODE_EXTS = {".py", ".js", ".vue", ".html"}
 # where it is defined in frappe version-15, so the excuse carries its provenance rather than
 # being "it looked like frappe's".
 FRAPPE_METHODS = {
-    "login": "frappe/auth.py:LoginManager.__init__, handles /api/method/login before dispatch",
     "logout": "frappe/handler.py:logout, @frappe.whitelist(allow_guest=True)",
 }
 
