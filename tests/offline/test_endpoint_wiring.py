@@ -126,7 +126,7 @@ DOCTYPE_FIRST_ARG = {
 # System Settings reads use `frappe.get_single` (erplite/www/erplite.py) and its
 # `Has Role` reads use `frappe.db.exists` with a `parent` filter, both right.
 # Nothing *here* judges shape; that is not a claim this file makes.
-FRAPPE_DOCTYPES = {"User", "ToDo", "File", "Has Role", "System Settings",
+FRAPPE_DOCTYPES = {"User", "ToDo", "Currency", "File", "Has Role", "System Settings",
                    "Workspace", "DocType", "Employee", "Leave Type", "Leave Application"}
 
 # Reads of a DocType that NOTHING declares -- not this app, not frappe. These

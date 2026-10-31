@@ -98,7 +98,10 @@ fixtures = [
 ]
 
 # before_install = "erplite.install.before_install"
-# after_install = "erplite.install.after_install"
+after_install = "erplite.setup.currency_compat.ensure_currency_fields"
+before_migrate = "erplite.setup.currency_compat.ensure_currency_fields"
+after_migrate = "erplite.setup.currency_compat.ensure_currency_fields"
+
 
 # Uninstallation
 # ------------
@@ -269,6 +272,10 @@ permission_query_conditions = {
     "Planner Entry": "erplite.workz.guards.plan_query",
 }
 doc_events = {
+    "Currency": {
+        "validate": "erplite.setup.doctype.currency.currency.validate_currency",
+        "on_update": "erplite.setup.doctype.currency.currency.on_update_currency",
+    },
     "Timesheet Entry": {"validate": "erplite.workz.guards.validate_time", "on_trash": "erplite.workz.guards.delete_time"},
     "Planner Entry": {"validate": "erplite.workz.guards.validate_plan", "on_trash": "erplite.workz.guards.delete_plan"},
 }

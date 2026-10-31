@@ -5,16 +5,14 @@
 from __future__ import unicode_literals
 import frappe
 from frappe import _
-from frappe.model.document import Document
+from frappe.geo.doctype.currency.currency import Currency as FrameworkCurrency
 from frappe.utils import now_datetime
 
-class Currency(Document):
+class Currency(FrameworkCurrency):
     def validate(self):
         """Validate currency"""
-        self.validate_base_currency()
-        
-        if not self.last_update:
-            self.last_update = now_datetime()
+        super().validate()
+        validate_currency(self)
     
     def validate_base_currency(self):
         """Validate base currency"""
@@ -69,3 +67,16 @@ class Currency(Document):
         to_rate = frappe.db.get_value("Currency", to_currency, "exchange_rate") or 1
         
         return to_rate / from_rate
+
+
+def validate_currency(doc, method=None):
+    """Extend core validation through doc_events, preserving its controller."""
+    if not doc.get("currency_code"):
+        doc.currency_code = doc.name or doc.currency_name
+    Currency.validate_base_currency(doc)
+    if not doc.get("last_update"):
+        doc.last_update = now_datetime()
+
+
+def on_update_currency(doc, method=None):
+    Currency.on_update(doc)
