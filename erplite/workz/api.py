@@ -560,11 +560,16 @@ def check_locked_period(employee, start, end):
         .for_update()
         .run(as_dict=True)
     )
+    # Weeks follow site-local calendar boundaries, but all comparisons use
+    # canonical instants. Local clock fields alone cannot resolve DST folds.
+    beginning, stop = instant(beginning), instant(stop)
     for row in candidates:
-        if (
-            row.status in ("Submitted", "Approved")
-            and beginning <= instant(row.check_in_time, zone()) < stop
-        ):
+        if row.status not in ("Submitted", "Approved"):
+            continue
+        a, b = record_times(row, "check_in_time", "check_out_time")
+        # Preserve the start-week lock for legacy records without an end, and
+        # lock every week touched by completed history (exclusive end).
+        if beginning <= a < stop or overlaps(beginning, stop, a, b):
             frappe.throw(
                 "This week contains submitted or approved time. Return submitted entries before adding new time; approved history stays locked."
             )
