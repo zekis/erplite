@@ -136,6 +136,7 @@ function Slot({
 function Entry({
   event,
   instanceId,
+  anchorStart,
   disabled,
   style,
   handles = true,
@@ -145,6 +146,7 @@ function Entry({
 }: {
   event: CalendarEvent;
   instanceId: string;
+  anchorStart?: string;
   disabled: boolean;
   style?: React.CSSProperties;
   handles?: boolean | { start: boolean; end: boolean };
@@ -155,7 +157,7 @@ function Entry({
   const editable = event.editable && !disabled;
   const drag = useDraggable({
     id: "event:" + instanceId,
-    data: { event },
+    data: { event, sourceDay: instanceId.slice(0, 10), anchorStart },
     disabled: !editable,
   });
   const resize = useRef<{ edge: string; y: number } | null>(null);
@@ -356,9 +358,26 @@ export default function TimeCalendar(props: Props) {
       } else if (data?.event) {
         const e = data.event as CalendarEvent;
         if (!e.editable) return;
-        const [a, b] = e.allDay
-          ? shift(e.start, e.end, localDate(new Date(e.start)), target.day)
-          : moveInterval(e.start, e.end, target.day, target.minute);
+        let a: string, b: string;
+        if (e.allDay) {
+          [a, b] = shift(e.start, e.end, data.sourceDay, target.day);
+        } else if (target.minute == null) {
+          const [moved] = shift(e.start, e.end, data.sourceDay, target.day);
+          [a, b] = moveInterval(
+            e.start,
+            e.end,
+            localDate(new Date(moved)),
+            null,
+          );
+        } else {
+          // Move the visible segment, retaining an overnight entry's hidden
+          // portion rather than moving its original start into this slot.
+          const delta =
+            +new Date(slotInstant(target.day, target.minute)) -
+            +new Date(data.anchorStart || e.start);
+          a = new Date(+new Date(e.start) + delta).toISOString();
+          b = new Date(+new Date(e.end) + delta).toISOString();
+        }
         if (a !== e.start || b !== e.end) await onChange(e, a, b);
       }
     } catch (e) {
@@ -370,11 +389,13 @@ export default function TimeCalendar(props: Props) {
     style?: React.CSSProperties,
     handles?: boolean | { start: boolean; end: boolean },
     key = event.id,
+    anchorStart?: string,
   ) => (
     <Entry
       key={key}
       event={event}
       instanceId={key}
+      anchorStart={anchorStart}
       disabled={busy}
       style={style}
       handles={handles}
@@ -577,6 +598,7 @@ export default function TimeCalendar(props: Props) {
                           },
                           { start: s.startHandle, end: s.endHandle },
                           day + s.event.id,
+                          s.anchorStart,
                         ),
                     )}
                   </div>
