@@ -24,7 +24,7 @@ test("fresh setup, plan, ghost, accept, submit, scoped approve and reconciliatio
     await expect(page.getByText("Saved. Totals refreshed.")).toBeVisible();
   }
   await role("Administrator");
-  await page.getByRole("link", { name: "Todos", exact: true }).click();
+  await page.getByRole("link", { name: "Projects", exact: true }).click();
   await page
     .getByRole("button", { name: "Create project", exact: true })
     .click();
@@ -236,38 +236,42 @@ test("calendar drag, rejected overlap rollback, keyboard resize, ignored suggest
   }
   await add("Move me", "2030-01-14");
   await add("Conflict target", "2030-01-16");
-  const moved = page.locator("article.plan").filter({ hasText: "Move me" });
-  const tuesday = page.locator(".day").filter({
-    has: page.getByRole("button", {
-      name: "Create plan 2030-01-15",
-      exact: true,
-    }),
-  });
-  await moved.dragTo(tuesday);
+  const moved = page
+    .locator("article.time-entry")
+    .filter({ hasText: "Move me" });
+  const tuesday = page.locator('[data-day="2030-01-15"]');
+  async function drag(source, target) {
+    await source.scrollIntoViewIfNeeded();
+    await target.scrollIntoViewIfNeeded();
+    const a = await source.boundingBox(),
+      b = await target.boundingBox();
+    await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(a.x + a.width / 2 + 8, a.y + a.height / 2, {
+      steps: 3,
+    });
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 20 });
+    await page.mouse.up();
+  }
+  await drag(
+    moved.getByRole("button", { name: "Move Move me", exact: true }),
+    page.locator('[data-slot="2030-01-15 09:00"]'),
+  );
   await expect(
-    tuesday.getByRole("button", { name: "Move me", exact: true }),
-  ).toBeVisible();
-  const wednesday = page.locator(".day").filter({
-    has: page.getByRole("button", {
-      name: "Create plan 2030-01-16",
-      exact: true,
-    }),
-  });
-  await moved.dragTo(wednesday);
+    tuesday.locator("article.time-entry").filter({ hasText: "Move me" }),
+  ).toHaveCount(1);
+  await drag(
+    moved.getByRole("button", { name: "Move Move me", exact: true }),
+    page.locator('[data-slot="2030-01-16 09:00"]'),
+  );
   await expect(page.getByRole("alert")).toContainText("Conflicts");
   await expect(
-    tuesday.getByRole("button", { name: "Move me", exact: true }),
-  ).toBeVisible();
-  await tuesday.getByRole("button", { name: "Move me", exact: true }).click();
-  await page
-    .getByRole("dialog")
-    .getByLabel(/^End, exclusive/)
-    .fill("2030-01-15T12:30");
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Save", exact: true })
-    .click();
-  await expect(page.getByRole("dialog")).toBeHidden();
+    tuesday.locator("article.time-entry").filter({ hasText: "Move me" }),
+  ).toHaveCount(1);
+  await moved
+    .getByRole("button", { name: "Resize end of Move me", exact: true })
+    .press("ArrowDown");
+  await expect(moved).toContainText("11:15");
   await page.getByRole("link", { name: "View Timesheet", exact: true }).click();
   const suggestion = page.locator(".suggestion").filter({ hasText: "Move me" });
   await suggestion.getByRole("button", { name: "Ignore", exact: true }).click();

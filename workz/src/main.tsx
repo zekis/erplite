@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar";
+import TimeCalendar, { CalendarEvent, PaletteItem } from "./TimeCalendar";
 import { api, Row } from "./api";
 import {
   period,
@@ -10,8 +11,6 @@ import {
   localInput,
   toInstant,
   offsetFor,
-  shift,
-  inDay,
   zoned,
 } from "./calendar.mjs";
 import "./style.css";
@@ -224,11 +223,14 @@ function App() {
     [history, setHistory] = useState<Row[]>([]);
   const reportPage = path === "/" || path.endsWith("/reports"),
     planning = path === "/planning",
-    todos = path === "/todos" || path.endsWith("/assignments"),
+    todos =
+      path === "/projects" ||
+      path === "/todos" ||
+      path.endsWith("/assignments"),
     settings = path === "/settings";
   const rawRange = period(
     date,
-    reportPage ? "month" : view === "month" ? "month" : "week",
+    reportPage ? "month" : view === "table" ? "week" : view,
   );
   const range = reportPage
     ? {
@@ -253,7 +255,7 @@ function App() {
       if (!preferencesReady.current) {
         preferencesReady.current = true;
         const preference = JSON.parse(c.preferences || "{}").view;
-        if (["table", "week", "month"].includes(preference))
+        if (["day", "week", "month", "table"].includes(preference))
           setView(preference);
       }
       const [plans, entries, suggestions, report, finance] = await Promise.all(
@@ -550,7 +552,7 @@ function App() {
       : planning
         ? "Planning"
         : todos
-          ? "Todos & assignments"
+          ? "Projects & assignments"
           : settings
             ? "Settings & people"
             : path.endsWith("/reports")
@@ -558,45 +560,183 @@ function App() {
               : path.endsWith("/approvals")
                 ? "Pending approvals"
                 : "Timesheet";
-  function planCard(r: Row, day: string) {
-    return (
-      <article
-        key={r.name}
-        className={`plan ${r.kind?.toLowerCase()}`}
-        draggable={!busy && (r.user === ctx!.user || managed(r.project))}
-        onDragStart={(e) => {
-          e.dataTransfer.setData(
-            "application/workz",
-            JSON.stringify({ name: r.name, day }),
-          );
-          e.dataTransfer.effectAllowed = "move";
-        }}
-      >
-        <button className="text-button" onClick={() => planEditor(r)}>
-          {r.title}
-        </button>
-        <small>
-          {r.kind} · {r.user}
-        </small>
-        <small>
-          {new Date(r.plan_start).toLocaleString()} —{" "}
-          {new Date(r.plan_end).toLocaleString()}
-        </small>
-        {["Leave", "Holiday"].includes(r.kind) && (
-          <small>Calendar intention · not HR approval</small>
-        )}
-        {(r.user === ctx!.user || managed(r.project)) && (
-          <button
-            className="text-button"
-            disabled={busy}
-            onClick={() => act("delete_plan", r)}
-          >
-            Cancel plan
-          </button>
-        )}
-      </article>
-    );
+  const selectedEmployee = employee || ctx.user;
+  const projectName = (name: string) =>
+    projects.find((p) => p.name === name)?.project_name || name;
+  const activityName = (name: string) =>
+    activities.find((a) => a.name === name)?.activity_name || name;
+  const assignedActivities = activities.filter(
+    (a) =>
+      a.status === "Open" &&
+      (!project || a.project === project) &&
+      projects.some((p) => p.name === a.project && p.status !== "Archived") &&
+      ctx.assignments.some(
+        (assignment: Row) =>
+          assignment.allocated_to === selectedEmployee &&
+          assignment.reference_name === a.name,
+      ),
+  );
+  const palette: PaletteItem[] = assignedActivities.map((a) => ({
+    id: a.name,
+    title: a.activity_name,
+    subtitle: projectName(a.project),
+    kind: "Work",
+    row: planning
+      ? {
+          title: a.activity_name,
+          kind: "Work",
+          user: selectedEmployee,
+          project: a.project,
+          activity: a.name,
+          billable: true,
+          timezone: tz,
+        }
+      : {
+          employee: selectedEmployee,
+          project: a.project,
+          activity: a.name,
+          description: a.activity_name,
+        },
+  }));
+  if (planning && (selectedEmployee === ctx.user || ctx.admin))
+    for (const kind of ["Availability", "Leave", "Holiday"])
+      palette.push({
+        id: kind,
+        title: kind,
+        kind,
+        subtitle: "Personal calendar block",
+        row: {
+          title: kind,
+          kind,
+          user: selectedEmployee,
+          billable: false,
+          timezone: tz,
+        },
+      });
+  const calendarEvents: CalendarEvent[] = planning
+    ? filteredPlans.map((r: Row) => ({
+        id: r.name,
+        title: r.title || activityName(r.activity) || r.kind,
+        start: r.plan_start,
+        end: r.plan_end,
+        kind: r.kind,
+        subtitle: users.find((u) => u.name === r.user)?.full_name || r.user,
+        allDay: !!r.all_day,
+        row: r,
+        editable:
+          r.user === ctx.user ||
+          ctx.admin ||
+          (r.kind === "Work" && managed(r.project)),
+      }))
+    : filteredTime
+        .filter((r: Row) => r.check_out_time)
+        .map((r: Row) => ({
+          id: r.name,
+          title: activityName(r.activity) || r.description || "Actual time",
+          start: r.check_in_time,
+          end: r.check_out_time,
+          kind: r.status,
+          subtitle: `${r.status} · ${users.find((u) => u.name === r.employee)?.full_name || r.employee}`,
+          row: r,
+          editable:
+            ["Draft", "Rejected"].includes(r.status) &&
+            (r.employee === ctx.user ||
+              ctx.admin ||
+              ctx.approval_projects.includes(r.project)),
+        }));
+  function editCalendarEvent(event: CalendarEvent) {
+    if (planning)
+      planEditor({
+        ...event.row,
+        plan_start: event.start,
+        plan_end: event.end,
+      });
+    else
+      timeEditor({
+        ...event.row,
+        check_in_time: event.start,
+        check_out_time: event.end,
+      });
   }
+  function changePeriod(direction: number) {
+    const next = new Date(date + "T12:00");
+    if (view === "month") {
+      next.setDate(1);
+      next.setMonth(next.getMonth() + direction);
+    } else next.setDate(next.getDate() + direction * (view === "day" ? 1 : 7));
+    setDate(localDate(next));
+  }
+  const calendarControls = (
+    <div className="calendar-controls">
+      <div
+        role="group"
+        aria-label={planning ? "Planning view" : "Timesheet view"}
+      >
+        {["day", "week", "month", "table"].map((v) => (
+          <button
+            key={v}
+            aria-pressed={view === v}
+            onClick={() => {
+              setView(v);
+              act("preferences", { view: v });
+            }}
+          >
+            {v}
+          </button>
+        ))}
+      </div>
+      <div className="calendar-navigation">
+        <button onClick={() => changePeriod(-1)} aria-label="Previous period">
+          Previous
+        </button>
+        <button onClick={() => setDate(today)}>Today</button>
+        <button onClick={() => changePeriod(1)} aria-label="Next period">
+          Next
+        </button>
+      </div>
+    </div>
+  );
+  const calendar = (
+    <TimeCalendar
+      events={calendarEvents}
+      palette={palette}
+      days={range.days}
+      view={view}
+      mode={planning ? "Planning" : "Timesheet"}
+      busy={busy}
+      onCreate={(item, start, end) =>
+        mutate(
+          planning ? "save_plan" : "save_time",
+          planning
+            ? { ...item.row, plan_start: start, plan_end: end }
+            : { ...item.row, check_in_time: start, check_out_time: end },
+        )
+      }
+      onChange={(event, start, end) =>
+        mutate(
+          planning ? "save_plan" : "save_time",
+          planning
+            ? { ...event.row, plan_start: start, plan_end: end }
+            : { ...event.row, check_in_time: start, check_out_time: end },
+        )
+      }
+      onSelect={(start, end) =>
+        planning
+          ? planEditor({
+              user: selectedEmployee,
+              plan_start: start,
+              plan_end: end,
+            })
+          : timeEditor({
+              employee: selectedEmployee,
+              check_in_time: start,
+              check_out_time: end,
+            })
+      }
+      onEdit={editCalendarEvent}
+      onError={setError}
+    />
+  );
   return (
     <div className="shell">
       <Sidebar expanded={expanded} onToggle={() => setExpanded(!expanded)} />
@@ -715,25 +855,11 @@ function App() {
               <button className="primary" onClick={() => planEditor()}>
                 Plan time
               </button>
-              <div role="group" aria-label="Planning view">
-                {["table", "week", "month"].map((v) => (
-                  <button
-                    key={v}
-                    aria-pressed={view === v}
-                    onClick={() => {
-                      setView(v);
-                      act("preferences", { view: v });
-                    }}
-                  >
-                    {v}
-                  </button>
-                ))}
-              </div>
+              {calendarControls}
             </div>
             <p className="help">
-              Drag an allocation to move it. Select its title to edit or resize
-              with a keyboard or touch. Escape cancels a drag. Leave and
-              holidays block allocations, but do not grant HR approval.
+              Leave and holidays block allocations, but do not grant HR
+              approval.
             </p>
             <div className="legend">
               {["Work", "Availability", "Leave", "Holiday"].map((k) => (
@@ -772,86 +898,7 @@ function App() {
                 ))}
               </Table>
             ) : (
-              <div
-                className={`calendar ${view}`}
-                role="region"
-                aria-label={`${view} calendar`}
-              >
-                {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(
-                  (day) => (
-                    <div className="weekday" key={day}>
-                      {day}
-                    </div>
-                  ),
-                )}
-                {view === "month" &&
-                  Array.from(
-                    {
-                      length:
-                        (new Date(range.days[0] + "T12:00:00").getDay() + 6) %
-                        7,
-                    },
-                    (_, i) => (
-                      <div
-                        className="day padding-day"
-                        aria-hidden="true"
-                        key={"pad" + i}
-                      />
-                    ),
-                  )}
-                {range.days.map((day: string) => (
-                  <section
-                    key={day}
-                    className="day"
-                    onDragOver={(e) => {
-                      if (e.dataTransfer.types.includes("application/workz")) {
-                        e.preventDefault();
-                        e.currentTarget.classList.add("drop-target");
-                      }
-                    }}
-                    onDragLeave={(e) =>
-                      e.currentTarget.classList.remove("drop-target")
-                    }
-                    onDrop={async (e) => {
-                      e.preventDefault();
-                      e.currentTarget.classList.remove("drop-target");
-                      try {
-                        const item = JSON.parse(
-                            e.dataTransfer.getData("application/workz"),
-                          ),
-                          row = data.plans.find(
-                            (r: Row) => r.name === item.name,
-                          );
-                        if (!row) throw Error("Invalid drop");
-                        const [start, end] = shift(
-                          row.plan_start,
-                          row.plan_end,
-                          item.day,
-                          day,
-                        );
-                        await mutate("save_plan", {
-                          ...row,
-                          plan_start: start,
-                          plan_end: end,
-                        });
-                      } catch (e) {
-                        setError((e as Error).message);
-                      }
-                    }}
-                  >
-                    <button
-                      className="day-label"
-                      onClick={() => planEditor({}, day)}
-                      aria-label={`Create plan ${day}`}
-                    >
-                      {day}
-                    </button>
-                    {filteredPlans
-                      .filter((r: Row) => inDay(r.plan_start, r.plan_end, day))
-                      .map((r: Row) => planCard(r, day))}
-                  </section>
-                ))}
-              </div>
+              calendar
             )}
             {!filteredPlans.length && (
               <Empty text="No plans yet. Add work, availability, leave or holiday time." />
@@ -1150,6 +1197,12 @@ function App() {
                 )}
               </section>
             )}
+            {path === "/timesheet" && (
+              <>
+                {calendarControls}
+                {view !== "table" && calendar}
+              </>
+            )}
             <Table
               headers={[
                 "Employee",
@@ -1347,7 +1400,7 @@ function App() {
               </Table>
               <p className="help">
                 Project leads and timesheet approvers are set on the project in
-                Todos. Access roles never grant global financial or approval
+                Projects. Access roles never grant global financial or approval
                 scope.
               </p>
             </section>
@@ -1454,7 +1507,7 @@ function App() {
                   defaultValue={JSON.parse(ctx.preferences).view || "week"}
                   onChange={(e) => act("preferences", { view: e.target.value })}
                 >
-                  {["table", "week", "month"].map((v) => (
+                  {["day", "week", "month", "table"].map((v) => (
                     <option key={v}>{v}</option>
                   ))}
                 </select>
