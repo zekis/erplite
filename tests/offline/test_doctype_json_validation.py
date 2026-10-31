@@ -148,7 +148,7 @@ DEPENDS_ON_KEYS = (
 # this set and fail, which is the typo the sweep is for -- frappe's full DocType list
 # is not in this repository, so a name is otherwise unjudgeable.
 LINK_TARGETS_OUTSIDE_THIS_APP = {
-    "Communication", "Contact", "Country", "Letter Head", "ToDo", "User",
+    "Communication", "Contact", "Country", "Currency", "Letter Head", "ToDo", "User",
 }
 
 # `check_precision` (doctype.py:1356) allows 1-6 and this app ships a 9. Pinned as an exact
@@ -168,7 +168,8 @@ LINK_TARGETS_OUTSIDE_THIS_APP = {
 # Nine decimal places on an exchange rate is a reasonable thing to want, so whether to keep it
 # is the owner's call, not this file's. Raised for that decision; until it is made, the sweep
 # records the one it knows about and would still catch a second.
-KNOWN_PRECISION_EXCEPTIONS = {("Currency", "exchange_rate"): "9"}
+# Currency now belongs to Frappe Geo; its ERP fields are Custom Fields.
+KNOWN_PRECISION_EXCEPTIONS = {}
 
 # An exact floor for the states sweep, measured. Only two DocTypes coloured their own
 # statuses when this was written -- Activity (5 rows) and Project (4) -- so both checks
@@ -214,7 +215,7 @@ DOCTYPES = _load_doctypes()
 
 # An exact floor, measured. A DocType that leaves the walker's reach says so here
 # rather than quietly reducing what every test below covers.
-EXPECTED_DOCTYPE_COUNT = 51
+EXPECTED_DOCTYPE_COUNT = 50
 
 
 def _rel(path):
