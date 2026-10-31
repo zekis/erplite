@@ -567,7 +567,7 @@ def check_locked_period(employee, start, end):
     # canonical instants. Local clock fields alone cannot resolve DST folds.
     beginning, stop = instant(beginning), instant(stop)
     for row in candidates:
-        if row.status not in ("Submitted", "Approved"):
+        if row.status not in ("Submitted", "Approved", "Processed"):
             continue
         a, b = record_times(row, "check_in_time", "check_out_time")
         # Preserve the start-week lock for legacy records without an end, and
@@ -714,7 +714,7 @@ def report(data):
             for e, values in employees.items()
         ],
         totals={k: str(v) for k, v in totals.items()},
-        definition="Hours clipped to the selected half-open period in site timezone. Actual includes Draft, Submitted and Approved completed entries; submitted and approved are separate current states. Planned is work allocation, never actual.",
+        definition="Hours clipped to the selected half-open period in site timezone. Actual includes all completed entries, including preserved Processed history; submitted and approved are separate current states. Planned is work allocation, never actual.",
     )
 
 
