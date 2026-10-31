@@ -1,11 +1,10 @@
-import frappe
-from frappe.utils.user import is_website_user
 
 __version__ = "0.0.1"
 
 
 def check_app_permission():
+	import frappe
 	if frappe.session.user == "Administrator":
 		return True
 
-	return False
+	return frappe.session.user != "Guest" and bool(set(frappe.get_roles()) & {"System Manager", "Projects Manager", "Projects User"})

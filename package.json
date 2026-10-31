@@ -1,9 +1,12 @@
 {
-	"private": true,
-	"scripts": {
-		"postinstall": "cd frontend && yarn install",
-		"dev": "cd frontend && yarn dev",
-		"build": "cd frontend && yarn build",
-		"upgrade-frappeui": "cd frontend && yarn add frappe-ui@latest"
-	}
+  "private": true,
+  "scripts": {
+    "postinstall": "npm ci --prefix frontend --legacy-peer-deps --include=dev && npm ci --prefix workz --include=dev",
+    "dev": "cd frontend && yarn dev",
+    "build": "npm run build --prefix frontend && npm run build --prefix workz",
+    "upgrade-frappeui": "cd frontend && yarn add frappe-ui@latest",
+    "build:workz": "npm run build --prefix workz",
+    "test:workz": "python3 -m unittest discover -s tests/workz && npm test --prefix workz",
+    "test:offline": "python3 -m unittest discover -s tests/offline -p 'test_*.py'"
+  }
 }

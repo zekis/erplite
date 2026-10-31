@@ -7,3 +7,9 @@ node_modules
 __pycache__
 erplite/public/frontend/
 erplite/www/erplite.html
+
+workz/test-results/
+workz/playwright-report/
+workz/artifacts/
+core
+core.*

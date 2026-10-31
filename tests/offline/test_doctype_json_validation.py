@@ -214,7 +214,7 @@ DOCTYPES = _load_doctypes()
 
 # An exact floor, measured. A DocType that leaves the walker's reach says so here
 # rather than quietly reducing what every test below covers.
-EXPECTED_DOCTYPE_COUNT = 47
+EXPECTED_DOCTYPE_COUNT = 51
 
 
 def _rel(path):

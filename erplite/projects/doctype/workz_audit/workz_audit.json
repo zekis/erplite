@@ -1,0 +1,77 @@
+{
+ "doctype": "DocType",
+ "name": "Workz Audit",
+ "module": "Projects",
+ "autoname": "hash",
+ "engine": "InnoDB",
+ "track_changes": 1,
+ "field_order": [
+  "actor",
+  "employee",
+  "reference_type",
+  "reference_name",
+  "action",
+  "old_status",
+  "new_status",
+  "recorded_at",
+  "details"
+ ],
+ "fields": [
+  {
+   "fieldname": "actor",
+   "fieldtype": "Link",
+   "label": "Actor",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "label": "Employee",
+   "options": "User"
+  },
+  {
+   "fieldname": "reference_type",
+   "fieldtype": "Data",
+   "label": "Reference Type"
+  },
+  {
+   "fieldname": "reference_name",
+   "fieldtype": "Data",
+   "label": "Reference Name"
+  },
+  {
+   "fieldname": "action",
+   "fieldtype": "Data",
+   "label": "Action"
+  },
+  {
+   "fieldname": "old_status",
+   "fieldtype": "Data",
+   "label": "Old Status"
+  },
+  {
+   "fieldname": "new_status",
+   "fieldtype": "Data",
+   "label": "New Status"
+  },
+  {
+   "fieldname": "recorded_at",
+   "fieldtype": "Datetime",
+   "label": "Recorded At"
+  },
+  {
+   "fieldname": "details",
+   "fieldtype": "Long Text",
+   "label": "Details"
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC"
+}

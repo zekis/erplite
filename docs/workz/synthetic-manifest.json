@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "source_site": "synthetic.invalid",
+  "batch_id": "test-1",
+  "timezone": "UTC",
+  "identity_map": {},
+  "records": [
+    {
+      "doctype": "User",
+      "source_id": "u",
+      "fields": {
+        "email": "person@example.invalid",
+        "first_name": "Synthetic",
+        "enabled": 1
+      }
+    },
+    {
+      "doctype": "User",
+      "source_id": "a",
+      "fields": {
+        "email": "approver@example.invalid",
+        "first_name": "Approver",
+        "enabled": 1
+      }
+    },
+    {
+      "doctype": "Project",
+      "source_id": "p",
+      "fields": {
+        "project_name": "Synthetic import",
+        "status": "Archived",
+        "timesheet_approver": "a"
+      }
+    },
+    {
+      "doctype": "Activity",
+      "source_id": "t",
+      "fields": {
+        "project": "p",
+        "activity_name": "Imported activity",
+        "status": "Closed"
+      }
+    },
+    {
+      "doctype": "Timesheet Entry",
+      "source_id": "time",
+      "fields": {
+        "employee": "u",
+        "project": "p",
+        "activity": "t",
+        "status": "Approved",
+        "approved_by": "a",
+        "approval_date": "2030-02-02T09:00:00Z",
+        "check_in_time": "2030-01-31T23:30:00Z",
+        "check_out_time": "2030-02-01T01:00:00Z",
+        "duration_hours": "1.5"
+      },
+      "audit_history": [
+        {
+          "actor": "a",
+          "status": "Approved",
+          "when": "2030-02-02T09:00:00Z"
+        }
+      ]
+    }
+  ]
+}

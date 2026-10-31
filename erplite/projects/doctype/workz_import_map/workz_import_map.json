@@ -1,0 +1,62 @@
+{
+ "doctype": "DocType",
+ "name": "Workz Import Map",
+ "module": "Projects",
+ "autoname": "hash",
+ "engine": "InnoDB",
+ "track_changes": 1,
+ "field_order": [
+  "source_key",
+  "target_type",
+  "target_name",
+  "source_hash",
+  "batch_id",
+  "source_record"
+ ],
+ "fields": [
+  {
+   "fieldname": "source_key",
+   "fieldtype": "Data",
+   "label": "Source Key",
+   "unique": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "target_type",
+   "fieldtype": "Data",
+   "label": "Target Type",
+   "reqd": 1
+  },
+  {
+   "fieldname": "target_name",
+   "fieldtype": "Data",
+   "label": "Target Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "source_hash",
+   "fieldtype": "Data",
+   "label": "Source Hash",
+   "reqd": 1
+  },
+  {
+   "fieldname": "batch_id",
+   "fieldtype": "Data",
+   "label": "Batch Id",
+   "reqd": 1
+  },
+  {
+   "fieldname": "source_record",
+   "fieldtype": "Long Text",
+   "label": "Original source record"
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC"
+}

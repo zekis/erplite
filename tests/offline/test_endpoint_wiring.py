@@ -127,7 +127,7 @@ DOCTYPE_FIRST_ARG = {
 # `Has Role` reads use `frappe.db.exists` with a `parent` filter, both right.
 # Nothing *here* judges shape; that is not a claim this file makes.
 FRAPPE_DOCTYPES = {"User", "ToDo", "File", "Has Role", "System Settings",
-                   "Workspace"}
+                   "Workspace", "DocType", "Employee", "Leave Type", "Leave Application"}
 
 # Reads of a DocType that NOTHING declares -- not this app, not frappe. These
 # are not exemptions: each one raises on the live site. `Resource Role` has no
@@ -354,7 +354,7 @@ class TestEveryNewDocIsSweptWithTheRest(unittest.TestCase):
             "`new_doc` the walker misses -- most likely on a receiver other "
             "than `frappe`, which _receiver_and_method declines to read -- and "
             "it is unjudged until the walker is widened to it.")
-        self.assertEqual(len(text), 7,
+        self.assertEqual(len(text), 12,
                          "the regex reaches %d `new_doc` sites and 7 were "
                          "measured; a regex that matches nothing agrees with a "
                          "walker that reaches nothing" % len(text))

@@ -18,7 +18,15 @@
   "duration_hours",
   "section_break_4",
   "title",
-  "notes"
+  "notes",
+  "kind",
+  "activity",
+  "timezone",
+  "all_day",
+  "billable",
+  "leave_application",
+  "workz_start_utc",
+  "workz_end_utc"
  ],
  "fields": [
   {
@@ -100,6 +108,55 @@
    "fieldname": "notes",
    "fieldtype": "Text",
    "label": "Notes"
+  },
+  {
+   "fieldname": "kind",
+   "fieldtype": "Select",
+   "label": "Kind",
+   "options": "Work\nAvailability\nLeave\nHoliday",
+   "default": "Work"
+  },
+  {
+   "fieldname": "activity",
+   "fieldtype": "Link",
+   "label": "Activity",
+   "options": "Activity"
+  },
+  {
+   "fieldname": "timezone",
+   "fieldtype": "Data",
+   "label": "Timezone",
+   "default": "UTC"
+  },
+  {
+   "fieldname": "all_day",
+   "fieldtype": "Check",
+   "label": "All Day"
+  },
+  {
+   "fieldname": "billable",
+   "fieldtype": "Check",
+   "label": "Billable",
+   "default": "1"
+  },
+  {
+   "fieldname": "leave_application",
+   "fieldtype": "Data",
+   "label": "Leave Application"
+  },
+  {
+   "fieldname": "workz_start_utc",
+   "label": "UTC start",
+   "fieldtype": "Datetime",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "workz_end_utc",
+   "label": "UTC end",
+   "fieldtype": "Datetime",
+   "read_only": 1,
+   "hidden": 1
   }
  ],
  "links": [],
