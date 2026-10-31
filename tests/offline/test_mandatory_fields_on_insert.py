@@ -79,7 +79,8 @@ SKIP_DIRS = ("__pycache__", "node_modules", "public", "dist")
 # DocTypes this app inserts but does not own. Each is frappe's, so its JSON is
 # not in this tree and the rule cannot be evaluated against it.
 # Leave Application belongs to optional HRMS; Workz checks its DocType before use.
-FOREIGN_DOCTYPES = {"ToDo", "Leave Application"}
+# Currency is Frappe Geo's model; ERPLite no longer owns its DocType JSON.
+FOREIGN_DOCTYPES = {"ToDo", "Leave Application", "Currency"}
 
 # The insert sites in the app today. An exact count, not a floor: a floor set
 # below the real number is slack, and one site can disappear from the walker's
