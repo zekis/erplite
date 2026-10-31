@@ -5,6 +5,42 @@ from erplite.workz.migration import import_manifest
 
 
 class Import(unittest.TestCase):
+    def test_processed_history_import_preserves_status_and_existing_approval(self):
+        self.manifest["records"][-1]["fields"]["status"] = "Processed"
+        result = self.run_import(True)
+        self.assertTrue(result.get("applied"), result)
+        row = self.s.get_all("Timesheet Entry")[0]
+        self.assertEqual(row.status, "Processed")
+        self.assertEqual(row.approved_by, "approver@example.invalid")
+        self.assertEqual(self.s.call("report", dict(start="2030-01-01T00:00:00Z", end="2030-03-01T00:00:00Z"))["totals"]["actual"], "1.5")
+        before = copy.deepcopy(self.s.data)
+        self.run_import(True)
+        self.assertEqual(before, self.s.data)
+
+    def test_processed_without_approval_is_not_silently_approved_and_stays_locked(self):
+        source = self.manifest["records"][-1]
+        source["fields"]["status"] = "Processed"
+        source["fields"].pop("approved_by")
+        source["fields"].pop("approval_date")
+        source["audit_history"][0]["status"] = "Processed"
+        result = self.run_import(True)
+        self.assertTrue(result.get("applied"), result)
+        row = self.s.get_all("Timesheet Entry")[0]
+        self.assertEqual(row.status, "Processed")
+        self.assertFalse(row.approved_by)
+        self.assertFalse(row.approval_date)
+        self.assertEqual(self.s.get_all("Workz Audit"), [])
+        for actor in (row.employee, "Administrator"):
+            self.s.as_user(actor)
+            direct = self.s.get_doc("Timesheet Entry", row.name)
+            direct.description = "Rewrite processed history"
+            with self.assertRaisesRegex(Exception, "history is locked"):
+                direct.save()
+        from erplite.workz.domain import interval
+        with self.assertRaisesRegex(Exception, "week contains"):
+            self.s.api.check_locked_period(row.employee, *interval("2030-02-02T09:00:00Z", "2030-02-02T10:00:00Z"))
+        self.s.api.check_locked_period(row.employee, *interval("2030-02-11T09:00:00Z", "2030-02-11T10:00:00Z"))
+
     def setUp(self):
         self.s = Site()
         self.s.seed("User", "Administrator", enabled=1)
