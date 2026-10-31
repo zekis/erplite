@@ -517,7 +517,9 @@ def save_time(data):
             and (employee == p.user() or p.approves(doc.project))
         )
         p.same_version(doc, data.get("modified"))
-        p.require(doc.status == "Draft", "Submitted/approved entries are locked")
+        p.require(
+            doc.status in ("Draft", "Rejected"), "Submitted/approved entries are locked"
+        )
     p.eligible(employee, data["project"], data["activity"])
     start, end = interval(data["check_in_time"], data["check_out_time"], zone())
     check_overlap(employee, start, end, "Work", doc.name, actual=True)
@@ -528,7 +530,8 @@ def save_time(data):
             setattr(doc, key, data[key])
     doc.employee = employee
     doc.owner = employee
-    doc.status = "Draft"
+    if not data.get("name"):
+        doc.status = "Draft"
     doc.check_in_time = stored(start)
     doc.check_out_time = stored(end)
     doc.workz_start_utc = start.replace(tzinfo=None)
@@ -602,10 +605,10 @@ def transition(data):
     if action == "Submitted":
         p.require(doc.employee == p.user() or p.approves(doc.project))
         p.require(
-            doc.status == "Draft" and doc.check_out_time,
-            "Only completed drafts can be submitted",
+            doc.status in ("Draft", "Rejected") and doc.check_out_time,
+            "Only completed draft or rejected entries can be submitted",
         )
-    elif action in ("Approved", "Draft"):
+    elif action in ("Approved", "Draft", "Rejected"):
         p.require(
             p.approves(doc.project) and doc.employee != p.user(),
             "Self-approval is not allowed",
@@ -614,7 +617,7 @@ def transition(data):
             doc.status == "Submitted",
             "Only submitted entries can be approved or returned",
         )
-        if action == "Draft":
+        if action in ("Draft", "Rejected"):
             p.require(bool(data.get("reason")), "Enter a return reason")
         doc.approved_by = p.user()
         doc.approval_date = now_datetime()
@@ -658,6 +661,7 @@ def times(data):
                             "status",
                             "approved_by",
                             "approval_date",
+                            "approval_notes",
                             "modified",
                         )
                     },

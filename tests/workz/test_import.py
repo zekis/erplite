@@ -133,3 +133,35 @@ class Import(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.run_import(True)
         self.assertEqual(before, self.s.data)
+
+    def test_rejected_import_stays_rejected_until_explicit_resubmission(self):
+        self.manifest["records"][2]["fields"]["status"] = "Open"
+        self.manifest["records"][3]["fields"]["status"] = "Open"
+        source = self.manifest["records"][-1]
+        source["fields"]["status"] = "Rejected"
+        source["fields"]["approval_notes"] = "Original rejection"
+        source["audit_history"][0]["status"] = "Rejected"
+        self.assertTrue(self.run_import(True)["applied"])
+        imported = self.s.get_all("Timesheet Entry")[0]
+        self.assertEqual(imported.status, "Rejected")
+        self.assertEqual(self.s.get_all("Workz Audit"), [])
+        archive = copy.deepcopy(self.s.get_all("Workz Import Map"))
+        self.s.call(
+            "assignment",
+            dict(employee=imported.employee, activity=imported.activity, assigned=True),
+        )
+        self.s.as_user(imported.employee)
+        corrected = self.s.call(
+            "save_time", {**imported, "description": "Corrected imported rejection"}
+        )
+        self.assertEqual(corrected["status"], "Rejected")
+        self.assertEqual(corrected["approval_notes"], "Original rejection")
+        entries = self.s.call(
+            "times", dict(start="2030-01-01T00:00:00Z", end="2030-03-01T00:00:00Z")
+        )
+        self.assertEqual(entries[0]["approval_notes"], "Original rejection")
+        self.s.call("transition", {**corrected, "status": "Submitted"})
+        self.assertEqual(
+            self.s.get_doc("Timesheet Entry", imported.name).status, "Submitted"
+        )
+        self.assertEqual(self.s.get_all("Workz Import Map"), archive)

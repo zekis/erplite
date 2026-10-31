@@ -9,7 +9,7 @@ permissions, leave or production data was changed.
   assets built successfully. Existing Vue large-chunk/Browserslist warnings remain.
 - `npm run test:offline`: 697 repository checks pass, including fault injection,
   DocType metadata, API wiring and legacy permission regressions.
-- `npm run test:workz`: 31 Python service/domain/import tests and 5 JavaScript
+- `npm run test:workz`: 36 Python service/domain/import tests and 5 JavaScript
   calendar tests pass. Covers assignments, scopes, self-approval, stale writes,
   private staff availability, immutable decisions/history, overlap rejection,
   effective rates, zero/missing rates, separate currencies and month boundaries.
@@ -87,6 +87,46 @@ stays locked.` The full integration rerun again reports 8 concurrent accepts →
 1 actual, 2.5 approved hours and unchanged synthetic import reconciliation.
 The runtime was reused; clean installation was validated in the original work,
 not repeated for this code-only fix. Tests restore the synthetic site timezone.
+
+## PR #71 rejected-entry review regression (2026-10-31)
+
+Existing canonical/legacy rejection and imported `Rejected` history previously
+could not be edited or resubmitted in Workz. Corrections now preserve `Rejected`
+until explicit resubmission. The owner or scoped approver can correct an eligible
+entry with a current `modified` version. Workz Return now records `Rejected` and
+a reason; the legacy explicit return-to-Draft API remains compatible. Submitted
+and Approved content stays locked, self-approval stays prohibited, and Rejected
+entries cannot be deleted. No migration rewrites existing statuses.
+
+Rejection actor/time/notes survive correction and resubmission. The document guard
+adds append-only correction events with before/after values, including direct
+document saves, and rejects attempts to overwrite decision metadata during
+resubmission. Subsequent decisions append their own audit events. Imported source
+records/audit remain unchanged in Workz Import Map.
+
+Executed validation for this fix:
+
+- `npm run test:workz`: **36 Python + 5 JavaScript passed**, including the prior
+  DST tests, four new rejection workflow/permission/stale-write/immutability tests
+  and an imported-Rejected correction/resubmission/archive regression.
+- `npm run build`: both frontends built, including TypeScript; existing legacy
+  Vue chunk-size/Browserslist warnings remain.
+- `npm run test:offline`: **697 passed**.
+- `cd workz && npx playwright test`: **2 passed**. The first workflow now includes
+  scoped Return, employee-visible rejection reason, correction, reload persistence,
+  Resubmit, hidden locked-entry actions and final authorized approval.
+- Real authenticated HTTP Playwright: **1 passed** against the synthetic site.
+- `tests/workz/frappe_smoke.py`: passed on the existing disposable Frappe/MariaDB
+  runtime. Added direct-document rejection → Workz correction → resubmission →
+  approval; output includes `rejected_corrected_resubmitted: true`. Eight concurrent
+  accepts still produce one actual; approved/report total remains 2.5 hours.
+- `tests/workz/frappe_dst_smoke.py`: passed again with both Submitted/Approved
+  folded history and later manual/Accept bookings.
+
+The first browser attempt exposed a missing `approval_notes` response field; it
+was fixed and the browser suite rerun successfully. GitHub has no configured CI
+checks/statuses. No schema migration, clean reinstall, live migration or deployment
+was performed; the earlier runtime/cutover limitations remain applicable.
 
 ## Screenshots
 

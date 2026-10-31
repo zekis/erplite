@@ -154,13 +154,53 @@ test("fresh setup, plan, ghost, accept, submit, scoped approve and reconciliatio
   await page
     .getByRole("link", { name: "Pending Approvals", exact: true })
     .click();
+  await page.getByRole("button", { name: "Return", exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .getByLabel("Reason", { exact: true })
+    .fill("Please correct description");
+  await save();
+  await role("alice");
+  await page.getByRole("link", { name: "View Timesheet", exact: true }).click();
+  await expect(
+    page.getByText("Please correct description", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Delete", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .getByLabel("Description", { exact: true })
+    .fill("Corrected after rejection");
+  await save();
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Resubmit", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(
+    page.getByRole("dialog").getByLabel("Description", { exact: true }),
+  ).toHaveValue("Corrected after rejection");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Resubmit", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Edit", exact: true }),
+  ).toHaveCount(0);
+  await role("approver");
+  await page
+    .getByRole("link", { name: "Pending Approvals", exact: true })
+    .click();
   await page.getByRole("button", { name: "Approve", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Approve", exact: true }),
   ).toHaveCount(0);
   await page.getByRole("link", { name: "Reports", exact: true }).click();
   await expect(
-    page.getByRole("cell", { name: "Approved By approver Audit", exact: true }),
+    page.getByRole("cell", {
+      name: "Approved Last decision by approver Audit",
+      exact: true,
+    }),
   ).toBeVisible();
   await page.screenshot({
     path: "artifacts/workz-reports.png",
@@ -197,26 +237,22 @@ test("calendar drag, rejected overlap rollback, keyboard resize, ignored suggest
   await add("Move me", "2030-01-14");
   await add("Conflict target", "2030-01-16");
   const moved = page.locator("article.plan").filter({ hasText: "Move me" });
-  const tuesday = page
-    .locator(".day")
-    .filter({
-      has: page.getByRole("button", {
-        name: "Create plan 2030-01-15",
-        exact: true,
-      }),
-    });
+  const tuesday = page.locator(".day").filter({
+    has: page.getByRole("button", {
+      name: "Create plan 2030-01-15",
+      exact: true,
+    }),
+  });
   await moved.dragTo(tuesday);
   await expect(
     tuesday.getByRole("button", { name: "Move me", exact: true }),
   ).toBeVisible();
-  const wednesday = page
-    .locator(".day")
-    .filter({
-      has: page.getByRole("button", {
-        name: "Create plan 2030-01-16",
-        exact: true,
-      }),
-    });
+  const wednesday = page.locator(".day").filter({
+    has: page.getByRole("button", {
+      name: "Create plan 2030-01-16",
+      exact: true,
+    }),
+  });
   await moved.dragTo(wednesday);
   await expect(page.getByRole("alert")).toContainText("Conflicts");
   await expect(

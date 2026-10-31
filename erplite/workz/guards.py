@@ -109,7 +109,7 @@ def validate_time(doc, method=None):
             start, end = effective_interval(doc, "check_in_time", "check_out_time", old)
             check_overlap(doc.employee, start, end, "Work", doc.name, actual=True)
             check_locked_period(doc.employee, start, end)
-    if old and doc.status == old.status:
+    if old and (doc.status == old.status or doc.status == "Submitted"):
         p.require(
             all(
                 same_value(doc, old, k)
@@ -117,6 +117,23 @@ def validate_time(doc, method=None):
             ),
             "Approval metadata is immutable outside a transition",
         )
+    if old and old.status == "Rejected":
+        corrected = [
+            k for k in (*booking, "description") if not same_value(doc, old, k)
+        ]
+        if corrected:
+            audit(
+                "Timesheet Entry",
+                doc.name,
+                "correction",
+                doc.employee,
+                old.status,
+                doc.status,
+                {
+                    "before": {k: old.get(k) for k in corrected},
+                    "after": {k: doc.get(k) for k in corrected},
+                },
+            )
     previous = old.status if old else None
     if doc.status != previous:
         if not old:
@@ -124,7 +141,7 @@ def validate_time(doc, method=None):
         elif doc.status == "Submitted":
             p.require(
                 previous in ("Draft", "Rejected") and doc.check_out_time,
-                "Only completed drafts can be submitted",
+                "Only completed draft or rejected entries can be submitted",
             )
         elif doc.status in ("Approved", "Rejected", "Draft"):
             p.require(

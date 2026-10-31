@@ -74,7 +74,11 @@ in their existing DocType. Do not uninstall an app or remove tables as rollback.
    blocks use midnight-to-midnight exclusive end in their declared timezone.
 5. Employee → Timesheet: Accept/Ignore suggestions, or book actual time manually.
    Submit completed drafts; a different authorized approver approves or returns
-   them with a reason. Reports and Dashboard share the same totals service.
+   them with a reason. Returned entries are Rejected: Edit preserves their status
+   and rejection details, and Resubmit explicitly sends them for approval again.
+   Existing legacy/imported Rejected entries use the same flow. Corrections are
+   audited; Submitted/Approved entries remain locked. Reports and Dashboard share
+   the same totals service.
 
 Leave/holiday calendar blocks are **intentions**, not HR approvals. If HRMS Leave
 Application and a mapped Employee are already installed, the in-app request form

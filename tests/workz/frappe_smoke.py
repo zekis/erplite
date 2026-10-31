@@ -153,6 +153,27 @@ def run():
     )
     frappe.set_user(people["approver"])
     entry.reload()
+    # Exercise the existing document rejection path, then Workz correction.
+    entry.status = "Rejected"
+    entry.approval_notes = "Synthetic correction requested"
+    entry.save(ignore_permissions=True)
+    frappe.db.commit()
+    rejected_at = entry.approval_date
+    frappe.set_user(people["employee"])
+    corrected = call(
+        "save_time", **{**entry.as_dict(), "description": "Corrected through Workz"}
+    )
+    assert corrected["status"] == "Rejected"
+    assert corrected["approval_notes"] == "Synthetic correction requested"
+    assert corrected["approval_date"] == rejected_at
+    call(
+        "transition",
+        name=entry.name,
+        modified=str(corrected["modified"]),
+        status="Submitted",
+    )
+    frappe.set_user(people["approver"])
+    entry.reload()
     call("transition", name=entry.name, modified=str(entry.modified), status="Approved")
     report = call("report", **period)
     assert report["totals"]["approved"] == "2.5", report
@@ -183,6 +204,7 @@ def run():
                 "concurrent_accepts": len(names),
                 "actual_entries": len(set(names)),
                 "approved_hours": report["totals"]["approved"],
+                "rejected_corrected_resubmitted": True,
                 "finance": finance["currencies"],
                 "import_reconciliation": first["reconciliation"],
             }

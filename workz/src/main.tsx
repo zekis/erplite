@@ -1172,7 +1172,10 @@ function App() {
                   <td>{number(r.period_hours)}</td>
                   <td>
                     {r.status}
-                    {r.approved_by && <small>By {r.approved_by}</small>}
+                    {r.approved_by && (
+                      <small>Last decision by {r.approved_by}</small>
+                    )}
+                    {r.approval_notes && <small>{r.approval_notes}</small>}
                     <button
                       onClick={async () => {
                         try {
@@ -1197,7 +1200,7 @@ function App() {
                     </button>
                   </td>
                   <td>
-                    {r.status === "Draft" && (
+                    {["Draft", "Rejected"].includes(r.status) && (
                       <>
                         <button onClick={() => timeEditor(r)}>Edit</button>
                         <button
@@ -1206,14 +1209,16 @@ function App() {
                             act("transition", { ...r, status: "Submitted" })
                           }
                         >
-                          Submit
+                          {r.status === "Rejected" ? "Resubmit" : "Submit"}
                         </button>
-                        <button
-                          disabled={busy}
-                          onClick={() => act("delete_time", r)}
-                        >
-                          Delete
-                        </button>
+                        {r.status === "Draft" && (
+                          <button
+                            disabled={busy}
+                            onClick={() => act("delete_time", r)}
+                          >
+                            Delete
+                          </button>
+                        )}
                       </>
                     )}
                     {r.status === "Submitted" && canApprove(r) && (
@@ -1232,7 +1237,7 @@ function App() {
                               "Return submitted entry",
                               "transition",
                               [{ key: "reason", label: "Reason" }],
-                              { ...r, status: "Draft" },
+                              { ...r, status: "Rejected" },
                             )
                           }
                         >
