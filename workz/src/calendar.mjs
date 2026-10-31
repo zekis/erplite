@@ -149,6 +149,7 @@ export function timeSegments(events, day, startHour, endHour) {
           lanes: 1,
           startHandle: +start === +a,
           endHandle: +end === +b,
+          anchorStart: a.toISOString(),
         },
       ];
     })
