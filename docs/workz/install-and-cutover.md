@@ -39,6 +39,16 @@ Do not substitute a production site into these commands.
 
 Additive schema changes:
 
+- Currency remains Frappe's Geo DocType, with its core fields and permissions.
+  ERPLite adds currency_code, is_base_currency, exchange_rate and last_update as
+  Custom Fields. Existing rates, base selections, enabled flags and core values
+  are retained; blank compatibility codes are populated from the Currency name.
+  Document events retain ERPLite validation alongside Frappe's controller and
+  cache invalidation, without replacing another app's controller override.
+  Legacy installations whose Currency belonged to ERPLite Setup restore Geo
+  metadata before model sync, retaining existing table columns and values.
+  Rehearse both first installation on Geo and upgrade from legacy Setup, then
+  repeat framework sync and compare every core Currency value before deployment.
 - Planner Entry: kind, activity, timezone, all_day, billable, leave_application,
   workz_start_utc, workz_end_utc.
 - Timesheet Entry: workz_start_utc, workz_end_utc. UTC companion fields preserve
