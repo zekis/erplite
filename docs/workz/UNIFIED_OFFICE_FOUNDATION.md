@@ -34,7 +34,7 @@ Parent task: 69475672-5c8c-4f9e-b4a8-983af50f966b.
 
 Validation on disposable Frappe 15.122.0 with MariaDB 10.11 and Redis 7:
 - Workz TypeScript/Vite production build; 59 synthetic Python tests; 7 Node calendar tests.
-- `tests/workz/frappe_scope_security.py`: 231 real WSGI requests through Frappe's
+- `tests/workz/frappe_scope_security.py`: 233 real WSGI requests through Frappe's
   authentication, HTTP dispatch and database. Generic v1/v2 get/list/count,
   search/export, hostile read/write/share/everyone grants, private File reads
   and downloads, attachment relinking, assignment-reference forgery, scope
@@ -93,3 +93,18 @@ publish a confidential blob or change an existing attachment to public fail.
 API/workspace/private-download responses use `private, no-store` with Cookie
 and Authorization variation, so revoked access is not restored from a cached
 private response. The real suite checks rejected public uploads leave no blob.
+
+File visibility is checked in both controller overrides before core
+`before_insert`/`validate`, as well as in document events. Eight real-framework
+call-order assertions cover both app overrides and both protected parent types,
+proving the core write/move method is never reached for a public attachment.
+Existing public confidential blobs require rollout inventory/remediation;
+Python guards cannot protect static blobs already served by the web server.
+
+The legacy frontend production build must also run in the deployment checkout:
+`npm ci --prefix frontend --legacy-peer-deps --include=dev` followed by
+`npm run build --prefix frontend`. It generates the intentionally ignored
+`erplite/www/erplite.html`; without it Frappe returns 404 before invoking the
+redirect controller. This build passed in the scoped checkout. Real Frappe
+requests now verify `/erplite` redirects to Office and the old scheduler route
+preserves its planning date context.

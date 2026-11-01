@@ -95,6 +95,28 @@ def run():
     frappe.destroy()
 
     try:
+        # Check both possible last-installed overrides before a core File
+        # method can write/move any blob. Doc events alone run too late.
+        connect()
+        from unittest.mock import patch
+        from frappe.core.doctype.file.file import File
+        from erplite.workz.scoped_file import ScopedFile as WorkzFile
+        from tm_office.scoped_file import ScopedFile as OfficeFile
+        for cls in (WorkzFile, OfficeFile):
+            for method in ('before_insert', 'validate'):
+                for parent in ('Project', 'Office Document'):
+                    doc = cls({'doctype': 'File', 'file_name': 'never-public.txt',
+                               'is_private': 0, 'attached_to_doctype': parent,
+                               'attached_to_name': project})
+                    with patch.object(File, method, side_effect=AssertionError('Core file operation reached')) as core:
+                        try:
+                            getattr(doc, method)()
+                        except frappe.PermissionError:
+                            pass
+                        else:
+                            raise AssertionError('Public attachment accepted')
+                        core.assert_not_called()
+        frappe.destroy()
         client = Client(application, Response, use_cookies=False)
     
         def request(role, path, method='GET', payload=None, expected=(200,)):
@@ -111,6 +133,10 @@ def run():
             return response
     
         denied = (403,)
+        response = request('alice', '/erplite', expected=(301, 302))
+        assert response.headers['Location'].startswith('/virtual-office')
+        response = request('alice', '/erplite/scheduler?date=2035-01-08', expected=(301, 302))
+        assert '/virtual-office#/planning?date=2035-01-08' in response.headers['Location']
         for dt, name in records.items():
             for role in ('bob', 'unmapped', None):
                 for root in ('/api/resource/', '/api/v1/resource/', '/api/v2/document/'):
@@ -229,7 +255,7 @@ def run():
             assert name not in response.get_data(as_text=True)
     
         print(json.dumps({'suite': 'frappe_scope_security', 'checks': len(results),
-                          'result': 'passed', 'site': site}))
+                          'result': 'passed', 'pre_write_guard_checks': 8, 'site': site}))
         return results
     finally:
         # Everyone shares must not poison unrelated tests on the shared
