@@ -79,6 +79,10 @@ def can_read_plan(doc):
     )
 
 
+def can_edit_plan_notes(doc):
+    return doc.user == user() or admin()
+
+
 def staff(employee):
     if admin() or employee == user():
         return True
