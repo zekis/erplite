@@ -109,7 +109,15 @@ def context(data):
         or r.name in own_projects
     ]
     project_names = {r.name for r in projects}
-    activities = [r for r in activities if r.project in project_names]
+    activities = [
+        r for r in activities
+        if r.project in project_names and (
+            is_admin or r.name in own_activities or any(
+                project.name == r.project and actor in (project.project_lead, project.timesheet_approver)
+                for project in projects
+            )
+        )
+    ]
     activity_names = {r.name for r in activities}
     managers = {r.name for r in projects if is_admin or r.project_lead == actor}
     visible_projects = managers | {

@@ -5,7 +5,9 @@ import frappe
 
 def user():
     value = frappe.session.user
-    if not value or value == "Guest":
+    if (not value or value == "Guest"
+            or not frappe.db.get_value("User", value, "enabled")
+            or not {"System Manager", "Projects Manager", "Projects User"}.intersection(frappe.get_roles(value))):
         frappe.throw("Sign in to Workz", frappe.PermissionError)
     return value
 

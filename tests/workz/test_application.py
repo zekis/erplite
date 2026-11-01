@@ -26,6 +26,37 @@ class Application(unittest.TestCase):
         self.s.call("assignment", dict(activity="AP", employee="alice", assigned=True))
         self.range = dict(start="2030-01-01T00:00:00Z", end="2030-02-01T00:00:00Z")
 
+    def test_context_hides_unassigned_sibling_activity_and_revoked_assignment(self):
+        self.s.seed("Activity", "PRIVATE", project="P", activity_name="Private", status="Open")
+        self.s.call("assignment", dict(activity="PRIVATE", employee="bob", assigned=True))
+        self.s.as_user("alice")
+        ctx = self.s.call("context")
+        self.assertEqual([r.name for r in ctx["activities"]], ["AP"])
+        self.assertEqual({r.allocated_to for r in ctx["assignments"]}, {"alice"})
+        self.s.as_user("approver")
+        self.assertEqual({r.name for r in self.s.call("context")["activities"]}, {"AP", "PRIVATE"})
+        self.s.as_user("Administrator")
+        self.s.call("assignment", dict(activity="AP", employee="alice", assigned=False))
+        self.s.as_user("alice")
+        ctx = self.s.call("context")
+        self.assertEqual(ctx["projects"], [])
+        self.assertEqual(ctx["activities"], [])
+        self.assertEqual(ctx["assignments"], [])
+
+    def test_unknown_disabled_guest_and_unmapped_role_rejected(self):
+        for actor in ("Guest", "missing"):
+            self.s.as_user(actor)
+            with self.assertRaises(Rejected):
+                self.s.call("context")
+        self.s.as_user("alice")
+        self.s.data["User"]["alice"]["enabled"] = 0
+        with self.assertRaises(Rejected):
+            self.s.call("context")
+        self.s.data["User"]["alice"]["enabled"] = 1
+        self.s.f.get_roles = lambda user=None: ["Employee"]
+        with self.assertRaises(Rejected):
+            self.s.call("context")
+
     def plan(self, **kwargs):
         return self.s.call(
             "save_plan",
