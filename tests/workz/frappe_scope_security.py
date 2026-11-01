@@ -145,9 +145,15 @@ def run():
         for name, url in attachments:
             request('bob', '/api/resource/File/' + quote(name), expected=denied)
             request('bob', url, expected=denied)
-            request('admin', url)
+            response = request('admin', url)
+            assert 'no-store' in response.headers.get('Cache-Control', '')
+            request('admin', '/api/resource/File/' + quote(name), 'PUT', {'is_private': 0}, expected=denied)
             request('bob', '/api/resource/File/' + quote(name), 'PUT',
                     {'attached_to_doctype': None, 'attached_to_name': None}, expected=denied)
+        request('admin', '/api/method/frappe.client.insert', 'POST', {'doc': {
+            'doctype': 'File', 'file_name': prefix + '-public.txt', 'content': 'synthetic private data',
+            'is_private': 0, 'attached_to_doctype': 'Project', 'attached_to_name': project}}, expected=denied)
+        assert not (Path(sites_path) / site / 'public/files' / (prefix + '-public.txt')).exists()
         request('bob', '/api/resource/ToDo/' + assignment, 'PUT',
                 {'reference_type': None, 'reference_name': None, 'allocated_to': people['bob']}, expected=denied)
         for dt in ('ToDo', 'Planner Entry', 'Timesheet Entry'):

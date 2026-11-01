@@ -309,3 +309,9 @@ override_whitelisted_methods = {
     'frappe.realtime.can_subscribe_doc': 'erplite.workz.boundary.realtime_doc',
     'frappe.realtime.can_subscribe_doctype': 'erplite.workz.boundary.realtime_doctype',
 }
+
+doc_events['File'] = {
+    'before_insert': 'erplite.workz.boundary.private_attachment',
+    'validate': 'erplite.workz.boundary.private_attachment',
+}
+after_request = ['erplite.workz.boundary.no_scoped_cache']

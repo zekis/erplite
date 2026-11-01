@@ -199,3 +199,20 @@ def realtime_doc(doctype, docname):
 @frappe.whitelist(allow_guest=True)
 def realtime_doctype(doctype):
     deny_realtime()
+
+
+def private_attachment(doc, method=None):
+    # Public files are served outside Python permission checks. Work records
+    # may only attach private blobs, including after an is_private edit.
+    if doc.attached_to_doctype in WORK_RECORDS and not doc.is_folder:
+        enforce_scope(bool(doc.is_private))
+
+
+def no_scoped_cache(response, request):
+    # Default private downloads can otherwise outlive a revoked permission in
+    # a browser/proxy cache. This policy also works without Office installed.
+    if request.path.startswith(('/api/', '/private/files/', '/workz', '/erplite')):
+        response.headers['Cache-Control'] = 'private, no-store'
+        response.headers['Pragma'] = 'no-cache'
+        response.vary.add('Cookie')
+        response.vary.add('Authorization')
