@@ -20,6 +20,8 @@ def capabilities():
 
 
 def shell_available():
+    if 'tm_office' not in frappe.get_installed_apps():
+        return False
     try:
         from tm_office.integration import CONTRACT as shell_contract
     except ImportError:
@@ -30,7 +32,7 @@ def shell_available():
 def office_destination(path, query=''):
     section = next((key for key, value in ROUTES.items() if path == value), None)
     if path in ('/', '', '/todos', '/timesheet/assignments'):
-        section = 'projects' if path != '/' else 'office'
+        section = 'office' if path in ('', '/') else 'projects'
     if not section:
         return None
     from urllib.parse import parse_qsl, urlencode

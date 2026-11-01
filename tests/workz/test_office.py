@@ -112,7 +112,28 @@ class Office(unittest.TestCase):
         from unittest.mock import patch
         old = types.ModuleType('tm_office.integration')
         old.CONTRACT = 1
-        with patch.dict(sys.modules, {'tm_office.integration': old}):
+        with patch.dict(sys.modules, {'tm_office.integration': old}), patch.object(
+                self.s.f, 'get_installed_apps', return_value=['erplite', 'tm_office'], create=True):
             self.assertFalse(self.office.shell_available())
             old.CONTRACT = 2
             self.assertTrue(self.office.shell_available())
+
+    def test_package_on_bench_does_not_mean_installed_on_site(self):
+        import sys
+        import types
+        from unittest.mock import patch
+        companion = types.ModuleType('tm_office.integration')
+        companion.CONTRACT = 2
+        with patch.dict(sys.modules, {'tm_office.integration': companion}), patch.object(
+                self.s.f, 'get_installed_apps', return_value=['erplite'], create=True) as installed:
+            self.assertFalse(self.office.shell_available())
+            installed.return_value = ['erplite', 'tm_office']
+            self.assertTrue(self.office.shell_available())
+
+    def test_root_entry_opens_own_work_home_and_preserves_bookmarks(self):
+        for path in ('', '/'):
+            self.assertEqual(self.office.office_destination(path), '/virtual-office#/office')
+        for path in ('/todos', '/timesheet/assignments'):
+            self.assertEqual(self.office.office_destination(path), '/virtual-office#/projects')
+        self.assertEqual(self.office.office_destination('/planning', 'date=2035-01-08'),
+                         '/virtual-office#/planning?date=2035-01-08')

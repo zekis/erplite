@@ -33,7 +33,7 @@ Companion task: 26057359-4bcc-4984-9a05-554529d4d029.
 Parent task: 69475672-5c8c-4f9e-b4a8-983af50f966b.
 
 Validation on disposable Frappe 15.122.0 with MariaDB 10.11 and Redis 7:
-- Workz TypeScript/Vite production build; 59 synthetic Python tests; 7 Node calendar tests.
+- Workz TypeScript/Vite production build; 61 synthetic Python tests; 7 Node calendar tests.
 - `tests/workz/frappe_scope_security.py`: 233 real WSGI requests through Frappe's
   authentication, HTTP dispatch and database. Generic v1/v2 get/list/count,
   search/export, hostile read/write/share/everyone grants, private File reads
@@ -108,3 +108,11 @@ The legacy frontend production build must also run in the deployment checkout:
 redirect controller. This build passed in the scoped checkout. Real Frappe
 requests now verify `/erplite` redirects to Office and the old scheduler route
 preserves its planning date context.
+
+Shell compatibility requires Office to be installed on the current Frappe site,
+not merely importable from another site's shared bench environment. Both empty
+and slash root paths open the Office own-work home; existing todo/assignment
+bookmarks continue to open Projects and planning date context is preserved.
+Focused tests cover absent/present site installation, contract mismatch, and
+root/bookmark destinations. The parent owns the final exact-pair tests in both
+installation orders; this continuation does not mutate the shared test site.
