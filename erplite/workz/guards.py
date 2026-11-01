@@ -11,6 +11,9 @@ def is_admin(actor):
 
 def time_permission(doc, user=None, ptype=None):
     actor = user or p.user()
+    from erplite.workz.boundary import mapped
+    if not mapped(actor):
+        return False
     if ptype in ("read", "write", "delete", "submit", "cancel"):
         return (
             is_admin(actor)
@@ -24,6 +27,9 @@ def time_permission(doc, user=None, ptype=None):
 
 def plan_permission(doc, user=None, ptype=None):
     actor = user or p.user()
+    from erplite.workz.boundary import mapped
+    if not mapped(actor):
+        return False
     own = is_admin(actor) or doc.user == actor
     project = p.project(doc.project) if doc.kind == "Work" and doc.project else None
     if ptype == "read":
@@ -38,6 +44,9 @@ def plan_permission(doc, user=None, ptype=None):
 
 def time_query(user=None):
     subject = user or p.user()
+    from erplite.workz.boundary import mapped
+    if not mapped(subject):
+        return '1=0'
     if is_admin(subject):
         return ""
     actor = frappe.db.escape(subject)
@@ -52,6 +61,9 @@ def time_query(user=None):
 
 def plan_query(user=None):
     subject = user or p.user()
+    from erplite.workz.boundary import mapped
+    if not mapped(subject):
+        return '1=0'
     if is_admin(subject):
         return ""
     actor = frappe.db.escape(subject)

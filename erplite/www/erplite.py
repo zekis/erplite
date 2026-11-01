@@ -18,6 +18,13 @@ def serialize_for_json(obj):
 
 def get_context(context):
 	"""Get context for the ERPLite Vue app"""
+	# Make Office the entry only when both installed apps agree on the contract.
+	from erplite.workz.office import shell_available, office_destination
+	if shell_available():
+		path = frappe.request.path.removeprefix('/erplite')
+		if path in ('/scheduler', '/vue-scheduler'): path = '/planning'
+		frappe.local.flags.redirect_location = office_destination(path, frappe.request.query_string.decode()) or '/virtual-office'
+		raise frappe.Redirect
 	
 	# Check if user is logged in
 	if frappe.session.user == "Guest":

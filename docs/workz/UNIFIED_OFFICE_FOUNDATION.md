@@ -1,32 +1,45 @@
-# Unified Office companion foundation
+# Workz / Virtual Office integration (contract 1)
 
-This change narrows Workz context before any unified-shell cutover. Enabled
-Frappe users must have System Manager, Projects Manager or Projects User roles.
-A role alone supplies no project oversight: active Activity assignments expose
-only those activities and their necessary project context. Configured project
-leads and timesheet approvers retain their existing project scopes. Assignment
-revocation is reflected on the next context request; no response cache is added.
+Workz remains the sole work-record API and calendar/editor implementation. The
+Office shell mounts the existing modules at /workz paths with office=1. The
+server checks permitted module routes and the installed Office contract before
+emitting an embedded boot. Embedded React uses memory routing, has no sidebar or
+app header, and reports route/dirty/readiness messages to the same-origin shell.
+Existing /workz bookmarks preserve supported period and filter parameters when
+redirected to /virtual-office; /erplite becomes the unified entry when both apps
+are installed. Unsupported utility routes retain their existing entry points.
 
-No live identity mapping or grants are changed. The synthetic staff A/staff B,
-lead and approver fixtures cover sibling activity confidentiality, revocation,
-unknown/disabled/Guest identities and existing workflow invariants.
+The Office shell's locally bundled font faces are reused. No CDN or second data
+store is introduced. Existing calendar interactions, concurrency, history locks,
+DST logic, imported IDs and report calculations are retained.
 
-This is **not** the complete unified interface. Project/Activity generic reads,
-legacy API scope, document/file/realtime/export auditing and the embedded app
-contract remain prerequisites. In particular, the Activity controller's legacy
-get_project_activities/get_activity_summary still use elevated get_all reads;
-this patch does not claim that context scoping secures those independent routes.
+Enabled Frappe identities require configured Projects User/Manager or System
+Manager roles. Dedicated agent readers cannot enter the human work surface.
+Ordinary staff context includes only active assigned activities and necessary
+project context. Leads/approvers retain existing explicit project scopes.
+Generic Project/Activity reads are scoped to configured leaders/approvers (staff
+use the safe context projection); assignment reads are restricted separately.
+Legacy elevated project/scheduler RPCs are admin-only, including v1/v2 method
+paths. This is a compatibility restriction: non-admin integrations using legacy
+RPCs must migrate to scoped Workz APIs. No live user role is changed.
 
-No sidebar or shell changes, redirects or default entry changes are made here.
-Office and Workz foundations can ship independently: neither enables embedding.
-Workz build: npm ci --prefix workz --include=dev; npm run build --prefix workz.
-Office assets are packaged by the separate tm-office Frappe app. A future unified
-shell must check a matching server contract and fail closed on missing versions.
+Office has separate Frappe packaging and a Vue build; Workz assets are committed
+under erplite/public/workz. Review/install this companion before Office migration
+and asset packaging. Missing contract versions fail closed. ERPLite main's
+existing automatic deployment is not triggered by this task; nothing is merged.
 
-Parent task: 69475672-5c8c-4f9e-b4a8-983af50f966b.
+Parent PR: https://github.com/zekis/tm-office/pull/7
 Companion task: 26057359-4bcc-4984-9a05-554529d4d029.
+Parent task: 69475672-5c8c-4f9e-b4a8-983af50f966b.
 
-Validation: 49 Workz Python tests, 7 Node calendar tests, 697 offline regression
-tests and Workz production TypeScript/Vite build passed. Synthetic tests are not
-substitutes for HTTP/Socket.IO permission checks on a disposable Frappe site.
-Legacy ERPLite Vue production build was not run for this Python-only increment.
+Validation: Workz TypeScript/Vite production build, 54 synthetic Python tests,
+7 Node calendar tests and 697 offline regressions pass. No actual Frappe HTTP,
+Socket.IO, File download/export or exact-commit cross-app deployment test ran:
+this runtime has no disposable Frappe site. Those are required release gates,
+particularly Frappe DocShare fallback and generic endpoint behavior. Office's
+main/deployed appearance cannot be compared because the deployed site returns
+HTTP 403. No live business data is copied into this change.
+
+Publishing remains blocked by the configured helper/managed gh repository scope
+mismatch. Preserve the commit in a credential-free bundle until Kandev grants
+this attached repository its own credential scope; never reuse Office's token.

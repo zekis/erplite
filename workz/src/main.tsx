@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, useLocation, Navigate, Link } from "react-router-dom";
+import { BrowserRouter, MemoryRouter, useLocation, Navigate, Link } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import SettingsPage from "./SettingsPage";
 import Editor, { Field } from "./Editor";
@@ -26,6 +26,18 @@ import {
   ScopeSelect,
 } from "./ui";
 
+const embedded = window.workzBoot?.office_contract === 1;
+const routeParams = new URLSearchParams(location.search);
+if (embedded) {
+  // Reuse the shell's locally bundled font faces rather than downloading fonts.
+  try {
+    const faces = Array.from(window.parent.document.styleSheets).flatMap(sheet => {
+      try { return Array.from(sheet.cssRules).filter(rule => rule.type === CSSRule.FONT_FACE_RULE).map(rule => rule.cssText.replace(/url\(["']?([^"')]+)["']?\)/g, (_, url) => `url("${new URL(url, sheet.href || window.parent.document.baseURI).href}")`)); }
+      catch { return []; }
+    });
+    const style = document.createElement('style'); style.textContent = faces.join('\n'); document.head.append(style);
+  } catch { /* same-origin shell unavailable: system fallback remains readable */ }
+}
 const opts = (rows: Row[], key = "name", label = "name") =>
   rows.map((r) => ({ value: r[key], label: r[label] || r[key] }));
 const storageKey = "workz-ui:" + (window.workzBoot?.user || "user");
@@ -46,9 +58,9 @@ function Empty({ text = "No records in this period." }: { text?: string }) {
 function App() {
   const path = useLocation().pathname;
   const [ctx, setCtx] = useState<Row | null>(null),
-    [date, setDate] = useState(saved.date || today),
+    [date, setDate] = useState(routeParams.get("date") || saved.date || today),
     [view, setView] = useState(
-      saved.view || (innerWidth < 768 ? "day" : "week"),
+      routeParams.get("view") || saved.view || (innerWidth < 768 ? "day" : "week"),
     ),
     [expanded, setExpanded] = useState(saved.expanded ?? innerWidth >= 1280);
   const [query, setQuery] = useState(""),
@@ -69,8 +81,8 @@ function App() {
     [notice, setNotice] = useState(""),
     [editor, setEditor] = useState<any>(null),
     [busy, setBusy] = useState(false),
-    [employee, setEmployee] = useState(saved.employee || ""),
-    [project, setProject] = useState(saved.project || ""),
+    [employee, setEmployee] = useState(routeParams.get("employee") || saved.employee || ""),
+    [project, setProject] = useState(routeParams.get("project") || saved.project || ""),
     [history, setHistory] = useState<Row[]>([]);
   useEffect(() => {
     try {
@@ -167,7 +179,7 @@ function App() {
         finance,
       });
     } catch (e) {
-      if (current === requestId.current) setError((e as Error).message);
+      if (current === requestId.current) { setCtx(null); setEditor(null); setData({plans:[],entries:[],suggestions:[],report:{employees:[],totals:{}},finance:{currencies:{},missing:[]}}); setError((e as Error).message); }
     } finally {
       if (current === requestId.current) setLoading(false);
     }
@@ -177,6 +189,16 @@ function App() {
   useEffect(() => {
     load();
   }, [load, path]);
+  useEffect(() => {
+    const poll = window.setInterval(() => { if (!document.hidden && !editor && !busy) refresh.current(); }, 30000);
+    return () => clearInterval(poll);
+  }, [editor, busy]);
+  useEffect(() => {
+    if (!embedded || !ctx) return;
+    window.parent.postMessage({type:'office:workz-ready',version:1},location.origin);
+    const params = new URLSearchParams({date, view, employee, project});
+    window.parent.postMessage({type: 'office:workz-route', version: 1, path, query: params.toString()}, location.origin);
+  }, [path, date, view, employee, project, !!ctx]);
   async function mutate(action: string, payload: Row) {
     setBusy(true);
     setNotice("");
@@ -184,6 +206,9 @@ function App() {
       await api(action, payload);
       await refresh.current();
       setNotice("Saved. Totals refreshed.");
+    } catch (error) {
+      if ((error as any).status === 403) { setEditor(null); await refresh.current(); }
+      throw error;
     } finally {
       setBusy(false);
     }
@@ -752,8 +777,8 @@ function App() {
     />
   );
   return (
-    <div className="shell workz">
-      <Sidebar expanded={expanded} onToggle={() => setExpanded(!expanded)} />
+    <div className={`shell workz ${embedded ? "office-embedded" : ""}`}>
+      {!embedded && <Sidebar expanded={expanded} onToggle={() => setExpanded(!expanded)} />}
       <main
         id="main"
         className={
@@ -762,7 +787,7 @@ function App() {
             : "list-page"
         }
       >
-        <Toolbar title={title} loading={loading || busy} onRefresh={load} />
+        {!embedded && <Toolbar title={title} loading={loading || busy} onRefresh={load} />}
         {scopeWarning && (
           <div role="alert" className="error">
             {scopeWarning}
@@ -783,6 +808,7 @@ function App() {
         )}
 
         <section className="toolbar" aria-label="Period and filters">
+          {embedded && <IconButton icon="refresh" label="Refresh workspace" onClick={load} />}
           {(planning || path === "/timesheet") && calendarControls}
           {!settings &&
             !todos &&
@@ -1447,6 +1473,7 @@ function App() {
   );
 }
 createRoot(document.getElementById("root")!).render(
+  embedded ? <MemoryRouter initialEntries={[location.pathname.replace(/^\/workz/, '') || '/']}><App /></MemoryRouter> :
   <BrowserRouter basename={import.meta.env.DEV ? "/" : "/workz"}>
     <App />
   </BrowserRouter>,

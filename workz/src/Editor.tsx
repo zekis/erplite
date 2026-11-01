@@ -50,6 +50,18 @@ export default function Editor({
       previous?.focus();
     };
   }, []);
+  useEffect(() => {
+    const dirty = busy || JSON.stringify(values) !== JSON.stringify(initial);
+    const beforeUnload = (event: BeforeUnloadEvent) => { if (dirty) { event.preventDefault(); event.returnValue = ''; } };
+    window.addEventListener('beforeunload', beforeUnload);
+    if (window.workzBoot?.office_contract === 1)
+      window.parent.postMessage({type:'office:workz-dirty', version:1, dirty}, location.origin);
+    return () => {
+      window.removeEventListener('beforeunload', beforeUnload);
+      if (window.workzBoot?.office_contract === 1)
+        window.parent.postMessage({type:'office:workz-dirty', version:1, dirty:false}, location.origin);
+    };
+  }, [values, initial, busy]);
   const close = () => {
     if (
       JSON.stringify(values) === JSON.stringify(initial) ||
