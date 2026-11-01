@@ -1,4 +1,4 @@
-# Workz / Virtual Office integration (contract 1)
+# Workz / Virtual Office integration (contract 2)
 
 Workz remains the sole work-record API and calendar/editor implementation. The
 Office shell mounts the existing modules at /workz paths with office=1. The
@@ -32,14 +32,58 @@ Parent PR: https://github.com/zekis/tm-office/pull/7
 Companion task: 26057359-4bcc-4984-9a05-554529d4d029.
 Parent task: 69475672-5c8c-4f9e-b4a8-983af50f966b.
 
-Validation: Workz TypeScript/Vite production build, 54 synthetic Python tests,
-7 Node calendar tests and 697 offline regressions pass. No actual Frappe HTTP,
-Socket.IO, File download/export or exact-commit cross-app deployment test ran:
-this runtime has no disposable Frappe site. Those are required release gates,
-particularly Frappe DocShare fallback and generic endpoint behavior. Office's
-main/deployed appearance cannot be compared because the deployed site returns
-HTTP 403. No live business data is copied into this change.
+Validation on disposable Frappe 15.122.0 with MariaDB 10.11 and Redis 7:
+- Workz TypeScript/Vite production build; 59 synthetic Python tests; 7 Node calendar tests.
+- `tests/workz/frappe_scope_security.py`: 225 real WSGI requests through Frappe's
+  authentication, HTTP dispatch and database. Generic v1/v2 get/list/count,
+  search/export, hostile read/write/share/everyone grants, private File reads
+  and downloads, attachment relinking, assignment-reference forgery, scope
+  revocation, mapped/unmapped/guest identities, valid scoped leads/approvers,
+  legacy RPC cmd/call/controller paths and standalone realtime restrictions.
+- `tests/workz/frappe_smoke.py`: eight concurrent accepts create one time entry;
+  reject/correct/resubmit/approve, report/finance totals and import reconciliation.
+- `tests/workz/frappe_dst_smoke.py`: real MariaDB preserves 1.5 hours across a
+  repeated clock hour; later bookings work while submitted/approved weeks stay
+  locked. Timezone is injected into Frappe's request-local settings cache; no
+  global site timezone or production configuration is changed.
+- Generic HTTP edits/deletes of Submitted, Approved and Processed history fail.
 
-Publishing remains blocked by the configured helper/managed gh repository scope
-mismatch. Preserve the commit in a credential-free bundle until Kandev grants
-this attached repository its own credential scope; never reuse Office's token.
+No production data, identity grants, deployment or merge was used. The parent
+owns combined Office HTTP/Socket.IO checks and independent final review.
+
+Companion PR: https://github.com/zekis/erplite/pull/76. Publication uses the
+companion task's ERPLite-scoped managed helper. Both PRs remain draft until the
+required disposable Frappe integration and security checks pass.
+
+Scope denials raise PermissionError: returning False alone allows Frappe to
+restore access through DocShare. Query guards also reject conflicting read
+shares before Frappe can OR them around scope predicates. Existing shares do
+not survive scope revocation as an alternate access path; generic lists fail
+closed until an administrator removes a conflicting share. Scoped Workz
+projections remain available. Ordinary staff cannot delegate Workz access using
+share grants. Permitted scoped leads/approvers and administrators retain their
+existing access.
+
+
+The assignment API uses the canonical ToDo controller directly. Frappe's generic
+assignment helper auto-shares the full Activity with its assignee, which violates
+the projection-only staff policy. ToDo hooks still maintain assignment comments
+and `_assign`; no duplicate record store is introduced.
+
+Legacy RPC policy executes through `auth_hooks` after API-key authentication.
+Frappe's `before_request` executes too early for API-key administrators. Both the
+URL and form `cmd` are checked because cmd takes dispatch precedence.
+
+Contract 2 is required on both sides; contract 1 is rejected. The tracked Workz
+assets include the matching ready/route/dirty handshake version. Both File
+controller overrides compose Office and Workz attachment policies explicitly,
+so the last-installed override cannot erase the other app's veto.
+
+All human Socket.IO handshakes/subscriptions are denied by this companion,
+including administrators. Workz uses authenticated HTTP polling, so admin data
+access and oversight remain available without a persistent unrevocable channel.
+The Office companion must apply the same policy. Rollout must restart realtime
+once to evict connections established before these hooks existed. This is a
+required deployment step; no deployment or restart is performed by this task.
+Keep both PRs draft until the parent verifies the exact pair and completes its
+independent review.

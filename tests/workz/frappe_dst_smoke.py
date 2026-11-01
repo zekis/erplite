@@ -11,17 +11,19 @@ frappe.init(site=site, sites_path=os.environ["SITES_PATH"])
 frappe.connect()
 frappe.set_user("Administrator")
 frappe.local.request = frappe._dict(method="POST")
-from erplite.workz.api import run
+from erplite.workz.api import run as workz_run
 
-settings = frappe.get_single("System Settings")
-from frappe.utils import get_system_timezone
+# Use Frappe's request-local settings cache, never save global site settings.
+# Each action gets a fresh copy because User insertion can clear local caches.
+settings = frappe.get_single("System Settings").as_dict()
+settings["time_zone"] = "America/New_York"
 
-old = get_system_timezone()
-settings.language = settings.language or "en"
-settings.time_zone = "America/New_York"
-settings.save()
-frappe.db.commit()
-frappe.clear_cache()
+
+def run(action, payload):
+    frappe.local.system_settings = frappe._dict(settings)
+    return workz_run(action, payload)
+
+
 try:
     prefix = frappe.generate_hash(length=8)
     email = prefix + "-dst@example.invalid"
@@ -145,10 +147,4 @@ try:
         "Real MariaDB DST: 1.5 fold hours preserved; Submitted and Approved history allow later manual bookings and Accept, while the same week stays locked."
     )
 finally:
-    frappe.set_user("Administrator")
-    settings = frappe.get_single("System Settings")
-    settings.time_zone = old
-    settings.save()
-    frappe.db.commit()
-    frappe.clear_cache()
     frappe.destroy()

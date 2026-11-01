@@ -18,6 +18,7 @@ class Office(unittest.TestCase):
 
     def test_contract_only_exposes_approval_view_to_scoped_approver(self):
         self.s.as_user('alice')
+        self.assertEqual(self.office.capabilities()['version'], 2)
         self.assertNotIn('approvals',self.office.capabilities()['routes'])
         self.s.as_user('approver')
         self.assertIn('approvals',self.office.capabilities()['routes'])
@@ -45,8 +46,8 @@ class Office(unittest.TestCase):
         project=self.s.get_doc('Project','P')
         activity=self.s.get_doc('Activity','A')
         for user in ('alice','bob','Guest'):
-            self.assertFalse(self.boundary.project_permission(project,user,'read'))
-            self.assertFalse(self.boundary.activity_permission(activity,user,'read'))
+            with self.assertRaises(Rejected): self.boundary.project_permission(project,user,'read')
+            with self.assertRaises(Rejected): self.boundary.activity_permission(activity,user,'read')
         self.assertTrue(self.boundary.project_permission(project,'approver','read'))
         self.assertIn('project_lead',self.boundary.project_query('alice'))
         self.assertEqual(self.boundary.project_query('Guest'),'1=0')
@@ -56,3 +57,62 @@ class Office(unittest.TestCase):
         self.s.f.conf={'office_agent_file_readers':{'virtual-agent':'alice'}}
         self.s.as_user('alice')
         with self.assertRaises(Rejected):self.office.capabilities()
+
+    def test_legacy_aliases_and_call_wrappers(self):
+        self.s.as_user('alice')
+        method = 'erplite.projects.api.get_all_users'
+        for path, form in [
+            ('/api/v1/method/' + method, {}),
+            ('/api/v2/method/' + method, {}),
+            ('/', {'cmd': method}),
+            ('/api/method/frappe.ping', {'cmd': method}),
+            ('/api/method/' + method + '/ignored', {}),
+            ('/api/method/frappe.utils.call', {'fn': method}),
+            ('/api/v2/method/frappe.call', {'fn': method}),
+        ]:
+            with self.subTest(path=path):
+                self.s.f.local = Row(request=Row(path=path), form_dict=form)
+                with self.assertRaises(Rejected): self.boundary.before_request()
+
+    def test_scope_denial_cannot_reach_share_fallback(self):
+        project = self.s.get_doc('Project', 'P')
+        # Faithful minimal control flow of Frappe's permission fallback. A
+        # false-return-only guard would grant this read via the hostile share.
+        reached_share = []
+        def check():
+            allowed = self.boundary.project_permission(project, 'alice', 'read')
+            if not allowed:
+                reached_share.append(True)
+                return True
+            return allowed
+        with self.assertRaises(Rejected): check()
+        self.assertEqual(reached_share, [])
+        for right in ('write', 'share', 'print', 'email', 'select'):
+            with self.assertRaises(Rejected):
+                self.boundary.project_permission(project, 'alice', right)
+        with self.assertRaises(Rejected):
+            self.boundary.project_permission(project, 'lead', 'share')
+        self.assertTrue(self.boundary.project_permission(project, 'lead', 'read'))
+
+    def test_conflicting_read_share_stops_list_scope_or_bypass(self):
+        self.s.seed('DocShare', 'hostile', share_doctype='Project',
+                    share_name='P', user='alice', read=1)
+        with self.assertRaises(Rejected): self.boundary.project_query('alice')
+        self.assertIn('project_lead', self.boundary.project_query('lead'))
+        self.assertEqual(self.boundary.project_query('Administrator'), '')
+
+    def test_scoped_staff_cannot_join_unscoped_realtime(self):
+        for user in ('alice', 'bob', 'lead', 'approver', 'Guest', 'Administrator'):
+            self.s.as_user(user)
+            with self.assertRaises(Rejected): self.boundary.deny_realtime()
+
+    def test_old_security_contract_cannot_embed(self):
+        import sys
+        import types
+        from unittest.mock import patch
+        old = types.ModuleType('tm_office.integration')
+        old.CONTRACT = 1
+        with patch.dict(sys.modules, {'tm_office.integration': old}):
+            self.assertFalse(self.office.shell_available())
+            old.CONTRACT = 2
+            self.assertTrue(self.office.shell_available())

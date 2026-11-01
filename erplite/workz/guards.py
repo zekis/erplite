@@ -10,41 +10,37 @@ def is_admin(actor):
 
 
 def time_permission(doc, user=None, ptype=None):
+    from erplite.workz.boundary import mapped, enforce_scope
     actor = user or p.user()
-    from erplite.workz.boundary import mapped
-    if not mapped(actor):
-        return False
-    if ptype in ("read", "write", "delete", "submit", "cancel"):
-        return (
-            is_admin(actor)
-            or doc.employee == actor
-            or (
-                bool(doc.project) and p.project(doc.project).timesheet_approver == actor
-            )
-        )
-    return None
+    enforce_scope(mapped(actor))
+    if is_admin(actor):
+        return None
+    return enforce_scope(
+        ptype in ('read', 'select', 'print', 'email', 'export', 'report',
+                  'create', 'write', 'delete', 'submit', 'cancel')
+        and (doc.employee == actor or (
+            bool(doc.project) and p.project(doc.project).timesheet_approver == actor)))
 
 
 def plan_permission(doc, user=None, ptype=None):
+    from erplite.workz.boundary import mapped, enforce_scope
     actor = user or p.user()
-    from erplite.workz.boundary import mapped
-    if not mapped(actor):
-        return False
-    own = is_admin(actor) or doc.user == actor
-    project = p.project(doc.project) if doc.kind == "Work" and doc.project else None
-    if ptype == "read":
-        # Personal staff availability is only exposed through the redacted API.
-        return own or bool(
-            project and actor in (project.project_lead, project.timesheet_approver)
-        )
-    if ptype in ("write", "delete"):
-        return own or bool(project and project.project_lead == actor)
-    return None
+    enforce_scope(mapped(actor))
+    if is_admin(actor):
+        return None
+    own = doc.user == actor
+    project = p.project(doc.project) if doc.kind == 'Work' and doc.project else None
+    if ptype in ('read', 'select', 'print', 'email', 'export', 'report'):
+        return enforce_scope(own or bool(
+            project and actor in (project.project_lead, project.timesheet_approver)))
+    return enforce_scope(ptype in ('create', 'write', 'delete') and (
+        own or bool(project and project.project_lead == actor)))
 
 
 def time_query(user=None):
     subject = user or p.user()
-    from erplite.workz.boundary import mapped
+    from erplite.workz.boundary import mapped, check_shared_scope
+    check_shared_scope('Timesheet Entry', subject)
     if not mapped(subject):
         return '1=0'
     if is_admin(subject):
@@ -61,7 +57,8 @@ def time_query(user=None):
 
 def plan_query(user=None):
     subject = user or p.user()
-    from erplite.workz.boundary import mapped
+    from erplite.workz.boundary import mapped, check_shared_scope
+    check_shared_scope('Planner Entry', subject)
     if not mapped(subject):
         return '1=0'
     if is_admin(subject):
@@ -255,7 +252,9 @@ def validate_setup(doc, method=None):
             p.require(
                 doc.project == old.project, "Activities cannot move between projects"
             )
-    elif doc.doctype == "ToDo" and doc.reference_type == "Activity":
+    elif doc.doctype == "ToDo" and (doc.reference_type == "Activity" or (old and old.reference_type == "Activity")):
+        if old:
+            p.require(doc.reference_type == old.reference_type, "Assignment reference type cannot change")
         activity = frappe.get_doc("Activity", doc.reference_name)
         p.require(
             p.manages(activity.project),

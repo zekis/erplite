@@ -148,9 +148,13 @@ def run():
     )
     frappe.set_user(people["stranger"])
     assert call("times", **period) == []
-    assert not frappe.has_permission(
-        "Timesheet Entry", "read", doc=frappe.get_doc("Timesheet Entry", entry.name)
-    )
+    try:
+        allowed = frappe.has_permission(
+            "Timesheet Entry", "read", doc=frappe.get_doc("Timesheet Entry", entry.name)
+        )
+    except frappe.PermissionError:
+        allowed = False
+    assert not allowed
     frappe.set_user(people["approver"])
     entry.reload()
     # Exercise the existing document rejection path, then Workz correction.

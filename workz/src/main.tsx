@@ -26,7 +26,7 @@ import {
   ScopeSelect,
 } from "./ui";
 
-const embedded = window.workzBoot?.office_contract === 1;
+const embedded = window.workzBoot?.office_contract === 2;
 const routeParams = new URLSearchParams(location.search);
 if (embedded) {
   // Reuse the shell's locally bundled font faces rather than downloading fonts.
@@ -195,9 +195,9 @@ function App() {
   }, [editor, busy]);
   useEffect(() => {
     if (!embedded || !ctx) return;
-    window.parent.postMessage({type:'office:workz-ready',version:1},location.origin);
+    window.parent.postMessage({type:'office:workz-ready',version:2},location.origin);
     const params = new URLSearchParams({date, view, employee, project});
-    window.parent.postMessage({type: 'office:workz-route', version: 1, path, query: params.toString()}, location.origin);
+    window.parent.postMessage({type: 'office:workz-route', version: 2, path, query: params.toString()}, location.origin);
   }, [path, date, view, employee, project, !!ctx]);
   async function mutate(action: string, payload: Row) {
     setBusy(true);

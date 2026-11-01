@@ -2,7 +2,7 @@
 import frappe
 from erplite.workz import policy
 
-CONTRACT = 1
+CONTRACT = 2
 ROUTES = {
     'projects': '/projects', 'planning': '/planning', 'timesheets': '/timesheet',
     'approvals': '/timesheet/approvals', 'reports': '/timesheet/reports',

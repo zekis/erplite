@@ -289,10 +289,23 @@ for _doctype in ("Project", "Activity"):
     doc_events[_doctype]["on_trash"] = "erplite.workz.guards.preserve_setup"
 
 # Staff use the scoped Workz projections; legacy elevated RPCs are admin-only.
-before_request = ['erplite.workz.boundary.before_request']
+# Run after API-key authentication, which happens after before_request.
+auth_hooks = ['erplite.workz.boundary.before_request']
 has_permission.update({'Project': 'erplite.workz.boundary.project_permission',
                        'Activity': 'erplite.workz.boundary.activity_permission'})
 permission_query_conditions.update({'Project': 'erplite.workz.boundary.project_query',
                                     'Activity': 'erplite.workz.boundary.activity_query'})
 has_permission['ToDo'] = 'erplite.workz.boundary.assignment_permission'
 permission_query_conditions['ToDo'] = 'erplite.workz.boundary.assignment_query'
+
+# Attachments follow the parent record even when File itself has been shared.
+has_permission['File'] = 'erplite.workz.boundary.file_permission'
+permission_query_conditions['File'] = 'erplite.workz.boundary.file_query'
+override_doctype_class = {'File': 'erplite.workz.scoped_file.ScopedFile'}
+
+# Safe even when ERPLite is installed without the Office companion.
+override_whitelisted_methods = {
+    'frappe.realtime.get_user_info': 'erplite.workz.boundary.realtime_user_info',
+    'frappe.realtime.can_subscribe_doc': 'erplite.workz.boundary.realtime_doc',
+    'frappe.realtime.can_subscribe_doctype': 'erplite.workz.boundary.realtime_doctype',
+}

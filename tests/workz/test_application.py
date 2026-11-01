@@ -260,8 +260,10 @@ class Application(unittest.TestCase):
         record = self.accept(self.plan())
         doc = self.s.get_doc("Timesheet Entry", record["timesheet"])
         self.s.as_user("bob")
-        self.assertFalse(self.s.guards.time_permission(doc, user="bob", ptype="read"))
-        self.assertFalse(self.s.guards.time_permission(doc, user="bob", ptype="write"))
+        with self.assertRaises(Rejected):
+            self.s.guards.time_permission(doc, user="bob", ptype="read")
+        with self.assertRaises(Rejected):
+            self.s.guards.time_permission(doc, user="bob", ptype="write")
 
     def test_employee_on_two_projects_does_not_expand_managers_scope(self):
         self.s.call("assignment", dict(activity="AQ", employee="alice", assigned=True))
@@ -325,6 +327,7 @@ class Application(unittest.TestCase):
         )
         doc = self.s.get_doc("Planner Entry", result["name"])
         self.s.as_user("lead")
-        self.assertFalse(self.s.guards.plan_permission(doc, user="lead", ptype="read"))
+        with self.assertRaises(Rejected):
+            self.s.guards.plan_permission(doc, user="lead", ptype="read")
         self.assertTrue(self.s.guards.plan_permission(doc, user="alice", ptype="read"))
         self.assertTrue(self.s.guards.p.can_read_plan(doc))

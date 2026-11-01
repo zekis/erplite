@@ -245,8 +245,6 @@ def save_activity(data):
 
 
 def assignment(data):
-    from frappe.desk.form.assign_to import _add as add
-
     activity = frappe.get_doc("Activity", data["activity"])
     p.require(p.manages(activity.project))
     employee = data["employee"]
@@ -277,10 +275,18 @@ def assignment(data):
             p.project(activity.project).status != "Archived", "Project is archived"
         )
         if not active:
-            add(
-                {"doctype": "Activity", "name": activity.name, "assign_to": [employee]},
-                ignore_permissions=True,
-            )
+            # The generic helper auto-shares the full Activity. Staff are
+            # entitled only to Workz's projection. Canonical ToDo hooks still
+            # maintain _assign/comments/history without that extra grant.
+            todo = frappe.new_doc("ToDo")
+            todo.reference_type = "Activity"
+            todo.reference_name = activity.name
+            todo.allocated_to = employee
+            todo.assigned_by = p.user()
+            todo.description = "Assigned Workz activity"
+            todo.status = "Open"
+            todo.priority = "Medium"
+            todo.insert(ignore_permissions=True)
     else:
         for row in active:
             todo = frappe.get_doc("ToDo", row.name, for_update=True)
