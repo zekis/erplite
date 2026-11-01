@@ -70,6 +70,7 @@ test("fresh setup, plan, ghost, accept, submit, scoped approve and reconciliatio
   await expect(
     page.getByText("newperson@example.invalid", { exact: true }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Rate history", exact: true }).click();
   await page.getByRole("button", { name: "Add currency", exact: true }).click();
   await page.getByLabel("Three-letter code").fill("AUD");
   await page.getByLabel("Symbol", { exact: true }).fill("$");
@@ -135,6 +136,7 @@ test("fresh setup, plan, ghost, accept, submit, scoped approve and reconciliatio
     page.getByRole("button", { name: "Accept", exact: true }),
   ).toHaveCount(0);
   await page.reload();
+  await page.getByRole("button", { name: "table", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Submit", exact: true }),
   ).toHaveCount(1);
@@ -162,6 +164,7 @@ test("fresh setup, plan, ghost, accept, submit, scoped approve and reconciliatio
   await save();
   await role("alice");
   await page.getByRole("link", { name: "View Timesheet", exact: true }).click();
+  await page.getByText("Decision notes", { exact: true }).click();
   await expect(
     page.getByText("Please correct description", { exact: true }),
   ).toBeVisible();
@@ -182,6 +185,7 @@ test("fresh setup, plan, ghost, accept, submit, scoped approve and reconciliatio
   await expect(
     page.getByRole("dialog").getByLabel("Description", { exact: true }),
   ).toHaveValue("Corrected after rejection");
+  page.once("dialog", (dialog) => dialog.accept());
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Resubmit", exact: true }).click();
   await expect(

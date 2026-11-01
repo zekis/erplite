@@ -1,8 +1,10 @@
 /// <reference types="vite/client" />
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, useLocation } from "react-router-dom";
+import { BrowserRouter, useLocation, Navigate, Link } from "react-router-dom";
 import Sidebar from "./Sidebar";
+import SettingsPage from "./SettingsPage";
+import Editor, { Field } from "./Editor";
 import TimeCalendar, { CalendarEvent, PaletteItem } from "./TimeCalendar";
 import { api, Row } from "./api";
 import {
@@ -14,198 +16,46 @@ import {
   zoned,
 } from "./calendar.mjs";
 import "./style.css";
+import {
+  Toolbar,
+  TopActions,
+  Table,
+  Icon,
+  IconButton,
+  ViewSwitch,
+  ScopeSelect,
+} from "./ui";
 
-type Field = {
-  key: string;
-  label: string;
-  type?: string;
-  options?: { value: string; label: string }[];
-  required?: boolean;
-};
 const opts = (rows: Row[], key = "name", label = "name") =>
   rows.map((r) => ({ value: r[key], label: r[label] || r[key] }));
+const storageKey = "workz-ui:" + (window.workzBoot?.user || "user");
+const saved = (() => {
+  try {
+    return JSON.parse(localStorage.getItem(storageKey) || "{}");
+  } catch {
+    return {};
+  }
+})();
 const today = localDate(new Date()),
   tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const number = (value: any) =>
   Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
-function Table({
-  headers,
-  children,
-}: {
-  headers: string[];
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            {headers.map((h) => (
-              <th key={h}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>{children}</tbody>
-      </table>
-    </div>
-  );
-}
 function Empty({ text = "No records in this period." }: { text?: string }) {
   return <p className="empty">{text}</p>;
-}
-function Editor({
-  title,
-  fields,
-  initial,
-  onSave,
-  onClose,
-}: {
-  title: string;
-  fields: Field[];
-  initial: Row;
-  onSave: (v: Row) => Promise<void>;
-  onClose: () => void;
-}) {
-  const [values, setValues] = useState(initial),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement;
-    const dialog = document.querySelector(".dialog")!;
-    const controls = () =>
-      Array.from(
-        dialog.querySelectorAll<HTMLElement>("input,select,button"),
-      ).filter((e) => !e.hasAttribute("disabled"));
-    controls()[0]?.focus();
-    function trap(e: KeyboardEvent) {
-      if (e.key !== "Tab") return;
-      const list = controls(),
-        first = list[0],
-        last = list[list.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last?.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first?.focus();
-      }
-    }
-    document.addEventListener("keydown", trap);
-    return () => {
-      document.removeEventListener("keydown", trap);
-      previous?.focus();
-    };
-  }, []);
-  return (
-    <div
-      className="overlay"
-      onKeyDown={(e) => {
-        if (e.key === "Escape" && !busy) onClose();
-      }}
-    >
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="edit-title"
-        className="dialog"
-      >
-        <h2 id="edit-title">{title}</h2>
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            setBusy(true);
-            setError("");
-            try {
-              await onSave(values);
-              onClose();
-            } catch (e) {
-              setError((e as Error).message);
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          {fields.map((f) => (
-            <label key={f.key}>
-              {f.label}
-              {f.type === "checkbox" ? (
-                <input
-                  type="checkbox"
-                  checked={!!values[f.key]}
-                  onChange={(e) =>
-                    setValues({ ...values, [f.key]: e.target.checked })
-                  }
-                />
-              ) : f.options ? (
-                <select
-                  aria-label={f.label}
-                  required={f.required !== false}
-                  value={values[f.key] ?? ""}
-                  onChange={(e) =>
-                    setValues({
-                      ...values,
-                      [f.key]: e.target.value,
-                      ...(["plan_start", "check_in_time"].includes(f.key)
-                        ? { start_offset: "" }
-                        : ["plan_end", "check_out_time"].includes(f.key)
-                          ? { end_offset: "" }
-                          : {}),
-                    })
-                  }
-                >
-                  <option value="">Choose…</option>
-                  {f.options.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  autoFocus={fields[0] === f}
-                  required={f.required !== false}
-                  type={f.type || "text"}
-                  step={f.type === "number" ? "0.000001" : undefined}
-                  value={values[f.key] ?? ""}
-                  onChange={(e) =>
-                    setValues({
-                      ...values,
-                      [f.key]: e.target.value,
-                      ...(["plan_start", "check_in_time"].includes(f.key)
-                        ? { start_offset: "" }
-                        : ["plan_end", "check_out_time"].includes(f.key)
-                          ? { end_offset: "" }
-                          : {}),
-                    })
-                  }
-                />
-              )}
-            </label>
-          ))}
-          {error && (
-            <p role="alert" className="error">
-              {error}
-            </p>
-          )}
-          <footer>
-            <button type="button" disabled={busy} onClick={onClose}>
-              Cancel
-            </button>
-            <button className="primary" disabled={busy}>
-              {busy ? "Saving…" : "Save"}
-            </button>
-          </footer>
-        </form>
-      </section>
-    </div>
-  );
 }
 function App() {
   const path = useLocation().pathname;
   const [ctx, setCtx] = useState<Row | null>(null),
-    [date, setDate] = useState(today),
-    [view, setView] = useState("week"),
-    [expanded, setExpanded] = useState(true);
+    [date, setDate] = useState(saved.date || today),
+    [view, setView] = useState(
+      saved.view || (innerWidth < 768 ? "day" : "week"),
+    ),
+    [expanded, setExpanded] = useState(saved.expanded ?? innerWidth >= 1280);
+  const [query, setQuery] = useState(""),
+    [category, setCategory] = useState("People & access"),
+    [selection, setSelection] = useState(""),
+    [projectStatus, setProjectStatus] = useState("Active");
+
   const [data, setData] = useState<Row>({
     plans: [],
     entries: [],
@@ -215,12 +65,27 @@ function App() {
   });
   const [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
+    [scopeWarning, setScopeWarning] = useState(""),
     [notice, setNotice] = useState(""),
     [editor, setEditor] = useState<any>(null),
     [busy, setBusy] = useState(false),
-    [employee, setEmployee] = useState(""),
-    [project, setProject] = useState(""),
+    [employee, setEmployee] = useState(saved.employee || ""),
+    [project, setProject] = useState(saved.project || ""),
     [history, setHistory] = useState<Row[]>([]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify({ date, view, expanded, employee, project }),
+      );
+    } catch {}
+  }, [date, view, expanded, employee, project]);
+  useEffect(() => {
+    if (notice === "Saved. Totals refreshed.") {
+      const timer = setTimeout(() => setNotice(""), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [notice]);
   const reportPage = path === "/" || path.endsWith("/reports"),
     planning = path === "/planning",
     todos =
@@ -252,10 +117,25 @@ function App() {
       const c = await api("context");
       if (current !== requestId.current) return;
       setCtx(c);
+      if (
+        (employee && !c.users.some((u: Row) => u.name === employee)) ||
+        (project && !c.projects.some((p: Row) => p.name === project))
+      ) {
+        setEmployee("");
+        setProject("");
+        setScopeWarning(
+          "Saved scope is no longer available. Showing your authorised scope.",
+        );
+        return;
+      }
       if (!preferencesReady.current) {
         preferencesReady.current = true;
         const preference = JSON.parse(c.preferences || "{}").view;
-        if (["day", "week", "month", "table"].includes(preference))
+        if (
+          !saved.view &&
+          innerWidth >= 768 &&
+          ["day", "week", "month", "table"].includes(preference)
+        )
           setView(preference);
       }
       const [plans, entries, suggestions, report, finance] = await Promise.all(
@@ -329,6 +209,8 @@ function App() {
       onSave: async (v: Row) => mutate(action, transform ? transform(v) : v),
     });
   }
+  if (path === "/todos" || path.startsWith("/todos/"))
+    return <Navigate to="/projects" replace />;
   if (!ctx)
     return (
       <main className="boot">
@@ -416,7 +298,8 @@ function App() {
       ],
       {
         kind: "Work",
-        user: ctx!.user,
+        user: employee || ctx!.user,
+        project: project || undefined,
         billable: true,
         timezone: tz,
         ...row,
@@ -434,7 +317,9 @@ function App() {
   }
   function timeEditor(row: Row = {}) {
     open(
-      row.name ? "Edit draft" : "Book actual time",
+      row.name
+        ? "Edit draft"
+        : `Book actual time · ${userName(employee || ctx!.user)}`,
       "save_time",
       [
         projectField,
@@ -458,7 +343,8 @@ function App() {
         { key: "description", label: "Description", required: false },
       ],
       {
-        employee: ctx!.user,
+        employee: employee || ctx!.user,
+        project: project || undefined,
         ...row,
         start_offset: row.check_in_time
           ? offsetFor(new Date(row.check_in_time))
@@ -514,7 +400,7 @@ function App() {
             ]
           : []),
       ],
-      { status: "Open", ...row },
+      { status: "Open", project: project || undefined, ...row },
     );
   }
   function activityEditor(row: Row = {}) {
@@ -533,26 +419,35 @@ function App() {
           })),
         },
       ],
-      { status: "Open", ...row },
+      { status: "Open", project: project || undefined, ...row },
     );
   }
   const filteredPlans = data.plans.filter(
     (r: Row) =>
       (!employee || r.user === employee) && (!project || r.project === project),
   );
-  const filteredTime = data.entries.filter(
+  const scopedTime = data.entries.filter(
     (r: Row) =>
       (!employee || r.employee === employee) &&
       (!project || r.project === project) &&
       (path.endsWith("/approvals") ? r.status === "Submitted" : true),
   );
+  const approvalPage = path.endsWith("/approvals");
+  const approvalSelection = scopedTime.some((r: Row) => r.name === selection)
+    ? selection
+    : scopedTime[0]?.name;
+  const filteredTime = approvalPage
+    ? scopedTime.filter((r: Row) => r.name === approvalSelection)
+    : scopedTime;
   const title =
     path === "/"
       ? "Dashboard"
       : planning
         ? "Planning"
         : todos
-          ? "Projects & assignments"
+          ? path.endsWith("/assignments")
+            ? "Manage Assignments"
+            : "Projects"
           : settings
             ? "Settings & people"
             : path.endsWith("/reports")
@@ -562,9 +457,22 @@ function App() {
                 : "Timesheet";
   const selectedEmployee = employee || ctx.user;
   const projectName = (name: string) =>
-    projects.find((p) => p.name === name)?.project_name || name;
+    projects.find((p) => p.name === name)?.project_name ||
+    "Unavailable project";
   const activityName = (name: string) =>
-    activities.find((a) => a.name === name)?.activity_name || name;
+    activities.find((a) => a.name === name)?.activity_name ||
+    "Unavailable activity";
+  const userName = (name: string) =>
+    users.find((u) => u.name === name)?.full_name || "Unavailable person";
+  const visibleProjects = projects.filter(
+    (p) =>
+      (projectStatus === "All" ||
+        (projectStatus === "Archived"
+          ? p.status === "Archived"
+          : p.status !== "Archived")) &&
+      p.project_name.toLowerCase().includes(query.toLowerCase()),
+  );
+  const selectedProject = project || visibleProjects[0]?.name;
   const assignedActivities = activities.filter(
     (a) =>
       a.status === "Open" &&
@@ -620,7 +528,7 @@ function App() {
         start: r.plan_start,
         end: r.plan_end,
         kind: r.kind,
-        subtitle: users.find((u) => u.name === r.user)?.full_name || r.user,
+        subtitle: `${userName(r.user)} · ${r.project ? projectName(r.project) : r.kind}`,
         allDay: !!r.all_day,
         row: r,
         editable:
@@ -636,7 +544,7 @@ function App() {
           start: r.check_in_time,
           end: r.check_out_time,
           kind: r.status,
-          subtitle: `${r.status} · ${users.find((u) => u.name === r.employee)?.full_name || r.employee}`,
+          subtitle: `${r.status} · ${userName(r.employee)} · ${projectName(r.project)}`,
           row: r,
           editable:
             ["Draft", "Rejected"].includes(r.status) &&
@@ -660,44 +568,150 @@ function App() {
   }
   function changePeriod(direction: number) {
     const next = new Date(date + "T12:00");
-    if (view === "month") {
+    if (view === "month" || reportPage) {
       next.setDate(1);
       next.setMonth(next.getMonth() + direction);
     } else next.setDate(next.getDate() + direction * (view === "day" ? 1 : 7));
     setDate(localDate(next));
   }
+  const periodControls = (
+    <div className="calendar-navigation">
+      <button onClick={() => changePeriod(-1)} aria-label="Previous period">
+        <Icon name="previous" />
+      </button>
+      <details className="period-picker">
+        <summary className="period-label">
+          {new Date(range.days[0] + "T12:00").toLocaleDateString([], {
+            month: "short",
+            day: "numeric",
+          })}{" "}
+          –{" "}
+          {new Date(
+            range.days[range.days.length - 1] + "T12:00",
+          ).toLocaleDateString([], {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          })}
+        </summary>
+        <label>
+          Date
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => {
+              if (e.target.value) setDate(e.target.value);
+            }}
+          />
+        </label>
+      </details>
+      <button onClick={() => setDate(today)}>Today</button>
+      <button onClick={() => changePeriod(1)} aria-label="Next period">
+        <Icon name="next" />
+      </button>
+    </div>
+  );
   const calendarControls = (
     <div className="calendar-controls">
-      <div
-        role="group"
-        aria-label={planning ? "Planning view" : "Timesheet view"}
-      >
-        {["day", "week", "month", "table"].map((v) => (
-          <button
-            key={v}
-            aria-pressed={view === v}
-            onClick={() => {
-              setView(v);
-              act("preferences", { view: v });
-            }}
-          >
-            {v}
-          </button>
-        ))}
-      </div>
-      <div className="calendar-navigation">
-        <button onClick={() => changePeriod(-1)} aria-label="Previous period">
-          Previous
-        </button>
-        <button onClick={() => setDate(today)}>Today</button>
-        <button onClick={() => changePeriod(1)} aria-label="Next period">
-          Next
-        </button>
-      </div>
+      <ViewSwitch
+        label={planning ? "Planning view" : "Timesheet view"}
+        value={view}
+        onChange={setView}
+      />
+      {periodControls}
     </div>
   );
   const calendar = (
     <TimeCalendar
+      onNavigateDate={setDate}
+      summary={
+        <>
+          <span>
+            New {planning ? "plans" : "entries"} for{" "}
+            {userName(selectedEmployee)}
+          </span>
+          <span>
+            {planning
+              ? `${filteredPlans.length} allocations`
+              : `${number(filteredTime.reduce((sum: number, r: Row) => sum + Number(r.period_hours || 0), 0))} actual hours`}{" "}
+            ·{" "}
+            {planning
+              ? "Work / Availability / Leave / Holiday"
+              : "Draft / Submitted / Approved / Processed"}
+          </span>
+        </>
+      }
+      detailActions={(event) =>
+        !planning && (
+          <div className="actions">
+            {["Draft", "Rejected"].includes(event.kind) && event.editable && (
+              <button
+                disabled={busy}
+                onClick={() =>
+                  act("transition", { ...event.row, status: "Submitted" })
+                }
+              >
+                {event.kind === "Rejected" ? "Resubmit" : "Submit"}
+              </button>
+            )}
+            {event.kind === "Submitted" && canApprove(event.row) && (
+              <>
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    act("transition", { ...event.row, status: "Approved" })
+                  }
+                >
+                  Approve
+                </button>
+                <button
+                  onClick={() =>
+                    open(
+                      "Return submitted entry",
+                      "transition",
+                      [{ key: "reason", label: "Reason" }],
+                      { ...event.row, status: "Rejected" },
+                    )
+                  }
+                >
+                  Return
+                </button>
+              </>
+            )}
+          </div>
+        )
+      }
+      railContent={
+        path === "/timesheet" ? (
+          <section>
+            <h3>Suggestions ({data.suggestions.length})</h3>
+
+            {data.suggestions.map((r: Row) => (
+              <article className="suggestion" key={r.name}>
+                <strong>{r.title}</strong>{" "}
+                {new Date(r.plan_start).toLocaleString()}
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    act("decision", { ...r, decision: "Accepted" })
+                  }
+                >
+                  Accept
+                </button>
+                <button
+                  disabled={busy}
+                  onClick={() => act("decision", { ...r, decision: "Ignored" })}
+                >
+                  Ignore
+                </button>
+              </article>
+            ))}
+            {!data.suggestions.length && (
+              <Empty text="No undecided work suggestions in this period." />
+            )}
+          </section>
+        ) : undefined
+      }
       events={calendarEvents}
       palette={palette}
       days={range.days}
@@ -738,18 +752,25 @@ function App() {
     />
   );
   return (
-    <div className="shell">
+    <div className="shell workz">
       <Sidebar expanded={expanded} onToggle={() => setExpanded(!expanded)} />
-      <main id="main">
-        <header>
-          <div>
-            <p className="eyebrow">ERPLite workspace</p>
-            <h1>{title}</h1>
+      <main
+        id="main"
+        className={
+          (planning || path === "/timesheet") && view !== "table"
+            ? "calendar-page"
+            : "list-page"
+        }
+      >
+        <Toolbar title={title} loading={loading || busy} onRefresh={load} />
+        {scopeWarning && (
+          <div role="alert" className="error">
+            {scopeWarning}
+            <button onClick={() => setScopeWarning("")}>
+              Dismiss scope notice
+            </button>
           </div>
-          <button onClick={load} disabled={loading}>
-            Refresh
-          </button>
-        </header>
+        )}
         {error && (
           <div role="alert" className="error">
             {error} <button onClick={() => setError("")}>Dismiss</button>
@@ -760,174 +781,262 @@ function App() {
             {notice}
           </p>
         )}
-        {loading && <p role="status">Refreshing persisted records…</p>}
+
         <section className="toolbar" aria-label="Period and filters">
-          <label>
-            {reportPage ? "Month" : "Date"}
-            <input
-              type={reportPage ? "month" : "date"}
-              value={reportPage ? date.slice(0, 7) : date}
-              onChange={(e) =>
-                setDate(reportPage ? e.target.value + "-01" : e.target.value)
-              }
-            />
-          </label>
+          {(planning || path === "/timesheet") && calendarControls}
+          {!settings &&
+            !todos &&
+            !(planning || path === "/timesheet") &&
+            periodControls}
           {!settings && (
             <>
+              <ScopeSelect
+                label="Employee"
+                value={employee}
+                onChange={setEmployee}
+                options={users.map((u) => ({
+                  value: u.name,
+                  label: u.full_name || u.name,
+                }))}
+                empty="All authorised employees"
+              />
+              <ScopeSelect
+                label="Project"
+                value={project}
+                onChange={setProject}
+                options={projects.map((p) => ({
+                  value: p.name,
+                  label: p.project_name,
+                }))}
+                empty="All authorised projects"
+              />
+            </>
+          )}
+          {!settings && (
+            <button
+              onClick={() => {
+                setEmployee("");
+                setProject("");
+                setQuery("");
+              }}
+            >
+              Clear ({Number(!!employee) + Number(!!project) + Number(!!query)})
+            </button>
+          )}
+          {todos && (
+            <>
               <label>
-                Employee
-                <select
-                  value={employee}
-                  onChange={(e) => setEmployee(e.target.value)}
-                >
-                  <option value="">All authorized employees</option>
-                  {users.map((u) => (
-                    <option key={u.name} value={u.name}>
-                      {u.full_name || u.name}
-                    </option>
-                  ))}
-                </select>
+                Find project
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
               </label>
               <label>
-                Project
+                Status
                 <select
-                  value={project}
-                  onChange={(e) => setProject(e.target.value)}
+                  value={projectStatus}
+                  onChange={(e) => setProjectStatus(e.target.value)}
                 >
-                  <option value="">All authorized projects</option>
-                  {projects.map((p) => (
-                    <option key={p.name} value={p.name}>
-                      {p.project_name}
-                    </option>
+                  {["Active", "Archived", "All"].map((v) => (
+                    <option key={v}>{v}</option>
                   ))}
                 </select>
               </label>
             </>
           )}
-          <small>
-            Calendar: {tz} · Storage: {ctx.timezone}
-          </small>
+          <span
+            className="timezone"
+            title={`Calendar: ${tz}; storage: ${ctx.timezone}`}
+            tabIndex={0}
+          >
+            {tz}
+          </span>
         </section>
-        {reportPage && (
-          <>
-            <section className="metrics">
-              {Object.entries(data.report.totals).map(([key, value]) => (
-                <article key={key}>
-                  <span>{key} hours</span>
-                  <strong>{number(value)}</strong>
-                </article>
+        <div
+          className={`page-workspace ${reportPage ? "report-layout" : todos ? "project-layout" : settings ? "settings-layout" : path.endsWith("/approvals") ? "approval-layout" : ""}`}
+        >
+          {approvalPage && (
+            <nav className="approval-queue" aria-label="Submission queue">
+              <h2>Submitted ({scopedTime.length})</h2>
+              {scopedTime.map((r: Row) => (
+                <button
+                  key={r.name}
+                  aria-pressed={r.name === approvalSelection}
+                  onClick={() => setSelection(r.name)}
+                >
+                  <strong>{userName(r.employee)}</strong>
+                  <span>{projectName(r.project)}</span>
+                  <span>
+                    {new Date(r.check_in_time).toLocaleDateString()} ·{" "}
+                    {number(r.period_hours)} h
+                  </span>
+                </button>
               ))}
-            </section>
-            <p className="help">
-              {data.report.definition} Totals and drilldown share the selected
-              employee/project filters.
-            </p>
-            <Table
-              headers={[
-                "Employee",
-                "Planned h",
-                "Actual h",
-                "Submitted h",
-                "Approved h",
-                "Drilldown",
-              ]}
-            >
-              {data.report.employees.map((r: Row) => (
-                <tr key={r.employee}>
-                  <td>{r.employee}</td>
-                  {["planned", "actual", "submitted", "approved"].map((k) => (
-                    <td key={k}>{number(r[k])}</td>
-                  ))}
-                  <td>
-                    <button onClick={() => setEmployee(r.employee)}>
-                      Show entries
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </Table>
-            {!data.report.employees.length && <Empty />}
-          </>
-        )}
-        {planning && (
-          <>
-            <div className="actions">
-              <button className="primary" onClick={() => planEditor()}>
-                Plan time
-              </button>
-              {calendarControls}
-            </div>
-            <p className="help">
-              Leave and holidays block allocations, but do not grant HR
-              approval.
-            </p>
-            <div className="legend">
-              {["Work", "Availability", "Leave", "Holiday"].map((k) => (
-                <span key={k} className={`plan ${k.toLowerCase()}`}>
-                  {k}
-                </span>
-              ))}
-            </div>
-            {view === "table" ? (
+              {!scopedTime.length && <Empty text="No pending submissions." />}
+            </nav>
+          )}
+          {path === "/" && (
+            <aside className="dashboard-actions">
+              <Link to="/timesheet/approvals">
+                Pending approvals ·{" "}
+                {
+                  data.entries.filter(
+                    (r: Row) => r.status === "Submitted" && canApprove(r),
+                  ).length
+                }
+              </Link>
+              <Link to="/timesheet">
+                Plan suggestions · {data.suggestions.length}
+              </Link>
+            </aside>
+          )}
+          {reportPage && (
+            <>
+              <section className="metrics">
+                {Object.entries(data.report.totals).map(([key, value]) => (
+                  <article key={key}>
+                    <span>{key} hours</span>
+                    <strong>{number(value)}</strong>
+                  </article>
+                ))}
+              </section>
+              <p className="help">
+                {data.report.definition} Totals and drilldown share the selected
+                employee/project filters.
+              </p>
               <Table
                 headers={[
                   "Employee",
-                  "Kind",
-                  "Allocation",
-                  "Start",
-                  "End",
-                  "Actions",
+                  "Planned h",
+                  "Actual h",
+                  "Submitted h",
+                  "Approved h",
                 ]}
               >
-                {filteredPlans.map((r: Row) => (
-                  <tr key={r.name}>
-                    <td>{r.user}</td>
-                    <td>{r.kind}</td>
-                    <td>{r.title}</td>
-                    <td>{new Date(r.plan_start).toLocaleString()}</td>
-                    <td>{new Date(r.plan_end).toLocaleString()}</td>
+                {data.report.employees.map((r: Row) => (
+                  <tr key={r.employee}>
                     <td>
-                      <button onClick={() => planEditor(r)}>
-                        Edit / resize
-                      </button>
-                      <button onClick={() => act("delete_plan", r)}>
-                        Cancel
+                      <button
+                        className="text-button"
+                        onClick={() => setEmployee(r.employee)}
+                        aria-label={`Show entries for ${userName(r.employee)}`}
+                      >
+                        {userName(r.employee)}
                       </button>
                     </td>
+                    {["planned", "actual", "submitted", "approved"].map((k) => (
+                      <td key={k}>{number(r[k])}</td>
+                    ))}
                   </tr>
                 ))}
               </Table>
-            ) : (
-              calendar
-            )}
-            {!filteredPlans.length && (
-              <Empty text="No plans yet. Add work, availability, leave or holiday time." />
-            )}
-            {ctx.managed_projects.length > 0 && (
-              <section className="panel">
-                <h2>Financial projections</h2>
-                <p>{data.finance.definition}</p>
-                {data.finance.missing.length > 0 && (
-                  <p className="error">
-                    Rate missing: totals are incomplete (
-                    {data.finance.missing.length} rate/day gaps).
-                  </p>
-                )}
+              {!data.report.employees.length && <Empty />}
+            </>
+          )}
+          {planning && (
+            <>
+              <TopActions>
+                <button className="primary" onClick={() => planEditor()}>
+                  <Icon name="add" /> Plan time
+                </button>
+              </TopActions>
+              {view === "table" ? (
                 <Table
                   headers={[
-                    "Currency",
-                    "Planned pay cost",
-                    "Planned revenue",
-                    "Gross margin",
-                    "Margin %",
+                    "Employee",
+                    "Kind",
+                    "Allocation",
+                    "Start",
+                    "End",
+                    "Actions",
                   ]}
                 >
-                  {Object.entries(data.finance.currencies).map(
-                    ([currency, v]) => {
-                      const r = v as Row;
-                      return (
-                        <tr key={currency}>
-                          <td>{currency}</td>
+                  {filteredPlans.map((r: Row) => (
+                    <tr key={r.name}>
+                      <td>{userName(r.user)}</td>
+                      <td>{r.kind}</td>
+                      <td>{r.title}</td>
+                      <td>{new Date(r.plan_start).toLocaleString()}</td>
+                      <td>{new Date(r.plan_end).toLocaleString()}</td>
+                      <td>
+                        <button onClick={() => planEditor(r)}>
+                          Edit / resize
+                        </button>
+                        <button onClick={() => act("delete_plan", r)}>
+                          Cancel
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </Table>
+              ) : (
+                calendar
+              )}
+              {view === "table" && !filteredPlans.length && (
+                <Empty text="No plans yet. Add work, availability, leave or holiday time." />
+              )}
+              {ctx.managed_projects.length > 0 && (
+                <details className="panel contextual-panel">
+                  <summary>Financial projections</summary>
+                  <p>{data.finance.definition}</p>
+                  {data.finance.missing.length > 0 && (
+                    <p className="error">
+                      Rate missing: totals are incomplete (
+                      {data.finance.missing.length} rate/day gaps).
+                    </p>
+                  )}
+                  <Table
+                    headers={[
+                      "Currency",
+                      "Planned pay cost",
+                      "Planned revenue",
+                      "Gross margin",
+                      "Margin %",
+                    ]}
+                  >
+                    {Object.entries(data.finance.currencies).map(
+                      ([currency, v]) => {
+                        const r = v as Row;
+                        return (
+                          <tr key={currency}>
+                            <td>{currency}</td>
+                            <td>{number(r.cost)}</td>
+                            <td>{number(r.revenue)}</td>
+                            <td>
+                              {r.margin === null
+                                ? "Incomplete"
+                                : number(r.margin)}
+                            </td>
+                            <td>
+                              {r.margin_percent === null
+                                ? "—"
+                                : number(r.margin_percent)}
+                            </td>
+                          </tr>
+                        );
+                      },
+                    )}
+                  </Table>
+                  <details>
+                    <summary>Allocation projections by project</summary>
+                    <h3>Project totals for selected period</h3>
+                    <Table
+                      headers={[
+                        "Project",
+                        "Currency",
+                        "Cost",
+                        "Revenue",
+                        "Gross margin",
+                      ]}
+                    >
+                      {data.finance.projects?.map((r: Row) => (
+                        <tr key={r.project + r.currency}>
+                          <td>
+                            {projects.find((p) => p.name === r.project)
+                              ?.project_name || r.project}
+                          </td>
+                          <td>{r.currency}</td>
                           <td>{number(r.cost)}</td>
                           <td>{number(r.revenue)}</td>
                           <td>
@@ -935,590 +1044,397 @@ function App() {
                               ? "Incomplete"
                               : number(r.margin)}
                           </td>
-                          <td>
-                            {r.margin_percent === null
-                              ? "—"
-                              : number(r.margin_percent)}
-                          </td>
                         </tr>
+                      ))}
+                    </Table>
+                    <Table
+                      headers={[
+                        "Project",
+                        "Plan",
+                        "Currency",
+                        "Cost",
+                        "Revenue",
+                        "Completeness",
+                      ]}
+                    >
+                      {data.finance.allocations?.flatMap((r: Row) =>
+                        Object.entries(r.currencies).map(([c, v]) => (
+                          <tr key={r.plan + c}>
+                            <td>{projectName(r.project)}</td>
+                            <td>{r.plan}</td>
+                            <td>{c}</td>
+                            <td>{number((v as Row).cost)}</td>
+                            <td>{number((v as Row).revenue)}</td>
+                            <td>
+                              {r.missing.length ? "Rate missing" : "Complete"}
+                            </td>
+                          </tr>
+                        )),
+                      )}
+                    </Table>
+                  </details>
+                </details>
+              )}
+              <details className="panel contextual-panel">
+                <summary>HR leave requests</summary>
+                <button
+                  onClick={async () => {
+                    try {
+                      const l = await api("leave_options");
+                      if (!l.available) {
+                        setNotice(
+                          l.message ||
+                            "An HR Employee mapping is required before HR leave requests.",
+                        );
+                        return;
+                      }
+                      open(
+                        "Request HR leave",
+                        "leave_request",
+                        [
+                          {
+                            key: "leave_type",
+                            label: "Leave type",
+                            options: l.types.map((value: string) => ({
+                              value,
+                              label: value,
+                            })),
+                          },
+                          {
+                            key: "from_date",
+                            label: "From date",
+                            type: "date",
+                          },
+                          {
+                            key: "to_date",
+                            label: "Through date",
+                            type: "date",
+                          },
+                          {
+                            key: "half_day",
+                            label: "Half day",
+                            type: "checkbox",
+                          },
+                          {
+                            key: "half_day_date",
+                            label: "Half-day date",
+                            type: "date",
+                            required: false,
+                          },
+                          { key: "description", label: "Reason" },
+                        ],
+                        { from_date: date, to_date: date },
                       );
-                    },
-                  )}
+                    } catch (e) {
+                      setError((e as Error).message);
+                    }
+                  }}
+                >
+                  Request through existing leave policy
+                </button>
+              </details>
+            </>
+          )}
+          {todos && (
+            <>
+              <TopActions>
+                {ctx.admin && (
+                  <button className="primary" onClick={() => projectEditor()}>
+                    Create project
+                  </button>
+                )}
+                {ctx.managed_projects.length > 0 && (
+                  <>
+                    <button onClick={() => activityEditor()}>
+                      Create activity
+                    </button>
+                    <button
+                      onClick={() =>
+                        open(
+                          "Assign employee to activity",
+                          "assignment",
+                          [
+                            userField,
+                            activityField,
+                            {
+                              key: "assigned",
+                              label: "Assigned (uncheck to remove)",
+                              type: "checkbox",
+                            },
+                          ],
+                          { assigned: true },
+                        )
+                      }
+                    >
+                      Manage assignment
+                    </button>
+                  </>
+                )}
+              </TopActions>
+              <section className="master-pane">
+                <h2>Projects ({visibleProjects.length})</h2>
+                {visibleProjects.map((r) => (
+                  <button
+                    className="project-choice"
+                    key={r.name}
+                    aria-pressed={selectedProject === r.name}
+                    onClick={() => setProject(r.name)}
+                  >
+                    <strong>{r.project_name}</strong>
+                    <span>
+                      {r.status} ·{" "}
+                      {activities.filter((a) => a.project === r.name).length}{" "}
+                      activities
+                    </span>
+                  </button>
+                ))}
+                {!visibleProjects.length && (
+                  <Empty text="No matching projects." />
+                )}
+              </section>
+              <section className="detail-pane">
+                <h2>
+                  {selectedProject
+                    ? projectName(selectedProject)
+                    : "Select a project"}
+                </h2>
+                {projects
+                  .filter((p) => p.name === selectedProject)
+                  .map((r) => (
+                    <div className="project-overview" key={r.name}>
+                      <span>{r.status}</span>
+                      <span>Lead: {userName(r.project_lead)}</span>
+                      <span>Approver: {userName(r.timesheet_approver)}</span>
+                      {managed(r.name) && (
+                        <button onClick={() => projectEditor(r)}>
+                          Edit / archive
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                <h3>Activities · Current canonical assignments</h3>
+                <Table
+                  headers={[
+                    "Activity",
+                    "Project",
+                    "Status",
+                    "Employees",
+                    "Actions",
+                  ]}
+                >
+                  {activities
+                    .filter(
+                      (r) =>
+                        r.project === selectedProject &&
+                        (!employee ||
+                          ctx.assignments.some(
+                            (a: Row) =>
+                              a.reference_name === r.name &&
+                              a.allocated_to === employee,
+                          )),
+                    )
+                    .map((r) => (
+                      <tr key={r.name}>
+                        <td>{r.activity_name}</td>
+                        <td>
+                          {
+                            projects.find((p) => p.name === r.project)
+                              ?.project_name
+                          }
+                        </td>
+                        <td>{r.status}</td>
+                        <td>
+                          {ctx.assignments
+                            .filter((a: Row) => a.reference_name === r.name)
+                            .map((a: Row) => userName(a.allocated_to))
+                            .join(", ") || "Unassigned"}
+                        </td>
+                        <td>
+                          {managed(r.project) && (
+                            <button onClick={() => activityEditor(r)}>
+                              Edit
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
                 </Table>
-                <details>
-                  <summary>Allocation projections by project</summary>
-                  <h3>Project totals for selected period</h3>
+                <p className="help">
+                  Current activity assignments only; closed/cancelled
+                  assignments and project-level source history are not exposed
+                  by this API. Removing an assignment preserves historic
+                  timesheets.
+                </p>
+              </section>
+            </>
+          )}
+          {!planning && !todos && !settings && (
+            <>
+              <TopActions>
+                <button className="primary" onClick={() => timeEditor()}>
+                  <Icon name="add" /> New entry
+                </button>
+              </TopActions>
+              {path === "/timesheet" && <>{view !== "table" && calendar}</>}
+              {(path !== "/timesheet" || view === "table") && (
+                <section className="entry-detail">
                   <Table
                     headers={[
-                      "Project",
-                      "Currency",
-                      "Cost",
-                      "Revenue",
-                      "Gross margin",
+                      ...(new Set(filteredTime.map((r: Row) => r.employee))
+                        .size > 1
+                        ? ["Employee"]
+                        : []),
+                      "Project / activity",
+                      "Start – end",
+                      "Hours in period",
+                      "Status",
+                      "Actions",
                     ]}
                   >
-                    {data.finance.projects?.map((r: Row) => (
-                      <tr key={r.project + r.currency}>
+                    {filteredTime.map((r: Row) => (
+                      <tr key={r.name}>
+                        {new Set(
+                          filteredTime.map((entry: Row) => entry.employee),
+                        ).size > 1 && <td>{userName(r.employee)}</td>}
                         <td>
-                          {projects.find((p) => p.name === r.project)
-                            ?.project_name || r.project}
+                          {projectName(r.project)}
+                          <br />
+                          {activityName(r.activity)}
                         </td>
-                        <td>{r.currency}</td>
-                        <td>{number(r.cost)}</td>
-                        <td>{number(r.revenue)}</td>
                         <td>
-                          {r.margin === null ? "Incomplete" : number(r.margin)}
+                          {new Date(r.check_in_time).toLocaleString()}
+                          <small>
+                            –{" "}
+                            {r.check_out_time
+                              ? new Date(r.check_out_time).toLocaleString()
+                              : "In progress"}
+                          </small>
+                        </td>
+                        <td>{number(r.period_hours)}</td>
+                        <td>
+                          {r.status}
+                          {r.approved_by && (
+                            <small>Last decision by {r.approved_by}</small>
+                          )}
+                          {r.approval_notes && (
+                            <details>
+                              <summary>Decision notes</summary>
+                              <p>{r.approval_notes}</p>
+                            </details>
+                          )}
+                          <button
+                            onClick={async () => {
+                              try {
+                                const audit = await api("audit_history", {
+                                  name: r.name,
+                                });
+                                setNotice(
+                                  audit
+                                    .map(
+                                      (a: Row) =>
+                                        `${a.recorded_at}: ${a.actor} · ${a.old_status || "new"} → ${a.new_status || a.action}`,
+                                    )
+                                    .join(" | ") ||
+                                    "No application audit records. Imported source history remains in the migration archive.",
+                                );
+                              } catch (e) {
+                                setError((e as Error).message);
+                              }
+                            }}
+                          >
+                            Audit
+                          </button>
+                        </td>
+                        <td>
+                          {["Draft", "Rejected"].includes(r.status) && (
+                            <>
+                              <button onClick={() => timeEditor(r)}>
+                                Edit
+                              </button>
+                              <button
+                                disabled={busy}
+                                onClick={() =>
+                                  act("transition", {
+                                    ...r,
+                                    status: "Submitted",
+                                  })
+                                }
+                              >
+                                {r.status === "Rejected"
+                                  ? "Resubmit"
+                                  : "Submit"}
+                              </button>
+                              {r.status === "Draft" && (
+                                <button
+                                  disabled={busy}
+                                  onClick={() => act("delete_time", r)}
+                                >
+                                  Delete
+                                </button>
+                              )}
+                            </>
+                          )}
+                          {r.status === "Submitted" && canApprove(r) && (
+                            <>
+                              <button
+                                disabled={busy}
+                                onClick={() =>
+                                  act("transition", {
+                                    ...r,
+                                    status: "Approved",
+                                  })
+                                }
+                              >
+                                Approve
+                              </button>
+                              <button
+                                onClick={() =>
+                                  open(
+                                    "Return submitted entry",
+                                    "transition",
+                                    [{ key: "reason", label: "Reason" }],
+                                    { ...r, status: "Rejected" },
+                                  )
+                                }
+                              >
+                                Return
+                              </button>
+                            </>
+                          )}
                         </td>
                       </tr>
                     ))}
                   </Table>
-                  <Table
-                    headers={[
-                      "Project",
-                      "Plan",
-                      "Currency",
-                      "Cost",
-                      "Revenue",
-                      "Completeness",
-                    ]}
-                  >
-                    {data.finance.allocations?.flatMap((r: Row) =>
-                      Object.entries(r.currencies).map(([c, v]) => (
-                        <tr key={r.plan + c}>
-                          <td>{r.project}</td>
-                          <td>{r.plan}</td>
-                          <td>{c}</td>
-                          <td>{number((v as Row).cost)}</td>
-                          <td>{number((v as Row).revenue)}</td>
-                          <td>
-                            {r.missing.length ? "Rate missing" : "Complete"}
-                          </td>
-                        </tr>
-                      )),
-                    )}
-                  </Table>
-                </details>
-              </section>
-            )}
-            <section className="panel">
-              <h2>HR leave requests</h2>
-              <button
-                onClick={async () => {
-                  try {
-                    const l = await api("leave_options");
-                    if (!l.available) {
-                      setNotice(
-                        l.message ||
-                          "An HR Employee mapping is required before HR leave requests.",
-                      );
-                      return;
-                    }
-                    open(
-                      "Request HR leave",
-                      "leave_request",
-                      [
-                        {
-                          key: "leave_type",
-                          label: "Leave type",
-                          options: l.types.map((value: string) => ({
-                            value,
-                            label: value,
-                          })),
-                        },
-                        { key: "from_date", label: "From date", type: "date" },
-                        { key: "to_date", label: "Through date", type: "date" },
-                        {
-                          key: "half_day",
-                          label: "Half day",
-                          type: "checkbox",
-                        },
-                        {
-                          key: "half_day_date",
-                          label: "Half-day date",
-                          type: "date",
-                          required: false,
-                        },
-                        { key: "description", label: "Reason" },
-                      ],
-                      { from_date: date, to_date: date },
-                    );
-                  } catch (e) {
-                    setError((e as Error).message);
-                  }
-                }}
-              >
-                Request through existing leave policy
-              </button>
-            </section>
-          </>
-        )}
-        {todos && (
-          <>
-            <div className="actions">
-              {ctx.admin && (
-                <button className="primary" onClick={() => projectEditor()}>
-                  Create project
-                </button>
+                  {!filteredTime.length && <Empty />}
+                </section>
               )}
-              {ctx.managed_projects.length > 0 && (
-                <>
-                  <button onClick={() => activityEditor()}>
-                    Create activity
-                  </button>
-                  <button
-                    onClick={() =>
-                      open(
-                        "Assign employee to activity",
-                        "assignment",
-                        [
-                          userField,
-                          activityField,
-                          {
-                            key: "assigned",
-                            label: "Assigned (uncheck to remove)",
-                            type: "checkbox",
-                          },
-                        ],
-                        { assigned: true },
-                      )
-                    }
-                  >
-                    Manage assignment
-                  </button>
-                </>
-              )}
-            </div>
-            <h2>Projects</h2>
-            <Table
-              headers={[
-                "Project",
-                "Status",
-                "Lead",
-                "Timesheet approver",
-                "Actions",
-              ]}
-            >
-              {projects.map((r) => (
-                <tr key={r.name}>
-                  <td>{r.project_name}</td>
-                  <td>{r.status}</td>
-                  <td>{r.project_lead}</td>
-                  <td>{r.timesheet_approver}</td>
-                  <td>
-                    {managed(r.name) && (
-                      <button onClick={() => projectEditor(r)}>
-                        Edit / archive
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </Table>
-            {!projects.length && (
-              <Empty text="No projects yet. An administrator can create a project and choose a lead and approver." />
-            )}
-            <h2>Activities & canonical assignments</h2>
-            <Table
-              headers={[
-                "Activity",
-                "Project",
-                "Status",
-                "Employees",
-                "Actions",
-              ]}
-            >
-              {activities.map((r) => (
-                <tr key={r.name}>
-                  <td>{r.activity_name}</td>
-                  <td>
-                    {projects.find((p) => p.name === r.project)?.project_name}
-                  </td>
-                  <td>{r.status}</td>
-                  <td>
-                    {ctx.assignments
-                      .filter((a: Row) => a.reference_name === r.name)
-                      .map((a: Row) => a.allocated_to)
-                      .join(", ") || "Unassigned"}
-                  </td>
-                  <td>
-                    {managed(r.project) && (
-                      <button onClick={() => activityEditor(r)}>Edit</button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </Table>
-            <p className="help">
-              Removing assignments or archiving projects preserves historic
-              timesheets. Booking requires an active assignment.
-            </p>
-          </>
-        )}
-        {!planning && !todos && !settings && (
-          <>
-            <div className="actions">
-              <h2>Actual entries</h2>
-              <button className="primary" onClick={() => timeEditor()}>
-                Book actual time
-              </button>
-            </div>
-            {path === "/timesheet" && (
-              <section>
-                <h2>Suggestions from your plan</h2>
-                <p className="help">
-                  Suggestions do not count as worked hours. Accept once to
-                  create an editable draft. Moving or cancelling a plan never
-                  changes accepted time or resets Ignore.
-                </p>
-                {data.suggestions.map((r: Row) => (
-                  <article className="suggestion" key={r.name}>
-                    <strong>{r.title}</strong>{" "}
-                    {new Date(r.plan_start).toLocaleString()}
-                    <button
-                      disabled={busy}
-                      onClick={() =>
-                        act("decision", { ...r, decision: "Accepted" })
-                      }
-                    >
-                      Accept
-                    </button>
-                    <button
-                      disabled={busy}
-                      onClick={() =>
-                        act("decision", { ...r, decision: "Ignored" })
-                      }
-                    >
-                      Ignore
-                    </button>
-                  </article>
-                ))}
-                {!data.suggestions.length && (
-                  <Empty text="No undecided work suggestions in this period." />
-                )}
-              </section>
-            )}
-            {path === "/timesheet" && (
-              <>
-                {calendarControls}
-                {view !== "table" && calendar}
-              </>
-            )}
-            <Table
-              headers={[
-                "Employee",
-                "Project / activity",
-                "Start",
-                "Hours in period",
-                "Status",
-                "Actions",
-              ]}
-            >
-              {filteredTime.map((r: Row) => (
-                <tr key={r.name}>
-                  <td>{r.employee}</td>
-                  <td>
-                    {r.project}
-                    <br />
-                    {r.activity}
-                  </td>
-                  <td>{new Date(r.check_in_time).toLocaleString()}</td>
-                  <td>{number(r.period_hours)}</td>
-                  <td>
-                    {r.status}
-                    {r.approved_by && (
-                      <small>Last decision by {r.approved_by}</small>
-                    )}
-                    {r.approval_notes && <small>{r.approval_notes}</small>}
-                    <button
-                      onClick={async () => {
-                        try {
-                          const audit = await api("audit_history", {
-                            name: r.name,
-                          });
-                          setNotice(
-                            audit
-                              .map(
-                                (a: Row) =>
-                                  `${a.recorded_at}: ${a.actor} · ${a.old_status || "new"} → ${a.new_status || a.action}`,
-                              )
-                              .join(" | ") ||
-                              "No application audit records. Imported source history remains in the migration archive.",
-                          );
-                        } catch (e) {
-                          setError((e as Error).message);
-                        }
-                      }}
-                    >
-                      Audit
-                    </button>
-                  </td>
-                  <td>
-                    {["Draft", "Rejected"].includes(r.status) && (
-                      <>
-                        <button onClick={() => timeEditor(r)}>Edit</button>
-                        <button
-                          disabled={busy}
-                          onClick={() =>
-                            act("transition", { ...r, status: "Submitted" })
-                          }
-                        >
-                          {r.status === "Rejected" ? "Resubmit" : "Submit"}
-                        </button>
-                        {r.status === "Draft" && (
-                          <button
-                            disabled={busy}
-                            onClick={() => act("delete_time", r)}
-                          >
-                            Delete
-                          </button>
-                        )}
-                      </>
-                    )}
-                    {r.status === "Submitted" && canApprove(r) && (
-                      <>
-                        <button
-                          disabled={busy}
-                          onClick={() =>
-                            act("transition", { ...r, status: "Approved" })
-                          }
-                        >
-                          Approve
-                        </button>
-                        <button
-                          onClick={() =>
-                            open(
-                              "Return submitted entry",
-                              "transition",
-                              [{ key: "reason", label: "Reason" }],
-                              { ...r, status: "Rejected" },
-                            )
-                          }
-                        >
-                          Return
-                        </button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </Table>
-            {!filteredTime.length && <Empty />}
-          </>
-        )}
-        {settings && (
-          <>
-            <section className="panel">
-              <h2>People & access</h2>
-              {ctx.admin && (
-                <button
-                  className="primary"
-                  onClick={() =>
-                    open(
-                      "Create employee account",
-                      "save_user",
-                      [
-                        { key: "email", label: "Email", type: "email" },
-                        { key: "full_name", label: "Full name" },
-                        { key: "enabled", label: "Enabled", type: "checkbox" },
-                        {
-                          key: "invite",
-                          label: "Send Frappe welcome invitation",
-                          type: "checkbox",
-                        },
-                      ],
-                      {
-                        enabled: true,
-                        invite: false,
-                        roles: ["Projects User"],
-                      },
-                    )
-                  }
-                >
-                  Create employee
-                </button>
-              )}
-              <Table headers={["Employee", "Enabled", "Actions"]}>
-                {users.map((r) => (
-                  <tr key={r.name}>
-                    <td>
-                      {r.full_name || r.name}
-                      <small>{r.name}</small>
-                    </td>
-                    <td>{r.enabled ? "Yes" : "No"}</td>
-                    <td>
-                      {ctx.admin && (
-                        <button
-                          onClick={async () => {
-                            try {
-                              const u = await api("user_detail", {
-                                name: r.name,
-                              });
-                              open(
-                                "Employee access",
-                                "save_user",
-                                [
-                                  { key: "full_name", label: "Full name" },
-                                  {
-                                    key: "enabled",
-                                    label: "Enabled",
-                                    type: "checkbox",
-                                  },
-                                  {
-                                    key: "role",
-                                    label: "Project role",
-                                    options: [
-                                      {
-                                        value: "Projects User",
-                                        label: "Projects User",
-                                      },
-                                      {
-                                        value: "Projects Manager",
-                                        label: "Projects Manager",
-                                      },
-                                    ],
-                                  },
-                                ],
-                                {
-                                  ...u,
-                                  role: u.roles.includes("Projects Manager")
-                                    ? "Projects Manager"
-                                    : "Projects User",
-                                },
-                                (v) => ({ ...v, roles: [v.role] }),
-                              );
-                            } catch (e) {
-                              setError((e as Error).message);
-                            }
-                          }}
-                        >
-                          Edit access
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </Table>
-              <p className="help">
-                Project leads and timesheet approvers are set on the project in
-                Projects. Access roles never grant global financial or approval
-                scope.
-              </p>
-            </section>
-            {(ctx.admin || ctx.managed_projects.length > 0) && (
-              <section className="panel">
-                <h2>Rate history</h2>
-                {ctx.admin && (
-                  <button
-                    onClick={() =>
-                      open("Add currency", "save_currency", [
-                        { key: "code", label: "Three-letter code" },
-                        { key: "symbol", label: "Symbol" },
-                      ])
-                    }
-                  >
-                    Add currency
-                  </button>
-                )}
-                <p>
-                  Versions apply from their effective date in {ctx.timezone}.
-                  Existing versions are immutable. Zero is an intentional rate;
-                  blank means missing. Pay rates are administrator-managed.
-                </p>
-                <button
-                  onClick={() =>
-                    open(
-                      "Add effective rate",
-                      "save_rate",
-                      [
-                        userField,
-                        {
-                          key: "kind",
-                          label: "Rate kind",
-                          options: (ctx.admin ? ["Pay", "Sell"] : ["Sell"]).map(
-                            (value) => ({ value, label: value }),
-                          ),
-                        },
-                        { ...projectField, required: false },
-                        {
-                          key: "effective_from",
-                          label: "Effective from",
-                          type: "date",
-                        },
-                        { key: "amount", label: "Hourly rate", type: "number" },
-                        {
-                          key: "currency",
-                          label: "Currency",
-                          options: opts(ctx.currencies),
-                        },
-                      ],
-                      {
-                        kind: ctx.admin ? "Pay" : "Sell",
-                        effective_from: today,
-                      },
-                    )
-                  }
-                >
-                  Add rate version
-                </button>
-                <button
-                  onClick={() =>
-                    setEditor({
-                      title: "View rate history",
-                      fields: [
-                        userField,
-                        { ...projectField, required: !ctx.admin },
-                      ],
-                      initial: {},
-                      onSave: async (v: Row) =>
-                        setHistory(await api("rate_history", v)),
-                    })
-                  }
-                >
-                  View employee rates
-                </button>
-                <Table
-                  headers={[
-                    "Employee",
-                    "Kind",
-                    "Project",
-                    "Effective from",
-                    "Hourly rate",
-                    "Currency",
-                  ]}
-                >
-                  {history.map((r) => (
-                    <tr key={r.name}>
-                      <td>{r.employee}</td>
-                      <td>{r.kind}</td>
-                      <td>{r.project || "All assigned projects"}</td>
-                      <td>{r.effective_from}</td>
-                      <td>{r.amount}</td>
-                      <td>{r.currency}</td>
-                    </tr>
-                  ))}
-                </Table>
-              </section>
-            )}
-            <section className="panel">
-              <h2>Calendar preferences</h2>
-              <label>
-                Default planning view
-                <select
-                  defaultValue={JSON.parse(ctx.preferences).view || "week"}
-                  onChange={(e) => act("preferences", { view: e.target.value })}
-                >
-                  {["day", "week", "month", "table"].map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
-                </select>
-              </label>
-              <p>
-                Dates and times are displayed in {tz}. The site stores time in{" "}
-                {ctx.timezone}.
-              </p>
-            </section>
-          </>
-        )}
+            </>
+          )}
+          {settings && (
+            <SettingsPage
+              {...{
+                ctx,
+                users,
+                category,
+                setCategory,
+                open,
+                setError,
+                userField,
+                projectField,
+                today,
+                date,
+                tz,
+                opts,
+                history,
+                setHistory,
+                setEditor,
+                act,
+                userName,
+                projectName,
+              }}
+            />
+          )}
+        </div>
         {editor && (
           <Editor
             key={editor.title}
