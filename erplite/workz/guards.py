@@ -206,6 +206,11 @@ def validate_plan(doc, method=None):
     if old:
         p.require(old.user == doc.user, "Employee cannot change")
         p.require(old.user == p.user() or p.manages(old.project) or p.admin())
+    if (doc.get("notes") or "") != ((old.get("notes") if old else None) or ""):
+        p.require(
+            p.can_edit_plan_notes(doc),
+            "Only the employee or administrator changes private planning notes",
+        )
     if doc.status == "Cancelled":
         return
     if doc.kind == "Work":

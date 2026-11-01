@@ -399,7 +399,11 @@ def save_plan(data):
     doc.status = "Planned"
     doc.save(ignore_permissions=True)
     audit("Planner Entry", doc.name, "save", employee)
-    return public(doc)
+    result = public(doc)
+    result["notes_editable"] = p.can_edit_plan_notes(doc)
+    if not result["notes_editable"]:
+        result.pop("notes", None)
+    return result
 
 
 def delete_plan(data):
@@ -412,6 +416,38 @@ def delete_plan(data):
     doc.save(ignore_permissions=True)
     audit("Planner Entry", doc.name, "cancel", doc.user)
     return {"saved": True}
+
+
+def plan_projection(row):
+    """Calendar fields only, preserving UTC shadows and personal redaction."""
+    result = {
+        key: row.get(key)
+        for key in (
+            "name", "user", "title", "project", "activity", "kind",
+            "plan_start", "plan_end", "duration_hours", "timezone", "all_day",
+            "billable", "modified", "status", "leave_application",
+        )
+    }
+    if row.plan_start:
+        start, end = record_times(row, "plan_start", "plan_end")
+        if not row.plan_end:
+            end = instant(row.plan_start, zone()) + timedelta(
+                hours=float(row.duration_hours or 0)
+            )
+        result.update(plan_start=start.isoformat(), plan_end=end.isoformat())
+    if row.user != p.user() and row.kind != "Work" and not p.admin():
+        result.update(title=row.kind, leave_application=None)
+    return result
+
+
+def plan_detail(data):
+    doc = frappe.get_doc("Planner Entry", data["name"])
+    p.require(p.can_read_plan(doc))
+    result = plan_projection(doc)
+    result["notes_editable"] = p.can_edit_plan_notes(doc)
+    if result["notes_editable"]:
+        result["notes"] = doc.get("notes")
+    return result
 
 
 def plans(data):
@@ -432,34 +468,7 @@ def plans(data):
         if not row.plan_end:
             b = instant(finish, zone())
         if overlaps(a, b, start, end):
-            # Coworker private notes and leave details never leak to planners.
-            visible.append(
-                {
-                    k: row.get(k)
-                    for k in (
-                        "name",
-                        "user",
-                        "title",
-                        "project",
-                        "activity",
-                        "kind",
-                        "plan_start",
-                        "plan_end",
-                        "duration_hours",
-                        "timezone",
-                        "all_day",
-                        "billable",
-                        "modified",
-                        "status",
-                        "leave_application",
-                    )
-                }
-            )
-            visible[-1]["plan_start"] = a.isoformat()
-            visible[-1]["plan_end"] = b.isoformat()
-            if row.user != p.user() and row.kind != "Work" and not p.admin():
-                visible[-1]["title"] = row.kind
-                visible[-1]["leave_application"] = None
+            visible.append(plan_projection(row))
     return visible
 
 
@@ -932,6 +941,7 @@ def leave_request(data):
 READS = {
     "context": context,
     "plans": plans,
+    "plan_detail": plan_detail,
     "times": times,
     "report": report,
     "suggestions": suggestions,
